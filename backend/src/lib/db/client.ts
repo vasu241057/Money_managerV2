@@ -14,7 +14,7 @@ interface DbClientConfig {
 	dbConnectTimeoutSeconds: number;
 }
 
-type SqlClient = ReturnType<typeof postgres>;
+export type SqlClient = ReturnType<typeof postgres>;
 
 interface CachedClient {
 	connectionString: string;

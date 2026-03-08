@@ -1,5 +1,6 @@
 import express from 'express';
 
+import { toHttpError, toHttpPayload } from './lib/http/errors';
 import { createRoutes } from './routes';
 
 export function createApp() {
@@ -11,12 +12,24 @@ export function createApp() {
 	app.use(createRoutes());
 
 	app.use((_req, res) => {
-		res.status(404).json({ error: 'NOT_FOUND' });
+		res.status(404).json({
+			error: 'NOT_FOUND',
+			message: 'Route not found',
+		});
 	});
 
 	const errorHandler: import('express').ErrorRequestHandler = (error, _req, res, _next) => {
-		console.error('Unhandled request error', error);
-		res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+		const httpError = toHttpError(error);
+		if (httpError.statusCode >= 500) {
+			console.error('Unhandled request error', error);
+		} else {
+			console.warn('Handled request error', {
+				statusCode: httpError.statusCode,
+				errorCode: httpError.errorCode,
+				message: httpError.message,
+			});
+		}
+		res.status(httpError.statusCode).json(toHttpPayload(httpError));
 	};
 
 	app.use(errorHandler);

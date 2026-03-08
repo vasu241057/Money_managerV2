@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import '../styles/splash-screen.css';
 
 interface SplashScreenProps {
@@ -8,8 +8,13 @@ interface SplashScreenProps {
 }
 
 export function SplashScreen({ onFinish, minDuration = 1000, isAppReady = true }: SplashScreenProps) {
-  const [isVisible, setIsVisible] = useState(true);
   const [minDurationPassed, setMinDurationPassed] = useState(false);
+  const finishScheduledRef = useRef(false);
+
+  const shouldFadeOut = useMemo(
+    () => minDurationPassed && isAppReady,
+    [minDurationPassed, isAppReady],
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -20,15 +25,17 @@ export function SplashScreen({ onFinish, minDuration = 1000, isAppReady = true }
   }, [minDuration]);
 
   useEffect(() => {
-    if (minDurationPassed && isAppReady) {
-      setIsVisible(false);
-      const timer = setTimeout(onFinish, 500); // Wait for fade out animation
-      return () => clearTimeout(timer);
+    if (!shouldFadeOut || finishScheduledRef.current) {
+      return;
     }
-  }, [minDurationPassed, isAppReady, onFinish]);
+
+    finishScheduledRef.current = true;
+    const timer = setTimeout(onFinish, 500); // Wait for fade out animation
+    return () => clearTimeout(timer);
+  }, [shouldFadeOut, onFinish]);
 
   return (
-    <div className={`splash-screen ${!isVisible ? 'fade-out' : ''}`}>
+    <div className={`splash-screen ${shouldFadeOut ? 'fade-out' : ''}`}>
       <div className="splash-content">
         <img src="/logo.png" alt="Money Manager" className="splash-logo" />
         <h1 className="splash-title">Money Manager</h1>

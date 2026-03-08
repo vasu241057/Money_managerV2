@@ -266,6 +266,34 @@ export interface ListTransactionsQuery extends PageRequest {
   credit_card_id?: UUID;
 }
 
+export interface CreateAccountRequest {
+  name: string;
+  type: AccountType;
+  instrument_last4?: string | null;
+  initial_balance_in_paise?: number;
+}
+
+export interface UpdateAccountRequest {
+  name?: string;
+  type?: AccountType;
+  instrument_last4?: string | null;
+  initial_balance_in_paise?: number;
+}
+
+export interface CreateCategoryRequest {
+  name: string;
+  type: CategoryType;
+  icon?: string | null;
+  parent_id?: UUID | null;
+}
+
+export interface UpdateCategoryRequest {
+  name?: string;
+  type?: CategoryType;
+  icon?: string | null;
+  parent_id?: UUID | null;
+}
+
 export interface TransactionFeedItem {
   transaction: TransactionRow;
   financial_event: FinancialEventRow;

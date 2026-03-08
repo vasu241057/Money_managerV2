@@ -72,11 +72,24 @@ Declared in `shared/types.ts`:
 
 - Pagination: `PageRequest`, `PaginatedResponse<T>`
 - Listing: `ListTransactionsQuery`, `TransactionFeedItem`
+- Account CRUD: `CreateAccountRequest`, `UpdateAccountRequest`
+- Category CRUD: `CreateCategoryRequest`, `UpdateCategoryRequest`
 - Manual writes: `CreateManualTransactionRequest`, `UpdateTransactionRequest`
 - Card mapping writes: `CreateUserCreditCardRequest`, `UpdateUserCreditCardRequest`
 - Card resolver: `ResolveUserCreditCardRequest`, `ResolveUserCreditCardResponse`
 - Merchant overrides: `UpsertUserMerchantRuleRequest`
 - OAuth: `GoogleOAuthStartResponse`, `GoogleOAuthCallbackRequest`, `GoogleOAuthConnectionResponse`
+
+### Auth context for backend CRUD (Milestone 4)
+
+- Authenticated API calls use Clerk bearer tokens:
+  - `Authorization: Bearer <session_jwt>` (required)
+  - `x-user-email` (optional bootstrap/provisioning hint when email claim is absent in token)
+- Backend verification env:
+  - `CLERK_JWKS_URL` (required)
+  - `CLERK_JWT_ISSUER` (required)
+  - `CLERK_JWT_AUDIENCE` (optional, comma-separated)
+- Internal persistence maps Clerk `sub` -> deterministic UUIDv5 for `users.id`.
 
 ## 6. Queue Payload Contract (Phase 1/2/3)
 

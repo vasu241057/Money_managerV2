@@ -7,11 +7,10 @@ export async function handleScheduled(
 	ctx: ExecutionContext,
 ): Promise<void> {
 	if (controller.cron !== EMAIL_SYNC_CRON) {
-		console.warn('Ignoring unsupported cron trigger', {
+		console.warn('Cron expression drift detected between runtime trigger and code constant', {
 			receivedCron: controller.cron,
 			expectedCron: EMAIL_SYNC_CRON,
 		});
-		return;
 	}
 
 	const dispatchJob = buildEmailSyncDispatchJob(controller);

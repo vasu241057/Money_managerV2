@@ -3,6 +3,9 @@
 
 # Required secret in all environments.
 SUPABASE_POOLER_URL=postgres://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
+CLERK_JWKS_URL=
+CLERK_JWT_ISSUER=
+CLERK_JWT_AUDIENCE=
 
 # OAuth and AI secrets (used in upcoming milestones).
 GOOGLE_CLIENT_ID=
@@ -16,3 +19,4 @@ APP_VERSION=0.1.0
 NODE_ENV=development
 DB_MAX_CONNECTIONS=5
 DB_CONNECT_TIMEOUT_SECONDS=5
+CLERK_JWT_CLOCK_SKEW_SECONDS=60

@@ -10,6 +10,33 @@
   - `money-manager-email-sync` (`max_batch_size=10`, DLQ `money-manager-email-sync-dlq`)
   - `money-manager-ai-classification` (`max_batch_size=10`, DLQ `money-manager-ai-classification-dlq`)
 
+## Milestone 4 API (manual CRUD)
+
+Authenticated routes require:
+
+- `Authorization: Bearer <clerk_session_jwt>` (required)
+- `x-user-email: <email>` (optional bootstrap fallback when token does not include email claim)
+
+Backend verifies Clerk tokens using JWKS:
+- `CLERK_JWKS_URL` (required)
+- `CLERK_JWT_ISSUER` (required strict issuer validation)
+- `CLERK_JWT_AUDIENCE` (optional comma-separated accepted audiences)
+- `CLERK_JWT_CLOCK_SKEW_SECONDS` (optional, default 60)
+
+Internal user mapping:
+- Clerk `sub` is deterministically mapped to an internal UUIDv5 for `users.id`.
+
+Routes:
+
+- `GET/POST/PATCH/DELETE /accounts`
+- `GET/POST/PATCH/DELETE /categories`
+- `GET/POST/PATCH/DELETE /transactions`
+
+Manual transaction writes are transaction-safe:
+
+- `POST /transactions` inserts immutable `financial_events` + mutable `transactions` in one SQL transaction
+- `DELETE /transactions/:id` deletes only manual rows (`raw_email_id is null`) and marks linked `financial_events.status = 'REVERSED'`
+
 ## Secrets
 
 Set secrets per environment (do not store in `wrangler.jsonc`):
@@ -17,6 +44,9 @@ Set secrets per environment (do not store in `wrangler.jsonc`):
 ```bash
 cd backend
 npx wrangler secret put SUPABASE_POOLER_URL
+npx wrangler secret put CLERK_JWKS_URL
+npx wrangler secret put CLERK_JWT_ISSUER
+npx wrangler secret put CLERK_JWT_AUDIENCE
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
 npx wrangler secret put GOOGLE_OAUTH_REDIRECT_URI

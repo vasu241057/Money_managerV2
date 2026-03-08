@@ -29,7 +29,7 @@ describe('scheduled.worker', () => {
 		expect(waitUntil).toHaveBeenCalledTimes(1);
 	});
 
-	it('ignores unknown cron expressions', async () => {
+	it('still enqueues dispatch jobs when cron expression drifts', async () => {
 		const send = vi.fn().mockResolvedValue(undefined);
 		const env = {
 			EMAIL_SYNC_QUEUE: { send },
@@ -44,6 +44,6 @@ describe('scheduled.worker', () => {
 			{ waitUntil: vi.fn() } as unknown as ExecutionContext,
 		);
 
-		expect(send).not.toHaveBeenCalled();
+		expect(send).toHaveBeenCalledTimes(1);
 	});
 });
