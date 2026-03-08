@@ -4,6 +4,12 @@ import type { AccountRow, CategoryRow, TransactionFeedItem } from '../../../shar
 import { isRemoteDataEnabled } from '../config/data-source';
 import { apiClient, toErrorMessage } from '../lib/api-client';
 import { paiseToRupees, rupeesToPaise } from '../lib/money';
+import {
+  areImmutableFieldsChanged,
+  normalizeOptionalId,
+  normalizeOptionalText,
+  resolvePersistedCategoryId,
+} from '../lib/transaction-adapter';
 import { useLocalTransactions, type Transaction } from './local/useLocalTransactions';
 
 interface UseTransactionsResult {
@@ -18,35 +24,6 @@ const REMOTE_DATA_ENABLED = isRemoteDataEnabled();
 const TRANSACTIONS_QUERY_KEY = ['transactions'] as const;
 const ACCOUNTS_QUERY_KEY = ['accounts'] as const;
 const CATEGORIES_QUERY_KEY = ['categories'] as const;
-
-function normalizeOptionalId(value: string | null | undefined): string | null {
-  if (!value || value.trim() === '') {
-    return null;
-  }
-
-  return value;
-}
-
-function normalizeOptionalText(value: string | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const normalized = value.trim();
-  return normalized === '' ? null : normalized;
-}
-
-function areImmutableFieldsChanged(current: Transaction, next: Transaction): boolean {
-  if (current.amount !== next.amount) {
-    return true;
-  }
-
-  if (current.type !== next.type) {
-    return true;
-  }
-
-  return current.date.getTime() !== next.date.getTime();
-}
 
 function mapFeedItemToUiTransaction(
   item: TransactionFeedItem,
@@ -99,6 +76,7 @@ function mapFeedItemToUiTransaction(
     description: transaction.user_note ?? undefined,
     accountId,
     accountName,
+    isManual: item.financial_event.raw_email_id === null,
   };
 }
 
@@ -175,9 +153,7 @@ function useRemoteTransactions(): UseTransactionsResult {
 
   const upsertTransactionMutation = useMutation({
     mutationFn: async (transactionInput: Omit<Transaction, 'id'> | Transaction) => {
-      const categoryIdToPersist = normalizeOptionalId(
-        transactionInput.subCategoryId ?? transactionInput.categoryId,
-      );
+      const categoryIdToPersist = resolvePersistedCategoryId(transactionInput);
       const accountIdToPersist = normalizeOptionalId(transactionInput.accountId);
 
       if ('id' in transactionInput && transactionInput.id) {
@@ -187,7 +163,10 @@ function useRemoteTransactions(): UseTransactionsResult {
         }
 
         if (areImmutableFieldsChanged(existing, transactionInput)) {
-          await apiClient.deleteTransaction(transactionInput.id);
+          if (!existing.isManual) {
+            throw new Error('Amount, type, and date cannot be changed for bank-detected transactions.');
+          }
+
           const recreated = await apiClient.createManualTransaction({
             amount_in_paise: rupeesToPaise(transactionInput.amount),
             type: transactionInput.type,
@@ -196,6 +175,18 @@ function useRemoteTransactions(): UseTransactionsResult {
             category_id: categoryIdToPersist,
             user_note: normalizeOptionalText(transactionInput.description),
           });
+
+          try {
+            await apiClient.deleteTransaction(transactionInput.id);
+          } catch (deleteError) {
+            await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+
+            const detail =
+              deleteError instanceof Error ? deleteError.message : 'Please refresh and retry.';
+            throw new Error(
+              `Updated transaction was created, but old transaction could not be removed. The new transaction was kept to prevent data loss. ${detail}`,
+            );
+          }
 
           return mapFeedItemToUiTransaction(recreated, accountsById, categoriesById);
         }
@@ -257,10 +248,10 @@ function useRemoteTransactions(): UseTransactionsResult {
 
 export { type Transaction };
 
-export function useTransactions(): UseTransactionsResult {
-  if (REMOTE_DATA_ENABLED) {
-    return useRemoteTransactions();
-  }
+const useTransactionsImpl: () => UseTransactionsResult = REMOTE_DATA_ENABLED
+  ? useRemoteTransactions
+  : useLocalTransactionFallback;
 
-  return useLocalTransactionFallback();
+export function useTransactions(): UseTransactionsResult {
+  return useTransactionsImpl();
 }

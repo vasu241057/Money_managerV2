@@ -10,33 +10,56 @@ interface CategoryManagerProps {
 }
 
 export function CategoryManager({ onClose }: CategoryManagerProps) {
-  const { categories, addCategory, deleteCategory, addSubCategory, deleteSubCategory } = useCategories();
+  const {
+    categories,
+    addCategory,
+    deleteCategory,
+    addSubCategory,
+    deleteSubCategory,
+    isLoading,
+    error,
+  } = useCategories();
   const [newCategoryName, setNewCategoryName] = useState('');
   const [type, setType] = useState<'income' | 'expense'>('expense');
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [newSubCategory, setNewSubCategory] = useState('');
 
-  const handleAdd = (e: React.FormEvent) => {
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCategoryName.trim()) return;
 
-    addCategory({
-      name: newCategoryName.trim(),
-      type,
-      icon: 'Circle',
-      subCategories: []
-    });
-    setNewCategoryName('');
+    try {
+      await addCategory({
+        name: newCategoryName.trim(),
+        type,
+        icon: 'Circle',
+        subCategories: [],
+      });
+      setNewCategoryName('');
+    } catch (addError) {
+      const message =
+        addError instanceof Error ? addError.message : 'Failed to create category';
+      alert(message);
+    }
   };
 
-  const handleAddSub = (e: React.FormEvent, categoryId: string) => {
+  const handleAddSub = async (e: React.FormEvent, categoryId: string) => {
     e.preventDefault();
     if (!newSubCategory.trim()) return;
-    addSubCategory(categoryId, newSubCategory.trim());
-    setNewSubCategory('');
+
+    try {
+      await addSubCategory(categoryId, newSubCategory.trim());
+      setNewSubCategory('');
+    } catch (addSubError) {
+      const message =
+        addSubError instanceof Error ? addSubError.message : 'Failed to create sub-category';
+      alert(message);
+    }
   };
 
-  const filteredCategories = categories.filter(c => c.type === type);
+  const filteredCategories = categories.filter(
+    c => c.type === type && !c.isSystem,
+  );
 
   return (
     <div className="modal-overlay">
@@ -61,6 +84,8 @@ export function CategoryManager({ onClose }: CategoryManagerProps) {
           </button>
         </div>
 
+        {error && <p style={{ color: '#dc2626', marginBottom: 8 }}>{error}</p>}
+
         <div className="category-list">
           {filteredCategories.map(cat => (
             <div key={cat.id} className="category-wrapper">
@@ -70,9 +95,15 @@ export function CategoryManager({ onClose }: CategoryManagerProps) {
                   <span className="sub-count">{(cat.subCategories || []).length} sub</span>
                   <button 
                     className="delete-cat-btn"
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      deleteCategory(cat.id);
+                      try {
+                        await deleteCategory(cat.id);
+                      } catch (deleteError) {
+                        const message =
+                          deleteError instanceof Error ? deleteError.message : 'Failed to delete category';
+                        alert(message);
+                      }
                     }}
                   >
                     <Trash2 size={18} />
@@ -88,7 +119,17 @@ export function CategoryManager({ onClose }: CategoryManagerProps) {
                         <span>• {sub}</span>
                         <button 
                           className="delete-sub-btn"
-                          onClick={() => deleteSubCategory(cat.id, sub)}
+                          onClick={async () => {
+                            try {
+                              await deleteSubCategory(cat.id, sub);
+                            } catch (deleteSubError) {
+                              const message =
+                                deleteSubError instanceof Error
+                                  ? deleteSubError.message
+                                  : 'Failed to delete sub-category';
+                              alert(message);
+                            }
+                          }}
                         >
                           <X size={14} />
                         </button>
@@ -119,7 +160,7 @@ export function CategoryManager({ onClose }: CategoryManagerProps) {
             value={newCategoryName}
             onChange={e => setNewCategoryName(e.target.value)}
           />
-          <Button type="submit" variant="secondary">
+          <Button type="submit" variant="secondary" disabled={isLoading}>
             <Plus size={18} style={{ marginRight: 8 }} /> Add Category
           </Button>
         </form>

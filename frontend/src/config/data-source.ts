@@ -37,7 +37,7 @@ export function isRemoteDataEnabled(): boolean {
     return storageOverride === 'remote';
   }
 
-  return parseBooleanFlag(REMOTE_DATA_ENV_VALUE, true);
+  return parseBooleanFlag(REMOTE_DATA_ENV_VALUE, false);
 }
 
 export function getApiBaseUrl(): string {

@@ -1,35 +1,43 @@
-import { useLocalStorage } from './useLocalStorage';
+import { useLocalStorage } from '../useLocalStorage';
 
 export interface Transaction {
   id: string;
   amount: number;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'transfer';
   category: string;
+  categoryId?: string | null;
   subCategory?: string;
+  subCategoryId?: string | null;
   date: Date;
   description?: string;
-  accountId?: string; // Optional, for future use
+  accountId?: string | null;
+  accountName?: string;
+  isManual?: boolean;
 }
 
-export const useTransactions = () => {
-  // We store dates as strings in localStorage, so we need to parse them back
+export function useLocalTransactions() {
   const [storedTransactions, setStoredTransactions] = useLocalStorage<Transaction[]>('transactions', []);
 
-  // Convert string dates back to Date objects
   const transactions = storedTransactions.map(t => ({
     ...t,
-    date: new Date(t.date)
+    date: new Date(t.date),
   }));
 
-  const addTransaction = (transaction: Omit<Transaction, 'id'> | Transaction) => {
+  const addTransaction = (transaction: Omit<Transaction, 'id'> | Transaction): Transaction => {
     if ('id' in transaction && transaction.id) {
-      // Update existing
-      setStoredTransactions(prev => prev.map(t => t.id === transaction.id ? transaction as Transaction : t));
-    } else {
-      // Create new
-      const newTransaction = { ...transaction, id: crypto.randomUUID() } as Transaction;
-      setStoredTransactions(prev => [newTransaction, ...prev]);
+      setStoredTransactions(prev =>
+        prev.map(t => (t.id === transaction.id ? (transaction as Transaction) : t)),
+      );
+      return transaction as Transaction;
     }
+
+    const newTransaction = {
+      ...transaction,
+      id: crypto.randomUUID(),
+      isManual: transaction.isManual ?? true,
+    } as Transaction;
+    setStoredTransactions(prev => [newTransaction, ...prev]);
+    return newTransaction;
   };
 
   const deleteTransaction = (id: string) => {
@@ -37,4 +45,4 @@ export const useTransactions = () => {
   };
 
   return { transactions, addTransaction, deleteTransaction };
-};
+}

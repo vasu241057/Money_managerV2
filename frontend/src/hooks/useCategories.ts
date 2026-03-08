@@ -215,10 +215,10 @@ function useRemoteCategories(): UseCategoriesResult {
 
 export { type Category };
 
-export function useCategories(): UseCategoriesResult {
-  if (REMOTE_DATA_ENABLED) {
-    return useRemoteCategories();
-  }
+const useCategoriesImpl: () => UseCategoriesResult = REMOTE_DATA_ENABLED
+  ? useRemoteCategories
+  : useLocalCategoryFallback;
 
-  return useLocalCategoryFallback();
+export function useCategories(): UseCategoriesResult {
+  return useCategoriesImpl();
 }

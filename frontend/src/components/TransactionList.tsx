@@ -5,7 +5,7 @@ import type { Transaction } from '../hooks/useTransactions';
 
 interface TransactionListProps {
   transactions: Transaction[];
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
   onEdit: (transaction: Transaction) => void;
   viewMode?: 'daily' | 'monthly';
 }
@@ -16,6 +16,17 @@ interface SwipeState {
   currentX: number;
   isSwiping: boolean;
 }
+
+const pad2 = (value: number) => value.toString().padStart(2, '0');
+
+const toLocalDateKey = (value: Date) => {
+  return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+};
+
+const fromLocalDateKey = (key: string) => {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
 
 export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'daily' }: TransactionListProps) {
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
@@ -77,7 +88,7 @@ export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'da
     
     if (currentX > AUTO_DELETE_THRESHOLD) {
       // Long swipe - Auto delete
-      onDelete(id);
+      void onDelete(id);
       setOpenId(null);
     } else if (currentX > REVEAL_WIDTH / 2) {
       // Partial swipe - Reveal delete button
@@ -98,8 +109,7 @@ export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'da
     if (viewMode === 'monthly') {
       key = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     } else {
-      // Use date string for daily grouping
-      key = date.toISOString().split('T')[0];
+      key = toLocalDateKey(date);
     }
 
     if (!acc[key]) acc[key] = [];
@@ -107,15 +117,16 @@ export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'da
     return acc;
   }, {} as Record<string, Transaction[]>);
 
-  const sortedKeys = Object.keys(grouped).sort((a, b) => {
-    return new Date(b).getTime() - new Date(a).getTime();
-  });
+  const sortedKeys = Object.keys(grouped).sort((a, b) =>
+    viewMode === 'monthly'
+      ? new Date(b).getTime() - new Date(a).getTime()
+      : fromLocalDateKey(b).getTime() - fromLocalDateKey(a).getTime(),
+  );
 
   const formatHeader = (key: string, isMonthHeader = false) => {
     if (isMonthHeader) return key;
     
-    const [y, m, d] = key.split('-').map(Number);
-    const localDate = new Date(y, m - 1, d);
+    const localDate = fromLocalDateKey(key);
 
     const today = new Date();
     const yesterday = new Date(today);
@@ -129,7 +140,15 @@ export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'da
 
   const getGroupTotal = (groupTransactions: Transaction[]) => {
     return groupTransactions.reduce((acc, t) => {
-      return t.type === 'expense' ? acc - t.amount : acc + t.amount;
+      if (t.type === 'expense') {
+        return acc - t.amount;
+      }
+
+      if (t.type === 'income') {
+        return acc + t.amount;
+      }
+
+      return acc;
     }, 0);
   };
 
@@ -137,16 +156,16 @@ export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'da
   const groupByDay = (monthTransactions: Transaction[]) => {
     const dayGroups = monthTransactions.reduce((acc, transaction) => {
       const date = new Date(transaction.date);
-      const key = date.toISOString().split('T')[0];
+      const key = toLocalDateKey(date);
       
       if (!acc[key]) acc[key] = [];
       acc[key].push(transaction);
       return acc;
     }, {} as Record<string, Transaction[]>);
 
-    const sortedDayKeys = Object.keys(dayGroups).sort((a, b) => {
-      return new Date(b).getTime() - new Date(a).getTime();
-    });
+    const sortedDayKeys = Object.keys(dayGroups).sort(
+      (a, b) => fromLocalDateKey(b).getTime() - fromLocalDateKey(a).getTime(),
+    );
 
     return { dayGroups, sortedDayKeys };
   };
@@ -160,6 +179,8 @@ export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'da
       offset = REVEAL_WIDTH;
     }
     
+    const amountPrefix = t.type === 'expense' ? '-' : t.type === 'income' ? '+' : '↔ ';
+
     return (
       <div 
         key={t.id} 
@@ -172,7 +193,7 @@ export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'da
           className="swipe-delete-action"
           onClick={(e) => {
             e.stopPropagation();
-            onDelete(t.id);
+            void onDelete(t.id);
             setOpenId(null);
           }}
           style={{ width: Math.max(offset, REVEAL_WIDTH) }} // Expand background with swipe
@@ -201,12 +222,12 @@ export function TransactionList({ transactions, onDelete, onEdit, viewMode = 'da
                 {t.subCategory && <span className="t-subcategory"> / {t.subCategory}</span>}
               </div>
               <span className={`t-amount ${t.type}`}>
-                {t.type === 'expense' ? '-' : '+'}
+                {amountPrefix}
                 ₹{t.amount.toFixed(2)}
               </span>
             </div>
             <div className="t-sub">
-              <span className="t-account">{t.accountId || 'Cash'}</span>
+              <span className="t-account">{t.accountName || t.accountId || 'Cash'}</span>
               {t.description && <span className="t-note"> • {t.description}</span>}
             </div>
           </div>

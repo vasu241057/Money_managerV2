@@ -12,7 +12,13 @@ import { Plus } from 'lucide-react';
 import './styles/app.css';
 
 function MoneyManagerApp() {
-  const { transactions, addTransaction, deleteTransaction } = useTransactions();
+  const {
+    transactions,
+    addTransaction,
+    deleteTransaction,
+    isLoading: transactionsLoading,
+    error: transactionsError,
+  } = useTransactions();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [isAccountManagerOpen, setIsAccountManagerOpen] = useState(false);
@@ -38,6 +44,11 @@ function MoneyManagerApp() {
         transactions={transactions} 
         onBalanceClick={() => setIsAnalyticsOpen(true)}
       />
+
+      {transactionsError && <p style={{ color: '#dc2626', margin: '8px 0' }}>{transactionsError}</p>}
+      {transactionsLoading && transactions.length === 0 && (
+        <p style={{ margin: '8px 0' }}>Loading transactions...</p>
+      )}
       
       <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h3>Transactions</h3>
@@ -59,7 +70,9 @@ function MoneyManagerApp() {
       
       <TransactionList 
         transactions={transactions} 
-        onDelete={deleteTransaction} 
+        onDelete={async (id) => {
+          await deleteTransaction(id);
+        }} 
         onEdit={(t) => {
           setEditingTransaction(t);
           setIsFormOpen(true);
@@ -109,12 +122,7 @@ export default function App() {
   const [isAppReady, setIsAppReady] = useState(false);
 
   useEffect(() => {
-    // Simulate app initialization/loading
-    // In a real app, this might wait for data fetching, auth check, etc.
-    // Since our hooks are synchronous (localStorage), we're technically ready immediately.
-    // But we'll use a small timeout to ensure the render cycle is complete or simulate a check.
     const initApp = async () => {
-      // Simulate some async work if needed, or just set ready
       setIsAppReady(true);
     };
 

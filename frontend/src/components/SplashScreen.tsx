@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import '../styles/splash-screen.css';
 
 interface SplashScreenProps {
@@ -9,7 +9,6 @@ interface SplashScreenProps {
 
 export function SplashScreen({ onFinish, minDuration = 1000, isAppReady = true }: SplashScreenProps) {
   const [minDurationPassed, setMinDurationPassed] = useState(false);
-  const finishScheduledRef = useRef(false);
 
   const shouldFadeOut = useMemo(
     () => minDurationPassed && isAppReady,
@@ -25,11 +24,10 @@ export function SplashScreen({ onFinish, minDuration = 1000, isAppReady = true }
   }, [minDuration]);
 
   useEffect(() => {
-    if (!shouldFadeOut || finishScheduledRef.current) {
+    if (!shouldFadeOut) {
       return;
     }
 
-    finishScheduledRef.current = true;
     const timer = setTimeout(onFinish, 500); // Wait for fade out animation
     return () => clearTimeout(timer);
   }, [shouldFadeOut, onFinish]);

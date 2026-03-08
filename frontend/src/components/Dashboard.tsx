@@ -13,7 +13,15 @@ export function Dashboard({ transactions, onBalanceClick }: DashboardProps & { o
   });
 
   const totalBalance = transactions.reduce((acc, t) => {
-    return t.type === 'income' ? acc + t.amount : acc - t.amount;
+    if (t.type === 'income') {
+      return acc + t.amount;
+    }
+
+    if (t.type === 'expense') {
+      return acc - t.amount;
+    }
+
+    return acc;
   }, 0);
 
   const income = currentMonthTransactions

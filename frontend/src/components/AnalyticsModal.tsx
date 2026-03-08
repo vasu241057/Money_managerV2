@@ -43,7 +43,7 @@ export function AnalyticsModal({ transactions, onClose }: AnalyticsModalProps) {
     const accountMap = new Map<string, number>();
 
     expenses.forEach(t => {
-      const accountName = t.accountId || 'Cash';
+      const accountName = t.accountName || t.accountId || 'Cash';
       const current = accountMap.get(accountName) || 0;
       accountMap.set(accountName, current + t.amount);
     });
@@ -103,7 +103,12 @@ export function AnalyticsModal({ transactions, onClose }: AnalyticsModalProps) {
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number) => `₹${value.toFixed(2)}`} />
+                <Tooltip
+                  formatter={(value: number | string | undefined) => {
+                    const amount = typeof value === 'number' ? value : Number(value ?? 0);
+                    return `₹${amount.toFixed(2)}`;
+                  }}
+                />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>

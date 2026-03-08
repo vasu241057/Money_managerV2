@@ -112,10 +112,10 @@ function useRemoteAccounts(): UseAccountsResult {
 
 export { type Account };
 
-export function useAccounts(): UseAccountsResult {
-  if (REMOTE_DATA_ENABLED) {
-    return useRemoteAccounts();
-  }
+const useAccountsImpl: () => UseAccountsResult = REMOTE_DATA_ENABLED
+  ? useRemoteAccounts
+  : useLocalAccountFallback;
 
-  return useLocalAccountFallback();
+export function useAccounts(): UseAccountsResult {
+  return useAccountsImpl();
 }

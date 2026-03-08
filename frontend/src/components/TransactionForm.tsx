@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState } from 'react';
 import { useCategories } from "../hooks/useCategories";
 import { useAccounts } from "../hooks/useAccounts";
 import { Button } from "./ui/Button";
@@ -10,15 +10,15 @@ import "../styles/transaction-form.css";
 import type { Transaction } from "../hooks/useTransactions";
 
 interface TransactionFormProps {
-  onSubmit: (transaction: Omit<Transaction, 'id'> | Transaction) => void;
+  onSubmit: (transaction: Omit<Transaction, 'id'> | Transaction) => Promise<unknown>;
   onClose: () => void;
   initialData?: Transaction | null;
 }
 
 export function TransactionForm({ onSubmit, onClose, initialData = null }: TransactionFormProps) {
-  const { categories } = useCategories();
-  const { accounts } = useAccounts();
-  const [type, setType] = useState<'income' | 'expense'>(initialData?.type || "expense");
+  const { categories, isLoading: categoriesLoading, error: categoriesError } = useCategories();
+  const { accounts, isLoading: accountsLoading, error: accountsError } = useAccounts();
+  const [type, setType] = useState<'income' | 'expense' | 'transfer'>(initialData?.type ?? 'expense');
   const [amount, setAmount] = useState(initialData?.amount?.toString() || "");
   const [date, setDate] = useState(
     initialData?.date 
@@ -26,19 +26,23 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
       : new Date().toISOString().split("T")[0]
   );
 
-  // Initialize state directly from props
-  // We use a key on the component in App.tsx to force re-mount when initialData changes,
-  // so we don't need useEffect to sync state with props.
-  const initialCategoryId = initialData
-    ? categories.find((c) => c.name === initialData.category)?.id
-    : "";
-
-  const [categoryId, setCategoryId] = useState(initialCategoryId || "");
+  const [categoryIdState, setCategoryId] = useState(initialData?.categoryId || "");
   const [subCategory, setSubCategory] = useState(
     initialData?.subCategory || ""
   );
-  const [account, setAccount] = useState(initialData?.accountId || accounts[0]?.name || "Cash");
+  const [accountIdState, setAccount] = useState(initialData?.accountId ?? "");
   const [description, setDescription] = useState(initialData?.description || "");
+  const isEditing = Boolean(initialData?.id);
+  const isBankDetectedTransaction = isEditing && initialData?.isManual === false;
+  const isTransferReadOnly = isEditing && initialData?.type === 'transfer';
+  const immutableFieldsLocked = isBankDetectedTransaction || isTransferReadOnly;
+
+  const fallbackCategoryId =
+    !categoryIdState && initialData
+      ? categories.find(category => category.name === initialData.category)?.id ?? ''
+      : '';
+  const categoryId = categoryIdState || fallbackCategoryId;
+  const account = accountIdState === '' && !isEditing ? accounts[0]?.id || '' : accountIdState;
 
   const handleCategoryChange = (newCategoryId: string) => {
     setCategoryId(newCategoryId);
@@ -49,29 +53,37 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isTransferReadOnly) {
+      alert('Transfer editing is not supported in this milestone.');
+      return;
+    }
 
     if (!amount) {
       alert("Please enter an amount");
       return;
     }
-    if (!categoryId) {
-      alert("Please select a category");
-      return;
-    }
 
     const selectedCategory = categories.find((c) => c.id === categoryId);
+    const selectedAccount = accounts.find((a) => a.id === account);
+    const selectedSubCategoryId = subCategory
+      ? selectedCategory?.subCategoryIds?.[subCategory]
+      : undefined;
 
     try {
-      onSubmit({
+      await onSubmit({
         ...(initialData?.id ? { id: initialData.id } : {}),
         amount: parseFloat(amount),
         type,
         date: new Date(date),
         category: selectedCategory?.name || "Uncategorized",
+        categoryId: categoryId || null,
         subCategory,
-        accountId: account,
+        subCategoryId: selectedSubCategoryId,
+        accountId: account || null,
+        accountName: selectedAccount?.name,
         description,
       } as Transaction);
 
@@ -88,6 +100,8 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
 
   const selectedCategoryObj = categories.find((c) => c.id === categoryId);
   const subCategories = selectedCategoryObj?.subCategories || [];
+  const showFormDisabledState = categoriesLoading || accountsLoading;
+  const combinedError = categoriesError ?? accountsError;
 
   return (
     <div className="modal-overlay">
@@ -100,6 +114,7 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
         </div>
 
         <form onSubmit={handleSubmit}>
+          {combinedError && <p style={{ color: '#dc2626', marginBottom: 12 }}>{combinedError}</p>}
           <div className="type-toggle-container">
             <div className="type-toggle">
               <button
@@ -108,6 +123,7 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
                   type === "expense" ? "active expense" : ""
                 }`}
                 onClick={() => setType("expense")}
+                disabled={immutableFieldsLocked}
               >
                 Expense
               </button>
@@ -117,11 +133,24 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
                   type === "income" ? "active income" : ""
                 }`}
                 onClick={() => setType("income")}
+                disabled={immutableFieldsLocked}
               >
                 Income
               </button>
             </div>
           </div>
+
+          {isBankDetectedTransaction && (
+            <p style={{ marginBottom: 8 }}>
+              Amount, type, and date cannot be changed for bank-detected transactions.
+            </p>
+          )}
+
+          {isTransferReadOnly && (
+            <p style={{ marginBottom: 8 }}>
+              Transfer editing is disabled until dedicated transfer UX is shipped.
+            </p>
+          )}
 
           <Input
             type="number"
@@ -129,6 +158,7 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
             className="amount-input"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
+            disabled={immutableFieldsLocked}
           />
 
           <BottomSheetDatePicker
@@ -136,6 +166,7 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
             value={date}
             onChange={(e) => setDate(e.target.value)}
             error={!date ? "Date is required" : ""}
+            disabled={immutableFieldsLocked}
           />
 
           <div className="category-section">
@@ -179,7 +210,10 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
             label="Account"
             value={account}
             onChange={(e) => setAccount(e.target.value)}
-            options={accounts.map(acc => ({ value: acc.name, label: acc.name }))}
+            options={[
+              { value: '', label: 'No account' },
+              ...accounts.map(acc => ({ value: acc.id, label: acc.name })),
+            ]}
           />
 
           <Input
@@ -189,7 +223,12 @@ export function TransactionForm({ onSubmit, onClose, initialData = null }: Trans
             placeholder="Add a note"
           />
 
-          <Button type="submit" variant="primary" className="submit-btn">
+          <Button
+            type="submit"
+            variant="primary"
+            className="submit-btn"
+            disabled={showFormDisabledState || isTransferReadOnly}
+          >
             Save Transaction
           </Button>
         </form>

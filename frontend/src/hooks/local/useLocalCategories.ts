@@ -1,11 +1,13 @@
-import { useLocalStorage } from './useLocalStorage';
+import { useLocalStorage } from '../useLocalStorage';
 
 export interface Category {
   id: string;
   name: string;
   icon: string;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'transfer';
   subCategories: string[];
+  subCategoryIds?: Record<string, string>;
+  isSystem?: boolean;
 }
 
 const DEFAULT_CATEGORIES: Category[] = [
@@ -19,7 +21,7 @@ const DEFAULT_CATEGORIES: Category[] = [
   { id: '8', name: 'Investment', icon: 'TrendingUp', type: 'income', subCategories: ['Stocks', 'Crypto', 'Real Estate'] },
 ];
 
-export function useCategories() {
+export function useLocalCategories() {
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', DEFAULT_CATEGORIES);
 
   const addCategory = (category: Omit<Category, 'id'>) => {
@@ -34,7 +36,15 @@ export function useCategories() {
   const addSubCategory = (categoryId: string, subCategoryName: string) => {
     setCategories(categories.map(c => {
       if (c.id === categoryId) {
-        return { ...c, subCategories: [...(c.subCategories || []), subCategoryName] };
+        const subCategoryId = crypto.randomUUID();
+        return {
+          ...c,
+          subCategories: [...(c.subCategories || []), subCategoryName],
+          subCategoryIds: {
+            ...(c.subCategoryIds ?? {}),
+            [subCategoryName]: subCategoryId,
+          },
+        };
       }
       return c;
     }));
@@ -43,7 +53,13 @@ export function useCategories() {
   const deleteSubCategory = (categoryId: string, subCategoryName: string) => {
     setCategories(categories.map(c => {
       if (c.id === categoryId) {
-        return { ...c, subCategories: (c.subCategories || []).filter(s => s !== subCategoryName) };
+        const nextSubCategoryIds = { ...(c.subCategoryIds ?? {}) };
+        delete nextSubCategoryIds[subCategoryName];
+        return {
+          ...c,
+          subCategories: (c.subCategories || []).filter(s => s !== subCategoryName),
+          subCategoryIds: nextSubCategoryIds,
+        };
       }
       return c;
     }));

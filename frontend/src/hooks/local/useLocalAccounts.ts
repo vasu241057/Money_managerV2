@@ -1,10 +1,10 @@
-import { useLocalStorage } from './useLocalStorage';
+import { useLocalStorage } from '../useLocalStorage';
 
 export interface Account {
   id: string;
   name: string;
   type: 'cash' | 'bank' | 'card' | 'other';
-  balance?: number; // Optional initial balance, can be calculated from transactions
+  balance?: number;
 }
 
 const DEFAULT_ACCOUNTS: Account[] = [
@@ -12,7 +12,7 @@ const DEFAULT_ACCOUNTS: Account[] = [
   { id: '2', name: 'Bank Account', type: 'bank' },
 ];
 
-export const useAccounts = () => {
+export function useLocalAccounts() {
   const [accounts, setAccounts] = useLocalStorage<Account[]>('accounts', DEFAULT_ACCOUNTS);
 
   const addAccount = (account: Omit<Account, 'id'>) => {
@@ -25,13 +25,12 @@ export const useAccounts = () => {
   };
 
   const deleteAccount = (id: string) => {
-    // Prevent deleting the last account
     if (accounts.length <= 1) {
-      alert("You must have at least one account.");
+      alert('You must have at least one account.');
       return;
     }
     setAccounts(prev => prev.filter(acc => acc.id !== id));
   };
 
   return { accounts, addAccount, updateAccount, deleteAccount };
-};
+}

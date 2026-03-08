@@ -7,9 +7,16 @@ interface BottomSheetDatePickerProps {
   value: string;
   onChange: (e: { target: { value: string } }) => void;
   error?: string;
+  disabled?: boolean;
 }
 
-export function BottomSheetDatePicker({ label, value, onChange, error }: BottomSheetDatePickerProps) {
+export function BottomSheetDatePicker({
+  label,
+  value,
+  onChange,
+  error,
+  disabled = false,
+}: BottomSheetDatePickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   // Use current date if value is empty/invalid, otherwise parse value
   const [viewDate, setViewDate] = useState(value ? new Date(value) : new Date());
@@ -81,7 +88,12 @@ export function BottomSheetDatePicker({ label, value, onChange, error }: BottomS
       
       <div 
         className="input-field select-trigger" 
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          if (!disabled) {
+            setIsOpen(true);
+          }
+        }}
+        aria-disabled={disabled}
       >
         <span>{formatDateDisplay(value)}</span>
         <Calendar size={16} className="select-arrow" />

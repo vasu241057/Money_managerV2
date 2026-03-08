@@ -10,19 +10,25 @@ interface AccountManagerProps {
 }
 
 export function AccountManager({ onClose }: AccountManagerProps) {
-  const { accounts, addAccount, deleteAccount } = useAccounts();
+  const { accounts, addAccount, deleteAccount, isLoading, error } = useAccounts();
   const [newAccountName, setNewAccountName] = useState('');
   const [type, setType] = useState<Account['type']>('cash');
 
-  const handleAdd = (e: React.FormEvent) => {
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAccountName.trim()) return;
 
-    addAccount({
-      name: newAccountName.trim(),
-      type,
-    });
-    setNewAccountName('');
+    try {
+      await addAccount({
+        name: newAccountName.trim(),
+        type,
+      });
+      setNewAccountName('');
+    } catch (addError) {
+      const message =
+        addError instanceof Error ? addError.message : 'Failed to create account';
+      alert(message);
+    }
   };
 
   const getIcon = (type: Account['type']) => {
@@ -55,6 +61,8 @@ export function AccountManager({ onClose }: AccountManagerProps) {
           ))}
         </div>
 
+        {error && <p style={{ color: '#dc2626', marginBottom: 8 }}>{error}</p>}
+
         <div className="category-list">
           {accounts.map(acc => (
             <div key={acc.id} className="category-wrapper">
@@ -66,9 +74,15 @@ export function AccountManager({ onClose }: AccountManagerProps) {
                 <div className="cat-actions">
                   <button 
                     className="delete-cat-btn"
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      deleteAccount(acc.id);
+                      try {
+                        await deleteAccount(acc.id);
+                      } catch (deleteError) {
+                        const message =
+                          deleteError instanceof Error ? deleteError.message : 'Failed to delete account';
+                        alert(message);
+                      }
                     }}
                   >
                     <Trash2 size={18} />
@@ -85,7 +99,7 @@ export function AccountManager({ onClose }: AccountManagerProps) {
             value={newAccountName}
             onChange={e => setNewAccountName(e.target.value)}
           />
-          <Button type="submit" variant="secondary">
+          <Button type="submit" variant="secondary" disabled={isLoading}>
             <Plus size={18} style={{ marginRight: 8 }} /> Add Account
           </Button>
         </form>

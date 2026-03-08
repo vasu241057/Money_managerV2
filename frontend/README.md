@@ -4,8 +4,8 @@
 
 The frontend now supports two data sources:
 
-- `remote` (default): backend API + React Query cache
-- `local` fallback: legacy localStorage hooks
+- `local` (default): legacy localStorage hooks
+- `remote`: backend API + React Query cache
 
 ### Feature flag
 
