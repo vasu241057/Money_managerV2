@@ -1,5 +1,5 @@
 // ============================================================
-// Money Manager Canonical Data + API Contract (Milestone 0)
+// Money Manager Canonical Data + API Contract (Milestone 1)
 // Source of truth date: 2026-03-08
 //
 // This file is intentionally aligned 1:1 with the agreed SQL schema
@@ -24,6 +24,14 @@ export type OAuthSyncStatus =
 export type AccountType = 'cash' | 'bank' | 'card' | 'other';
 
 export type CategoryType = 'income' | 'expense' | 'transfer';
+
+export type CardNetwork =
+  | 'visa'
+  | 'mastercard'
+  | 'rupay'
+  | 'amex'
+  | 'diners'
+  | 'other';
 
 export type MerchantType =
   | 'MERCHANT'
@@ -101,6 +109,20 @@ export interface AccountRow {
   updated_at: ISODateTimeString;
 }
 
+export interface UserCreditCardRow {
+  id: UUID;
+  user_id: UUID;
+  account_id: UUID;
+  card_label: string;
+  issuer_name: string | null;
+  network: CardNetwork | null;
+  first4: string;
+  last4: string;
+  is_active: boolean;
+  created_at: ISODateTimeString;
+  updated_at: ISODateTimeString;
+}
+
 export interface CategoryRow {
   id: UUID;
   user_id: UUID | null; // null = system/global category
@@ -118,6 +140,8 @@ export interface GlobalMerchantRow {
   default_category_id: UUID | null;
   type: MerchantType;
   is_context_required: boolean;
+  created_at: ISODateTimeString;
+  updated_at: ISODateTimeString;
 }
 
 export interface GlobalMerchantAliasRow {
@@ -133,17 +157,52 @@ export interface UserMerchantRuleRow {
   search_key: string;
   merchant_id: UUID | null;
   custom_category_id: UUID | null;
+  created_at: ISODateTimeString;
+  updated_at: ISODateTimeString;
 }
 
 export interface RawEmailRow {
   id: UUID;
   user_id: UUID;
   oauth_connection_id: UUID | null;
-  source_id: string;
+  source_id: string; // unique per user mailbox (user_id + source_id)
   internal_date: ISODateTimeString;
   clean_text: string;
   status: RawEmailStatus;
   created_at: ISODateTimeString;
+}
+
+export interface StalePendingExtractionRow {
+  user_id: UUID;
+  stale_count: number;
+  oldest_created_at: ISODateTimeString;
+  newest_created_at: ISODateTimeString;
+  snapshot_at: ISODateTimeString;
+}
+
+export interface CreditCardTransactionViewRow {
+  transaction_id: UUID;
+  user_id: UUID;
+  txn_date: ISODateTimeString;
+  amount_in_paise: number;
+  type: TransactionType;
+  status: TransactionStatus;
+  account_id: UUID | null;
+  category_id: UUID | null;
+  category_name: string | null;
+  category_icon: string | null;
+  merchant_id: UUID | null;
+  merchant_name: string | null;
+  financial_event_status: FinancialEventStatus;
+  classification_source: ClassificationSource;
+  user_note: string | null;
+  ai_confidence_score: number | null;
+  credit_card_id: UUID;
+  card_label: string;
+  issuer_name: string | null;
+  network: CardNetwork | null;
+  first4: string;
+  last4: string;
 }
 
 export interface FinancialEventRow {
@@ -170,6 +229,7 @@ export interface TransactionRow {
   account_id: UUID | null;
   category_id: UUID | null;
   merchant_id: UUID | null;
+  credit_card_id: UUID | null;
   amount_in_paise: number; // BIGINT
   type: TransactionType;
   txn_date: ISODateTimeString;
@@ -203,12 +263,14 @@ export interface ListTransactionsQuery extends PageRequest {
   type?: TransactionType;
   account_id?: UUID;
   category_id?: UUID;
+  credit_card_id?: UUID;
 }
 
 export interface TransactionFeedItem {
   transaction: TransactionRow;
   financial_event: FinancialEventRow;
   account: Pick<AccountRow, 'id' | 'name' | 'type'> | null;
+  credit_card: Pick<UserCreditCardRow, 'id' | 'card_label' | 'first4' | 'last4'> | null;
   category: Pick<CategoryRow, 'id' | 'name' | 'type' | 'icon'> | null;
   merchant: Pick<GlobalMerchantRow, 'id' | 'canonical_name' | 'type'> | null;
   raw_email: Pick<RawEmailRow, 'id' | 'source_id' | 'internal_date' | 'status'> | null;
@@ -236,10 +298,43 @@ export interface UpdateTransactionRequest {
   account_id?: UUID | null;
   category_id?: UUID | null;
   merchant_id?: UUID | null;
+  credit_card_id?: UUID | null;
   user_note?: string | null;
   status?: TransactionStatus;
   classification_source?: ClassificationSource;
   ai_confidence_score?: number | null;
+}
+
+export interface CreateUserCreditCardRequest {
+  account_id: UUID;
+  card_label: string;
+  issuer_name?: string | null;
+  network?: CardNetwork | null;
+  first4: string;
+  last4: string;
+  is_active?: boolean;
+}
+
+export interface UpdateUserCreditCardRequest {
+  account_id?: UUID;
+  card_label?: string;
+  issuer_name?: string | null;
+  network?: CardNetwork | null;
+  first4?: string;
+  last4?: string;
+  is_active?: boolean;
+}
+
+export interface ResolveUserCreditCardRequest {
+  user_id: UUID;
+  first4?: string | null;
+  last4: string;
+}
+
+export interface ResolveUserCreditCardResponse {
+  credit_card_id: UUID;
+  account_id: UUID;
+  card_label: string;
 }
 
 export interface UpsertUserMerchantRuleRequest {
@@ -264,18 +359,37 @@ export interface GoogleOAuthConnectionResponse {
 // ── Queue + worker payload contracts (Phase 1/2/3) ──────────
 
 /**
- * Phase 1 dispatcher -> EMAIL_SYNC_QUEUE payload.
+ * Phase 1 cron control-plane envelope.
+ * Scheduled handler enqueues this job first.
  */
-export interface EmailSyncJobPayload {
+export interface EmailSyncDispatchJobPayload {
+  job_type: 'EMAIL_SYNC_DISPATCH';
+  scheduled_time: number;
+  triggered_at: ISODateTimeString;
+  cron: string;
+}
+
+/**
+ * Phase 1 dispatcher -> Phase 2 fetcher per-user sync job.
+ */
+export interface EmailSyncUserJobPayload {
+  job_type: 'EMAIL_SYNC_USER';
   user_id: UUID;
   last_sync_timestamp: number;
 }
+
+/**
+ * Full payload contract for EMAIL_SYNC_QUEUE.
+ * A single queue handles control-plane + per-user jobs, discriminated by job_type.
+ */
+export type EmailSyncJobPayload = EmailSyncDispatchJobPayload | EmailSyncUserJobPayload;
 
 /**
  * Optional Phase 3 queue mode: normalize a bounded set of raw emails.
  * (Phase 3 may also run via cron scanning PENDING_EXTRACTION rows.)
  */
 export interface NormalizeRawEmailsJobPayload {
+  job_type: 'NORMALIZE_RAW_EMAILS';
   raw_email_ids: UUID[];
 }
 
@@ -283,7 +397,9 @@ export interface NormalizeRawEmailsJobPayload {
  * Async AI handoff queue payload for unknown classifications.
  */
 export interface AiClassificationJobPayload {
+  job_type: 'AI_CLASSIFICATION';
   transaction_id: UUID;
+  requested_at: ISODateTimeString;
 }
 
 // ── Extractor contracts (Phase 3 deterministic engine) ──────

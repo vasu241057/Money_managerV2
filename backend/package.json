@@ -3,11 +3,16 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
+		"build": "npm run typecheck",
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
-		"test": "vitest",
-		"cf-typegen": "wrangler types"
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "npm run test:unit",
+		"test:unit": "TMPDIR=/tmp vitest run -c vitest.unit.config.ts",
+		"test:worker": "TMPDIR=/tmp WRANGLER_LOG_PATH=/tmp/wrangler-logs vitest run -c vitest.config.mts",
+		"test:all": "npm run test:unit && npm run test:worker",
+		"cf-typegen": "TMPDIR=/tmp WRANGLER_LOG_PATH=/tmp/wrangler-logs wrangler types"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.12.4",
@@ -15,5 +20,10 @@
 		"typescript": "^5.5.2",
 		"vitest": "~3.2.0",
 		"wrangler": "^4.69.0"
+	},
+	"dependencies": {
+		"@types/express": "^4.17.21",
+		"express": "^4.21.2",
+		"postgres": "^3.4.8"
 	}
 }

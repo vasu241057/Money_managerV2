@@ -11,6 +11,10 @@
     "dev:backend": "npm run dev --workspace=backend",
     "dev": "npm run dev:frontend & npm run dev:backend",
     "build:frontend": "npm run build --workspace=frontend",
-    "build:backend": "npm run build --workspace=backend"
+    "build:backend": "npm run build --workspace=backend",
+    "test": "npm run test --workspace=frontend",
+    "test:backend": "npm run test --workspace=backend",
+    "test:all": "npm run test && npm run test:backend",
+    "lint": "npm run lint --workspace=frontend"
   }
 }
