@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CategoryRow } from '../../../shared/types';
 import { isRemoteDataEnabled } from '../config/data-source';
 import { apiClient, toErrorMessage } from '../lib/api-client';
+import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import { useLocalCategories, type Category } from './local/useLocalCategories';
 
 interface UseCategoriesResult {
@@ -78,11 +79,16 @@ function useRemoteCategories(): UseCategoriesResult {
 
   const categoriesQuery = useQuery({
     queryKey: CATEGORIES_QUERY_KEY,
-    queryFn: () => apiClient.listCategories(),
+    queryFn: async () => {
+      await ensureLegacyLocalDataMigrated();
+      return apiClient.listCategories();
+    },
   });
 
   const addCategoryMutation = useMutation({
     mutationFn: async (category: Omit<Category, 'id'>) => {
+      await ensureLegacyLocalDataMigrated();
+
       const parent = await apiClient.createCategory({
         name: category.name,
         type: category.type,
@@ -114,6 +120,8 @@ function useRemoteCategories(): UseCategoriesResult {
 
   const deleteCategoryMutation = useMutation({
     mutationFn: async (categoryId: string) => {
+      await ensureLegacyLocalDataMigrated();
+
       const rows = categoriesQuery.data ?? [];
       const children = rows.filter(row => row.parent_id === categoryId && !row.is_system);
 
@@ -137,6 +145,8 @@ function useRemoteCategories(): UseCategoriesResult {
       categoryId: string;
       subCategoryName: string;
     }) => {
+      await ensureLegacyLocalDataMigrated();
+
       const rows = categoriesQuery.data ?? [];
       const parent = rows.find(row => row.id === categoryId);
       if (!parent) {
@@ -163,6 +173,8 @@ function useRemoteCategories(): UseCategoriesResult {
       categoryId: string;
       subCategoryName: string;
     }) => {
+      await ensureLegacyLocalDataMigrated();
+
       const rows = categoriesQuery.data ?? [];
       const child = rows.find(
         row => row.parent_id === categoryId && row.name === subCategoryName && !row.is_system,

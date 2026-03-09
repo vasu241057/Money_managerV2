@@ -25,3 +25,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+.dev.vars.example
+backend/.dev.vars.example

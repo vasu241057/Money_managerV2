@@ -4,6 +4,10 @@ import type {
   CreateAccountRequest,
   CreateCategoryRequest,
   CreateManualTransactionRequest,
+  GoogleOAuthCallbackRequest,
+  GoogleOAuthConnectionResponse,
+  GoogleOAuthConnectionStatusResponse,
+  GoogleOAuthStartResponse,
   ListTransactionsQuery,
   PaginatedResponse,
   TransactionFeedItem,
@@ -206,6 +210,39 @@ export const apiClient = {
 
   async deleteTransaction(transactionId: string): Promise<void> {
     await request<void>(`/transactions/${transactionId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async startGoogleOAuth(): Promise<GoogleOAuthStartResponse> {
+    const response = await request<ApiEnvelope<GoogleOAuthStartResponse>>('/oauth/google/start', {
+      method: 'POST',
+    });
+    return response.data;
+  },
+
+  async completeGoogleOAuthCallback(
+    payload: GoogleOAuthCallbackRequest,
+  ): Promise<GoogleOAuthConnectionResponse> {
+    const response = await request<ApiEnvelope<GoogleOAuthConnectionResponse>>(
+      '/oauth/google/callback',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
+    return response.data;
+  },
+
+  async getGoogleOAuthConnectionStatus(): Promise<GoogleOAuthConnectionStatusResponse> {
+    const response = await request<ApiEnvelope<GoogleOAuthConnectionStatusResponse>>(
+      '/oauth/google/connection',
+    );
+    return response.data;
+  },
+
+  async disconnectGoogleOAuth(): Promise<void> {
+    await request<void>('/oauth/google/connection', {
       method: 'DELETE',
     });
   },

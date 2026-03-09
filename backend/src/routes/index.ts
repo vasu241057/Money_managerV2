@@ -4,6 +4,7 @@ import { requireAuthenticatedUser } from '../lib/auth';
 import { createAccountsRouter } from './accounts';
 import { createCategoriesRouter } from './categories';
 import { createHealthRouter } from './health';
+import { createOAuthRouter } from './oauth';
 import { createTransactionsRouter } from './transactions';
 import { createVersionRouter } from './version';
 
@@ -15,6 +16,7 @@ export function createRoutes(): Router {
 	router.use('/accounts', requireAuthenticatedUser, createAccountsRouter());
 	router.use('/categories', requireAuthenticatedUser, createCategoriesRouter());
 	router.use('/transactions', requireAuthenticatedUser, createTransactionsRouter());
+	router.use('/oauth', requireAuthenticatedUser, createOAuthRouter());
 
 	return router;
 }

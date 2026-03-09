@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
 import { TransactionList } from './components/TransactionList';
@@ -8,6 +8,11 @@ import { AccountManager } from './components/AccountManager';
 import { AnalyticsModal } from './components/AnalyticsModal';
 import { SplashScreen } from './components/SplashScreen';
 import { useTransactions, type Transaction } from './hooks/useTransactions';
+import { useGmailConnection, useGmailConnectionForOAuthCallback } from './hooks/useGmailConnection';
+import {
+  parseGoogleOAuthCallbackParams,
+  resolveGoogleOAuthCallbackMessage,
+} from './lib/gmail-oauth';
 import { Plus } from 'lucide-react';
 import './styles/app.css';
 
@@ -19,18 +24,63 @@ function MoneyManagerApp() {
     isLoading: transactionsLoading,
     error: transactionsError,
   } = useTransactions();
+  const {
+    isAvailable: gmailAvailable,
+    connection: gmailConnection,
+    connectGmail,
+    disconnectGmail,
+    isLoading: gmailLoading,
+    error: gmailError,
+  } = useGmailConnection();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [isAccountManagerOpen, setIsAccountManagerOpen] = useState(false);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [viewMode, setViewMode] = useState<'daily' | 'monthly'>('daily');
+  const gmailStatusLabel = gmailAvailable
+    ? (gmailConnection?.sync_status ?? 'DISCONNECTED')
+    : 'UNAVAILABLE';
+  const gmailStatusClass = !gmailAvailable
+    ? 'unavailable'
+    : (gmailConnection?.sync_status.toLowerCase() ?? 'disconnected');
 
   return (
     <Layout>
       <div className="header">
         <h2>My Wallet</h2>
         <div className="header-actions">
+          <span
+            className={`gmail-status-badge ${gmailStatusClass}`}
+          >
+            Gmail: {gmailStatusLabel}
+          </span>
+          {gmailAvailable && gmailConnection ? (
+            <button
+              className="settings-btn"
+              onClick={() => {
+                void disconnectGmail();
+              }}
+              disabled={gmailLoading}
+            >
+              Disconnect Gmail
+            </button>
+          ) : gmailAvailable ? (
+            <button
+              className="settings-btn"
+              onClick={() => {
+                void connectGmail();
+              }}
+              disabled={gmailLoading}
+            >
+              Connect Gmail
+            </button>
+          ) : null}
+          {!gmailAvailable && (
+            <span className="gmail-unavailable-note">
+              Enable remote mode to connect Gmail
+            </span>
+          )}
           <button className="settings-btn" onClick={() => setIsAccountManagerOpen(true)}>
             Accounts
           </button>
@@ -46,6 +96,7 @@ function MoneyManagerApp() {
       />
 
       {transactionsError && <p style={{ color: '#dc2626', margin: '8px 0' }}>{transactionsError}</p>}
+      {gmailError && <p style={{ color: '#dc2626', margin: '8px 0' }}>{gmailError}</p>}
       {transactionsLoading && transactions.length === 0 && (
         <p style={{ margin: '8px 0' }}>Loading transactions...</p>
       )}
@@ -117,7 +168,72 @@ function MoneyManagerApp() {
   );
 }
 
+function GoogleOAuthCallbackScreen() {
+  const {
+    isAvailable: gmailAvailable,
+    completeOAuthCallback,
+    error: callbackError,
+    isLoading,
+  } = useGmailConnectionForOAuthCallback();
+  const hasAttemptedRef = useRef(false);
+  const [callbackCompleted, setCallbackCompleted] = useState(false);
+
+  const callbackParams = parseGoogleOAuthCallbackParams(window.location.search);
+  const { code, state, oauthError, hasCallbackParams } = callbackParams;
+
+  useEffect(() => {
+    if (hasAttemptedRef.current) {
+      return;
+    }
+    if (!hasCallbackParams) {
+      return;
+    }
+    hasAttemptedRef.current = true;
+
+    const oauthCode = code as string;
+    const oauthState = state as string;
+
+    void completeOAuthCallback(oauthCode, oauthState)
+      .then(() => {
+        setCallbackCompleted(true);
+      })
+      .catch(() => undefined);
+  }, [completeOAuthCallback, hasCallbackParams, code, state]);
+
+  const message = resolveGoogleOAuthCallbackMessage({
+    gmailAvailable,
+    oauthError,
+    code,
+    state,
+    callbackError,
+    isLoading,
+    callbackCompleted,
+  });
+
+  const buttonLabel = isLoading ? 'Back to App' : 'Continue';
+
+  return (
+    <Layout>
+      <div style={{ paddingTop: 24 }}>
+        <h2>Gmail Connection</h2>
+        <p style={{ marginTop: 8 }}>{message}</p>
+        <button
+          className="settings-btn"
+          style={{ marginTop: 12 }}
+          onClick={() => {
+            window.location.assign('/');
+          }}
+        >
+          {buttonLabel}
+        </button>
+      </div>
+    </Layout>
+  );
+}
+
 export default function App() {
+  const isOAuthCallbackRoute =
+    typeof window !== 'undefined' && window.location.pathname === '/oauth/google/callback';
   const [showSplash, setShowSplash] = useState(true);
   const [isAppReady, setIsAppReady] = useState(false);
 
@@ -128,6 +244,10 @@ export default function App() {
 
     initApp();
   }, []);
+
+  if (isOAuthCallbackRoute) {
+    return <GoogleOAuthCallbackScreen />;
+  }
 
   return (
     <>

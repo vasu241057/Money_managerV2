@@ -24,6 +24,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: path => path.replace(/^\/api/, ''),
         },
+        '/api/oauth': {
+          target: backendTarget,
+          changeOrigin: true,
+          rewrite: path => path.replace(/^\/api/, ''),
+        },
       },
     },
   }

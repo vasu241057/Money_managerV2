@@ -1,5 +1,6 @@
 import { QUEUE_NAMES } from '../lib/infra';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
+import { runEmailSyncDispatchJob } from './email-sync-dispatcher';
 import {
 	parseAiClassificationJob,
 	parseEmailSyncDispatchJob,
@@ -12,13 +13,23 @@ function retryDelaySeconds(attempts: number): number {
 	return Math.min(60, 2 ** Math.max(0, attempts));
 }
 
-function handleEmailSyncDispatch(body: unknown): void {
+async function handleEmailSyncDispatch(body: unknown, env: Env): Promise<void> {
 	const dispatchJob = parseEmailSyncDispatchJob(body);
+	const result = await runEmailSyncDispatchJob(dispatchJob, env);
 
 	console.info('Processing EMAIL_SYNC_DISPATCH queue job', {
 		cron: dispatchJob.cron,
 		scheduledTime: dispatchJob.scheduled_time,
 		triggeredAt: dispatchJob.triggered_at,
+		pageCount: result.page_count,
+		scannedUsers: result.scanned_user_count,
+		enqueuedUserJobs: result.enqueued_user_job_count,
+		failedUserJobs: result.failed_user_job_count,
+		queueBatches: result.queue_batch_count,
+		markedDormantUsers: result.marked_dormant_user_count,
+		reactivatedUsers: result.reactivated_user_count,
+		continuationOffset: result.continuation_offset,
+		scanUpperUserId: result.scan_upper_user_id,
 	});
 }
 
@@ -40,12 +51,12 @@ function handleAiClassification(body: unknown): void {
 	});
 }
 
-function processMessage(queueName: string, body: unknown): void {
+async function processMessage(queueName: string, body: unknown, env: Env): Promise<void> {
 	switch (queueName) {
 		case QUEUE_NAMES.EMAIL_SYNC: {
 			const jobType = (body as { job_type?: unknown } | null | undefined)?.job_type;
 			if (jobType === 'EMAIL_SYNC_DISPATCH') {
-				handleEmailSyncDispatch(body);
+				await handleEmailSyncDispatch(body, env);
 				return;
 			}
 
@@ -66,12 +77,12 @@ function processMessage(queueName: string, body: unknown): void {
 
 export async function handleQueue(
 	batch: MessageBatch<unknown>,
-	_env: Env,
+	env: Env,
 	_ctx: ExecutionContext,
 ): Promise<void> {
 	for (const message of batch.messages) {
 		try {
-			processMessage(batch.queue, message.body);
+			await processMessage(batch.queue, message.body, env);
 			message.ack();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown queue processing error';

@@ -31,6 +31,9 @@ Routes:
 - `GET/POST/PATCH/DELETE /accounts`
 - `GET/POST/PATCH/DELETE /categories`
 - `GET/POST/PATCH/DELETE /transactions`
+- `POST /oauth/google/start`
+- `POST /oauth/google/callback`
+- `GET/DELETE /oauth/google/connection`
 
 Manual transaction writes are transaction-safe:
 
@@ -50,6 +53,8 @@ npx wrangler secret put CLERK_JWT_AUDIENCE
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
 npx wrangler secret put GOOGLE_OAUTH_REDIRECT_URI
+npx wrangler secret put GOOGLE_OAUTH_STATE_SECRET
+npx wrangler secret put GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY
 npx wrangler secret put OPENROUTER_API_KEY
 ```
 
@@ -69,3 +74,10 @@ curl "http://127.0.0.1:8787/__scheduled?cron=*/10+*+*+*+*"
 ```
 
 You should see scheduled handler logs, then queue handler logs for `EMAIL_SYNC_DISPATCH`.
+
+`EMAIL_SYNC_DISPATCH` now executes Phase 1 control-plane behavior:
+- scans Google `oauth_connections` in pages of `LIMIT 1000 OFFSET n`
+- auto-marks users as `DORMANT` when `users.last_app_open_date` is older than 45 days
+- reactivates `DORMANT` users to `ACTIVE` when they become active again
+- enqueues `EMAIL_SYNC_USER` jobs in `sendBatch` slices of 100 messages
+- uses continuation payload (`start_offset`, `scan_upper_user_id`) when a single invocation reaches page budget

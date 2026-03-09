@@ -21,6 +21,18 @@ function isFiniteNumber(value: unknown): value is number {
 	return typeof value === 'number' && Number.isFinite(value);
 }
 
+function isOptionalNonNegativeInteger(value: unknown): boolean {
+	if (value === undefined) {
+		return true;
+	}
+
+	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isOptionalNonEmptyString(value: unknown): value is string | undefined {
+	return value === undefined || (typeof value === 'string' && value.length > 0);
+}
+
 export function isEmailSyncDispatchJob(value: unknown): value is EmailSyncDispatchJob {
 	if (!isRecord(value)) {
 		return false;
@@ -30,7 +42,9 @@ export function isEmailSyncDispatchJob(value: unknown): value is EmailSyncDispat
 		value.job_type === 'EMAIL_SYNC_DISPATCH' &&
 		isFiniteNumber(value.scheduled_time) &&
 		typeof value.triggered_at === 'string' &&
-		typeof value.cron === 'string'
+		typeof value.cron === 'string' &&
+		isOptionalNonNegativeInteger(value.start_offset) &&
+		isOptionalNonEmptyString(value.scan_upper_user_id)
 	);
 }
 

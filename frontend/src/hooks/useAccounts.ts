@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isRemoteDataEnabled } from '../config/data-source';
 import { apiClient, toErrorMessage } from '../lib/api-client';
+import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import { paiseToRupees, rupeesToPaise } from '../lib/money';
 import { useLocalAccounts, type Account } from './local/useLocalAccounts';
 
@@ -40,37 +41,49 @@ function useRemoteAccounts(): UseAccountsResult {
 
   const accountsQuery = useQuery({
     queryKey: ACCOUNTS_QUERY_KEY,
-    queryFn: () => apiClient.listAccounts(),
+    queryFn: async () => {
+      await ensureLegacyLocalDataMigrated();
+      return apiClient.listAccounts();
+    },
   });
 
   const addAccountMutation = useMutation({
-    mutationFn: (account: Omit<Account, 'id'>) =>
-      apiClient.createAccount({
+    mutationFn: async (account: Omit<Account, 'id'>) => {
+      await ensureLegacyLocalDataMigrated();
+
+      return apiClient.createAccount({
         name: account.name,
         type: account.type,
         initial_balance_in_paise:
           account.balance === undefined ? undefined : rupeesToPaise(account.balance),
-      }),
+      });
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ACCOUNTS_QUERY_KEY });
     },
   });
 
   const updateAccountMutation = useMutation({
-    mutationFn: ({ id, updates }: { id: string; updates: Partial<Omit<Account, 'id'>> }) =>
-      apiClient.updateAccount(id, {
+    mutationFn: async ({ id, updates }: { id: string; updates: Partial<Omit<Account, 'id'>> }) => {
+      await ensureLegacyLocalDataMigrated();
+
+      return apiClient.updateAccount(id, {
         name: updates.name,
         type: updates.type,
         initial_balance_in_paise:
           updates.balance === undefined ? undefined : rupeesToPaise(updates.balance),
-      }),
+      });
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ACCOUNTS_QUERY_KEY });
     },
   });
 
   const deleteAccountMutation = useMutation({
-    mutationFn: (accountId: string) => apiClient.deleteAccount(accountId),
+    mutationFn: async (accountId: string) => {
+      await ensureLegacyLocalDataMigrated();
+      return apiClient.deleteAccount(accountId);
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ACCOUNTS_QUERY_KEY });
       await queryClient.invalidateQueries({ queryKey: ['transactions'] });

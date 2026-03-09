@@ -56,6 +56,54 @@ describe('transaction adapter helpers', () => {
     ).toBe('category-id');
   });
 
+  it('retains existing nested sub-category id when selected category path is not UI-representable', () => {
+    const submitted = {
+      ...BASE_TRANSACTION,
+      categoryId: 'nested-food',
+      subCategoryId: null,
+    };
+    const current = {
+      type: 'expense' as const,
+      categoryId: 'nested-food',
+      subCategoryId: 'nested-groceries',
+    };
+    const categoriesById = new Map([
+      ['nested-food', { parent_id: 'expense-root' }],
+      ['nested-groceries', { parent_id: 'nested-food' }],
+    ]);
+
+    expect(
+      resolvePersistedCategoryId(submitted, {
+        current,
+        categoriesById,
+      }),
+    ).toBe('nested-groceries');
+  });
+
+  it('allows clearing sub-category when selected category is top-level', () => {
+    const submitted = {
+      ...BASE_TRANSACTION,
+      categoryId: 'food-root',
+      subCategoryId: null,
+    };
+    const current = {
+      type: 'expense' as const,
+      categoryId: 'food-root',
+      subCategoryId: 'groceries-child',
+    };
+    const categoriesById = new Map([
+      ['food-root', { parent_id: null }],
+      ['groceries-child', { parent_id: 'food-root' }],
+    ]);
+
+    expect(
+      resolvePersistedCategoryId(submitted, {
+        current,
+        categoriesById,
+      }),
+    ).toBe('food-root');
+  });
+
   it('detects immutable field edits', () => {
     expect(
       areImmutableFieldsChanged(BASE_TRANSACTION, {

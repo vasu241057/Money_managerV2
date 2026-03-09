@@ -79,6 +79,7 @@ Declared in `shared/types.ts`:
 - Card resolver: `ResolveUserCreditCardRequest`, `ResolveUserCreditCardResponse`
 - Merchant overrides: `UpsertUserMerchantRuleRequest`
 - OAuth: `GoogleOAuthStartResponse`, `GoogleOAuthCallbackRequest`, `GoogleOAuthConnectionResponse`
+  - `GoogleOAuthConnectionStatusResponse`
 
 ### Auth context for backend CRUD (Milestone 4)
 
@@ -91,6 +92,14 @@ Declared in `shared/types.ts`:
   - `CLERK_JWT_AUDIENCE` (optional, comma-separated)
 - Internal persistence maps Clerk `sub` -> deterministic UUIDv5 for `users.id`.
 
+### OAuth API surface (Milestone 7)
+
+- `POST /oauth/google/start` -> returns Google consent URL with signed state
+- `POST /oauth/google/callback` -> exchanges code, upserts `oauth_connections`, returns redacted connection
+- `GET /oauth/google/connection` -> returns latest Google connection status or `null`
+- `DELETE /oauth/google/connection` -> clears tokens and sets `sync_status = 'AUTH_REVOKED'`
+- Backend stores OAuth tokens encrypted at rest in `oauth_connections` (`access_token`, `refresh_token`).
+
 ## 6. Queue Payload Contract (Phase 1/2/3)
 
 Declared in `shared/types.ts`:
@@ -98,12 +107,26 @@ Declared in `shared/types.ts`:
 - `EMAIL_SYNC_QUEUE` uses discriminated union `EmailSyncJobPayload`:
   - `EmailSyncDispatchJobPayload`
     - `{ job_type: 'EMAIL_SYNC_DISPATCH', scheduled_time, triggered_at, cron }`
+    - optional continuation fields:
+      - `start_offset` (non-negative integer)
+      - `scan_upper_user_id` (UUID anchor)
   - `EmailSyncUserJobPayload`
     - `{ job_type: 'EMAIL_SYNC_USER', user_id, last_sync_timestamp }`
 - Phase 3 optional queue mode: `NormalizeRawEmailsJobPayload`
   - `{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids }`
 - Async AI handoff queue: `AiClassificationJobPayload`
   - `{ job_type: 'AI_CLASSIFICATION', transaction_id, requested_at }`
+
+### Phase 1 dispatcher behavior (Milestone 8)
+
+- Cron remains `*/10 * * * *` and enqueues `EMAIL_SYNC_DISPATCH`.
+- Dispatcher scans Google connections via paginated loop (`LIMIT 1000 OFFSET n`) with deterministic ordering.
+- Dispatcher may emit continuation `EMAIL_SYNC_DISPATCH` jobs with `start_offset` and `scan_upper_user_id` for bounded per-invocation runtime.
+- Dormancy guard:
+  - if `users.last_app_open_date` is older than 45 days, mark matching Google connections as `DORMANT` and skip enqueue.
+  - otherwise ensure Google connections are `ACTIVE` and enqueue one `EMAIL_SYNC_USER` job per eligible user.
+- Queue throughput guard:
+  - `EMAIL_SYNC_USER` jobs are sent in batches of 100 messages using `sendBatch`.
 
 ## 7. Financial Event Mapping Clarification
 

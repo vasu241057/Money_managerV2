@@ -1,3 +1,4 @@
+import type { CategoryRow } from '../../../shared/types';
 import type { Transaction } from '../hooks/local/useLocalTransactions';
 
 export function normalizeOptionalId(value: string | null | undefined): string | null {
@@ -19,8 +20,43 @@ export function normalizeOptionalText(value: string | undefined): string | null 
 
 export function resolvePersistedCategoryId(
   transaction: Omit<Transaction, 'id'> | Transaction,
+  options?: {
+    current?: Pick<Transaction, 'type' | 'categoryId' | 'subCategoryId'> | null;
+    categoriesById?: ReadonlyMap<string, Pick<CategoryRow, 'parent_id'>>;
+  },
 ): string | null {
-  return normalizeOptionalId(transaction.subCategoryId ?? transaction.categoryId);
+  const selectedSubCategoryId = normalizeOptionalId(transaction.subCategoryId);
+  if (selectedSubCategoryId) {
+    return selectedSubCategoryId;
+  }
+
+  const selectedCategoryId = normalizeOptionalId(transaction.categoryId);
+  const current = options?.current;
+  const categoryLookup = options?.categoriesById;
+  const currentSubCategoryId = normalizeOptionalId(current?.subCategoryId);
+  const currentCategoryId = normalizeOptionalId(current?.categoryId);
+
+  if (
+    selectedCategoryId &&
+    current &&
+    categoryLookup &&
+    transaction.type === current.type &&
+    currentSubCategoryId &&
+    currentCategoryId === selectedCategoryId
+  ) {
+    const selectedCategory = categoryLookup.get(selectedCategoryId);
+    const currentSubCategory = categoryLookup.get(currentSubCategoryId);
+
+    const isUnsupportedNestedPath =
+      selectedCategory?.parent_id !== null &&
+      currentSubCategory?.parent_id === selectedCategoryId;
+
+    if (isUnsupportedNestedPath) {
+      return currentSubCategoryId;
+    }
+  }
+
+  return selectedCategoryId;
 }
 
 export function areImmutableFieldsChanged(current: Transaction, next: Transaction): boolean {

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AccountRow, CategoryRow, TransactionFeedItem } from '../../../shared/types';
 import { isRemoteDataEnabled } from '../config/data-source';
 import { apiClient, toErrorMessage } from '../lib/api-client';
+import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import { paiseToRupees, rupeesToPaise } from '../lib/money';
 import {
   areImmutableFieldsChanged,
@@ -81,6 +82,8 @@ function mapFeedItemToUiTransaction(
 }
 
 async function listAllTransactions(): Promise<TransactionFeedItem[]> {
+  await ensureLegacyLocalDataMigrated();
+
   const limit = 200;
   let page = 1;
   const allItems: TransactionFeedItem[] = [];
@@ -118,12 +121,18 @@ function useRemoteTransactions(): UseTransactionsResult {
 
   const accountsQuery = useQuery({
     queryKey: ACCOUNTS_QUERY_KEY,
-    queryFn: () => apiClient.listAccounts(),
+    queryFn: async () => {
+      await ensureLegacyLocalDataMigrated();
+      return apiClient.listAccounts();
+    },
   });
 
   const categoriesQuery = useQuery({
     queryKey: CATEGORIES_QUERY_KEY,
-    queryFn: () => apiClient.listCategories(),
+    queryFn: async () => {
+      await ensureLegacyLocalDataMigrated();
+      return apiClient.listCategories();
+    },
   });
 
   const transactionsQuery = useQuery({
@@ -153,7 +162,8 @@ function useRemoteTransactions(): UseTransactionsResult {
 
   const upsertTransactionMutation = useMutation({
     mutationFn: async (transactionInput: Omit<Transaction, 'id'> | Transaction) => {
-      const categoryIdToPersist = resolvePersistedCategoryId(transactionInput);
+      await ensureLegacyLocalDataMigrated();
+
       const accountIdToPersist = normalizeOptionalId(transactionInput.accountId);
 
       if ('id' in transactionInput && transactionInput.id) {
@@ -161,6 +171,11 @@ function useRemoteTransactions(): UseTransactionsResult {
         if (!existing) {
           throw new Error('Transaction not found. Refresh and try again.');
         }
+
+        const categoryIdToPersist = resolvePersistedCategoryId(transactionInput, {
+          current: existing,
+          categoriesById,
+        });
 
         if (areImmutableFieldsChanged(existing, transactionInput)) {
           if (!existing.isManual) {
@@ -200,6 +215,7 @@ function useRemoteTransactions(): UseTransactionsResult {
         return mapFeedItemToUiTransaction(updated, accountsById, categoriesById);
       }
 
+      const categoryIdToPersist = resolvePersistedCategoryId(transactionInput);
       const created = await apiClient.createManualTransaction({
         amount_in_paise: rupeesToPaise(transactionInput.amount),
         type: transactionInput.type,
@@ -217,7 +233,10 @@ function useRemoteTransactions(): UseTransactionsResult {
   });
 
   const deleteTransactionMutation = useMutation({
-    mutationFn: (transactionId: string) => apiClient.deleteTransaction(transactionId),
+    mutationFn: async (transactionId: string) => {
+      await ensureLegacyLocalDataMigrated();
+      return apiClient.deleteTransaction(transactionId);
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
     },

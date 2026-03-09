@@ -384,6 +384,10 @@ export interface GoogleOAuthConnectionResponse {
   connection: OauthConnectionRow;
 }
 
+export interface GoogleOAuthConnectionStatusResponse {
+  connection: OauthConnectionRow | null;
+}
+
 // ── Queue + worker payload contracts (Phase 1/2/3) ──────────
 
 /**
@@ -395,6 +399,16 @@ export interface EmailSyncDispatchJobPayload {
   scheduled_time: number;
   triggered_at: ISODateTimeString;
   cron: string;
+  /**
+   * Optional continuation offset used when dispatcher slices long runs.
+   * Defaults to 0 when omitted.
+   */
+  start_offset?: number;
+  /**
+   * Optional stable scan anchor to reduce OFFSET drift from concurrent inserts.
+   * When set, dispatcher scans users with id <= scan_upper_user_id.
+   */
+  scan_upper_user_id?: UUID;
 }
 
 /**

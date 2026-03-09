@@ -9,6 +9,8 @@ declare namespace Cloudflare {
 		GOOGLE_CLIENT_ID?: string;
 		GOOGLE_CLIENT_SECRET?: string;
 		GOOGLE_OAUTH_REDIRECT_URI?: string;
+		GOOGLE_OAUTH_STATE_SECRET?: string;
+		GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY?: string;
 		OPENROUTER_API_KEY?: string;
 	}
 }

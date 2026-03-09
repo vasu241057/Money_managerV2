@@ -1,4 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { runEmailSyncDispatchJobMock } = vi.hoisted(() => ({
+	runEmailSyncDispatchJobMock: vi.fn().mockResolvedValue({
+		page_count: 0,
+		scanned_user_count: 0,
+		enqueued_user_job_count: 0,
+		failed_user_job_count: 0,
+		queue_batch_count: 0,
+		marked_dormant_user_count: 0,
+		reactivated_user_count: 0,
+		continuation_offset: null,
+		scan_upper_user_id: null,
+	}),
+}));
+
+vi.mock('../src/workers/email-sync-dispatcher', () => ({
+	runEmailSyncDispatchJob: runEmailSyncDispatchJobMock,
+}));
 
 import { QUEUE_NAMES } from '../src/lib/infra';
 import { handleQueue } from '../src/workers/queue.worker';
@@ -28,6 +46,10 @@ function createMessage(body: unknown, attempts: number): MessageHarness {
 }
 
 describe('queue.worker', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
 	it('acks valid EMAIL_SYNC_DISPATCH messages', async () => {
 		const harness = createMessage(
 			{
@@ -50,6 +72,7 @@ describe('queue.worker', () => {
 			{} as ExecutionContext,
 		);
 
+		expect(runEmailSyncDispatchJobMock).toHaveBeenCalledTimes(1);
 		expect(harness.ack).toHaveBeenCalledTimes(1);
 		expect(harness.retry).not.toHaveBeenCalled();
 	});

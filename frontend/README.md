@@ -54,5 +54,35 @@ Vite proxies these backend routes to `VITE_DEV_API_PROXY_TARGET`:
 - `/api/accounts`
 - `/api/categories`
 - `/api/transactions`
+- `/api/oauth`
 
 This avoids conflicts with existing `/api/analyze` usage.
+
+## Milestone 6 One-time localStorage bridge
+
+When `remote` mode is enabled and a valid Clerk token is available, the frontend now runs a one-time migration for that authenticated user:
+
+- Reads legacy localStorage keys: `accounts`, `categories`, `transactions`
+- Migrates relations in order: accounts -> categories/sub-categories -> transactions
+- Converts rupees to paise before API writes
+- Writes deterministic legacy transaction markers into `financial_events.instrument_id` (prefix: `legacy-local:v1:`) so retry runs can skip already-migrated rows
+- Stores per-user completion marker in localStorage (`money-manager:legacy-migration:v1:<issuer>:<subject>`)
+
+The completion marker is written only after a successful run and prevents duplicate migration on subsequent app loads for the same Clerk identity.
+
+## Milestone 7 Gmail OAuth UX
+
+- Header now shows Gmail sync status badge:
+  - `ACTIVE`
+  - `DORMANT`
+  - `AUTH_REVOKED`
+  - `ERROR_PAUSED`
+  - fallback `DISCONNECTED` when no connection exists
+- Connect flow:
+  - `Connect Gmail` calls backend `POST /oauth/google/start`
+  - Browser redirects to Google consent screen
+  - Google callback returns to `/oauth/google/callback`
+  - Frontend completes handshake via backend `POST /oauth/google/callback`
+- Disconnect flow:
+  - `Disconnect Gmail` calls backend `DELETE /oauth/google/connection`
+  - Backend clears tokens and marks status `AUTH_REVOKED`

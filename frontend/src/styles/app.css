@@ -27,6 +27,60 @@
   cursor: pointer;
 }
 
+.settings-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.gmail-status-badge {
+  border: 1px solid var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.gmail-status-badge.active {
+  color: #166534;
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.gmail-status-badge.dormant {
+  color: #854d0e;
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.gmail-status-badge.auth_revoked {
+  color: #991b1b;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.gmail-status-badge.error_paused {
+  color: #7c2d12;
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.gmail-status-badge.disconnected {
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+}
+
+.gmail-status-badge.unavailable {
+  color: #6b7280;
+  border-color: #d1d5db;
+  background: #f9fafb;
+}
+
+.gmail-unavailable-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .view-toggle {
   display: flex;
   background: var(--bg-tertiary);
