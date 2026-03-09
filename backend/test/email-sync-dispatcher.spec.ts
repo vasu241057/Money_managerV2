@@ -77,6 +77,7 @@ describe('email-sync-dispatcher', () => {
 			(query, values) => {
 				expect(query).toContain('limit');
 				expect(query).toContain('offset');
+				expect(query).toContain("oc.sync_status in ('ACTIVE', 'DORMANT')");
 				expect(values[0]).toBe(scanUpperUserId);
 				expect(values[1]).toBe(1000);
 				expect(values[2]).toBe(0);
@@ -85,6 +86,7 @@ describe('email-sync-dispatcher', () => {
 			(query, values) => {
 				expect(query).toContain('limit');
 				expect(query).toContain('offset');
+				expect(query).toContain("oc.sync_status in ('ACTIVE', 'DORMANT')");
 				expect(values[0]).toBe(scanUpperUserId);
 				expect(values[1]).toBe(1000);
 				expect(values[2]).toBe(1000);
@@ -250,7 +252,7 @@ describe('email-sync-dispatcher', () => {
 		expect(result.scan_upper_user_id).toBe(scanUpperUserId);
 	});
 
-	it('falls back to per-message sends when sendBatch keeps failing', async () => {
+	it('counts chunk as failed when sendBatch fails', async () => {
 		const nowMs = Date.parse('2026-03-09T00:00:00.000Z');
 		const scanUpperUserId = buildUserId(9_999);
 		const sql = createSqlMock([
@@ -267,10 +269,10 @@ describe('email-sync-dispatcher', () => {
 			scan_upper_user_id: scanUpperUserId,
 		});
 
-		expect(sendBatch).toHaveBeenCalledTimes(3);
-		expect(send).toHaveBeenCalledTimes(2);
-		expect(result.enqueued_user_job_count).toBe(2);
-		expect(result.failed_user_job_count).toBe(0);
+		expect(sendBatch).toHaveBeenCalledTimes(1);
+		expect(send).not.toHaveBeenCalled();
+		expect(result.enqueued_user_job_count).toBe(0);
+		expect(result.failed_user_job_count).toBe(2);
 		expect(result.queue_batch_count).toBe(0);
 	});
 

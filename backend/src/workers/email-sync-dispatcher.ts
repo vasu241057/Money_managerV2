@@ -10,8 +10,7 @@ const USER_JOB_BATCH_SIZE = 100;
 const DORMANT_INACTIVITY_DAYS = 45;
 const DORMANT_INACTIVITY_MS = DORMANT_INACTIVITY_DAYS * 24 * 60 * 60 * 1000;
 const MAX_PAGES_PER_INVOCATION = 250;
-const BATCH_SEND_ATTEMPTS = 3;
-const SINGLE_SEND_ATTEMPTS = 3;
+const CONTINUATION_SEND_ATTEMPTS = 3;
 
 interface DispatchCandidateRowRaw {
 	user_id: unknown;
@@ -148,6 +147,7 @@ async function resolveScanUpperUserId(sql: SqlClient): Promise<UUID | null> {
 		select max(oc.user_id) as max_user_id
 		from public.oauth_connections as oc
 		where oc.provider = 'google'
+			and oc.sync_status in ('ACTIVE', 'DORMANT')
 	`;
 
 	const scanUpperUserId = parseOptionalNonEmptyString(rows[0]?.max_user_id, 'max_user_id');
@@ -161,7 +161,7 @@ async function listDispatchCandidatePage(
 ): Promise<DispatchCandidateRow[]> {
 	if (scanUpperUserId) {
 		const rows = await sql<DispatchCandidateRowRaw[]>`
-			-- Scan all Google connections under a stable user-id anchor to reduce OFFSET drift.
+			-- Scan ACTIVE + DORMANT connections under a stable user-id anchor.
 			select
 				u.id as user_id,
 				-- Use the oldest sync cursor per user to avoid skipping lagging linked mailboxes.
@@ -173,6 +173,7 @@ async function listDispatchCandidatePage(
 			join public.users as u
 				on u.id = oc.user_id
 			where oc.provider = 'google'
+				and oc.sync_status in ('ACTIVE', 'DORMANT')
 				and u.id <= ${scanUpperUserId}
 			group by u.id, u.last_app_open_date
 			order by u.id asc
@@ -194,6 +195,7 @@ async function listDispatchCandidatePage(
 		join public.users as u
 			on u.id = oc.user_id
 		where oc.provider = 'google'
+			and oc.sync_status in ('ACTIVE', 'DORMANT')
 		group by u.id, u.last_app_open_date
 		order by u.id asc
 		limit ${DISPATCH_PAGE_LIMIT}
@@ -243,43 +245,16 @@ async function trySendBatch(
 	jobs: ReturnType<typeof buildEmailSyncUserJob>[],
 ): Promise<boolean> {
 	const requests = buildBatchRequests(jobs);
-
-	for (let attempt = 1; attempt <= BATCH_SEND_ATTEMPTS; attempt += 1) {
-		try {
-			await queue.sendBatch(requests);
-			return true;
-		} catch (error) {
-			console.warn('sendBatch attempt failed for EMAIL_SYNC_USER chunk', {
-				attempt,
-				attemptsMax: BATCH_SEND_ATTEMPTS,
-				chunkSize: jobs.length,
-				error: toErrorMessage(error),
-			});
-		}
+	try {
+		await queue.sendBatch(requests);
+		return true;
+	} catch (error) {
+		console.warn('sendBatch failed for EMAIL_SYNC_USER chunk', {
+			chunkSize: jobs.length,
+			error: toErrorMessage(error),
+		});
+		return false;
 	}
-
-	return false;
-}
-
-async function trySendSingle(
-	queue: Queue<EmailSyncJobPayload>,
-	job: ReturnType<typeof buildEmailSyncUserJob>,
-): Promise<boolean> {
-	for (let attempt = 1; attempt <= SINGLE_SEND_ATTEMPTS; attempt += 1) {
-		try {
-			await queue.send(job, { contentType: 'json' });
-			return true;
-		} catch (error) {
-			console.warn('queue.send attempt failed for EMAIL_SYNC_USER payload', {
-				attempt,
-				attemptsMax: SINGLE_SEND_ATTEMPTS,
-				userId: job.user_id,
-				error: toErrorMessage(error),
-			});
-		}
-	}
-
-	return false;
 }
 
 async function enqueueUserJobs(
@@ -305,17 +280,7 @@ async function enqueueUserJobs(
 			continue;
 		}
 
-		console.warn('Falling back to per-message sends after sendBatch failures', {
-			chunkSize: chunk.length,
-		});
-		for (const job of chunk) {
-			const sent = await trySendSingle(queue, job);
-			if (sent) {
-				result.enqueued_job_count += 1;
-			} else {
-				result.failed_job_count += 1;
-			}
-		}
+		result.failed_job_count += chunk.length;
 	}
 
 	return result;
@@ -407,11 +372,6 @@ export async function dispatchEmailSyncUsers(
 				continue;
 			}
 
-			// Skip non-eligible rows (e.g., users with only AUTH_REVOKED / ERROR_PAUSED connections).
-			if (!candidate.has_active_connections && !candidate.has_dormant_connections) {
-				continue;
-			}
-
 			if (candidate.has_dormant_connections) {
 				activeUserIds.push(candidate.user_id);
 			}
@@ -451,6 +411,27 @@ export async function dispatchEmailSyncUsers(
 	return result;
 }
 
+async function enqueueContinuationDispatchJob(
+	queue: Queue<EmailSyncJobPayload>,
+	job: EmailSyncDispatchJob,
+): Promise<boolean> {
+	for (let attempt = 1; attempt <= CONTINUATION_SEND_ATTEMPTS; attempt += 1) {
+		try {
+			await queue.send(job, { contentType: 'json' });
+			return true;
+		} catch (error) {
+			console.warn('Failed to enqueue dispatcher continuation job', {
+				attempt,
+				attemptsMax: CONTINUATION_SEND_ATTEMPTS,
+				nextOffset: job.start_offset ?? 0,
+				error: toErrorMessage(error),
+			});
+		}
+	}
+
+	return false;
+}
+
 export async function runEmailSyncDispatchJob(
 	dispatchJob: EmailSyncDispatchJob,
 	env: Env,
@@ -487,19 +468,31 @@ export async function runEmailSyncDispatchJob(
 			continuationJob.scan_upper_user_id = result.scan_upper_user_id;
 		}
 
-		try {
-			await env.EMAIL_SYNC_QUEUE.send(continuationJob, {
-				contentType: 'json',
-			});
-		} catch (error) {
-			console.error('Failed to enqueue dispatcher continuation job; next cron run will recover', {
+		const continuationQueued = await enqueueContinuationDispatchJob(
+			env.EMAIL_SYNC_QUEUE,
+			continuationJob,
+		);
+		if (!continuationQueued) {
+			const hasPriorProgress = result.enqueued_user_job_count > 0;
+			if (!hasPriorProgress) {
+				throw new Error(
+					`Failed to enqueue dispatcher continuation at offset ${result.continuation_offset}`,
+				);
+			}
+
+			console.error('Failed to enqueue continuation after partial progress; next cron run will recover', {
 				nextOffset: result.continuation_offset,
-				error: toErrorMessage(error),
 			});
 		}
 	}
 
 	if (result.failed_user_job_count > 0) {
+		if (result.enqueued_user_job_count === 0) {
+			throw new Error(
+				`Failed to enqueue ${result.failed_user_job_count} EMAIL_SYNC_USER jobs`,
+			);
+		}
+
 		console.warn('Dispatcher could not enqueue all EMAIL_SYNC_USER jobs; next cron run will backfill', {
 			failedUserJobCount: result.failed_user_job_count,
 		});
