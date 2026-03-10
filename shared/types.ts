@@ -418,6 +418,14 @@ export interface EmailSyncUserJobPayload {
   job_type: 'EMAIL_SYNC_USER';
   user_id: UUID;
   last_sync_timestamp: number;
+  /**
+   * Optional continuation fields used when Phase 2 fetcher slices a deep Gmail
+   * pagination chain across multiple queue jobs.
+   */
+  continuation_connection_id?: UUID;
+  continuation_page_token?: string;
+  continuation_after_seconds?: number;
+  continuation_max_internal_timestamp_seen?: number;
 }
 
 /**
@@ -430,8 +438,13 @@ export type EmailSyncJobPayload = EmailSyncDispatchJobPayload | EmailSyncUserJob
  * Optional Phase 3 queue mode: normalize a bounded set of raw emails.
  * (Phase 3 may also run via cron scanning PENDING_EXTRACTION rows.)
  */
+export const NORMALIZE_RAW_EMAILS_MAX_IDS = 250;
+
 export interface NormalizeRawEmailsJobPayload {
   job_type: 'NORMALIZE_RAW_EMAILS';
+  /**
+   * Bounded to NORMALIZE_RAW_EMAILS_MAX_IDS for predictable worker latency.
+   */
   raw_email_ids: UUID[];
 }
 

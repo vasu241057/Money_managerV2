@@ -1,10 +1,13 @@
 import { QUEUE_NAMES } from '../lib/infra';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
 import { runEmailSyncDispatchJob } from './email-sync-dispatcher';
+import { runEmailSyncUserJob } from './email-sync-fetcher';
+import { runNormalizeRawEmailsJob } from './email-normalizer';
 import {
 	parseAiClassificationJob,
 	parseEmailSyncDispatchJob,
 	parseEmailSyncUserJob,
+	parseNormalizeRawEmailsJob,
 } from './queue.messages';
 
 const MAX_PROCESSING_ATTEMPTS = 5;
@@ -33,12 +36,35 @@ async function handleEmailSyncDispatch(body: unknown, env: Env): Promise<void> {
 	});
 }
 
-function handleEmailSyncUser(body: unknown): void {
+async function handleEmailSyncUser(body: unknown, env: Env): Promise<void> {
 	const syncJob = parseEmailSyncUserJob(body);
+	const result = await runEmailSyncUserJob(syncJob, env);
 
 	console.info('Processing EMAIL_SYNC_USER queue job', {
 		userId: syncJob.user_id,
 		lastSyncTimestamp: syncJob.last_sync_timestamp,
+		connectionCount: result.connection_count,
+		processedConnectionCount: result.processed_connection_count,
+		revokedConnectionCount: result.revoked_connection_count,
+		fetchedMessageCount: result.fetched_message_count,
+		insertedOrRetriedRawEmailCount: result.inserted_or_retried_raw_email_count,
+		skippedExistingRawEmailCount: result.skipped_existing_raw_email_count,
+	});
+}
+
+async function handleNormalizeRawEmails(body: unknown, env: Env): Promise<void> {
+	const normalizeJob = parseNormalizeRawEmailsJob(body);
+	const result = await runNormalizeRawEmailsJob(normalizeJob, env);
+
+	console.info('Processing NORMALIZE_RAW_EMAILS queue job', {
+		requestedRawEmailCount: result.requested_raw_email_count,
+		processedRawEmailCount: result.processed_raw_email_count,
+		ignoredRawEmailCount: result.ignored_raw_email_count,
+		unrecognizedRawEmailCount: result.unrecognized_raw_email_count,
+		skippedRawEmailCount: result.skipped_raw_email_count,
+		createdTransactionCount: result.created_transaction_count,
+		needsReviewTransactionCount: result.needs_review_transaction_count,
+		aiEnqueuedCount: result.ai_enqueued_count,
 	});
 }
 
@@ -61,7 +87,12 @@ async function processMessage(queueName: string, body: unknown, env: Env): Promi
 			}
 
 			if (jobType === 'EMAIL_SYNC_USER') {
-				handleEmailSyncUser(body);
+				await handleEmailSyncUser(body, env);
+				return;
+			}
+
+			if (jobType === 'NORMALIZE_RAW_EMAILS') {
+				await handleNormalizeRawEmails(body, env);
 				return;
 			}
 

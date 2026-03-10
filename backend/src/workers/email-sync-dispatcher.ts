@@ -11,6 +11,8 @@ const DORMANT_INACTIVITY_DAYS = 45;
 const DORMANT_INACTIVITY_MS = DORMANT_INACTIVITY_DAYS * 24 * 60 * 60 * 1000;
 const MAX_PAGES_PER_INVOCATION = 250;
 const CONTINUATION_SEND_ATTEMPTS = 3;
+const UUID_REGEX =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface DispatchCandidateRowRaw {
 	user_id: unknown;
@@ -41,6 +43,7 @@ interface EnqueueUserJobsResult {
 export interface EmailSyncDispatchOptions {
 	start_offset?: number;
 	scan_upper_user_id?: UUID;
+	snapshot_time_ms?: number;
 	max_pages_per_invocation?: number;
 }
 
@@ -64,20 +67,20 @@ function toErrorMessage(error: unknown): string {
 	return typeof error === 'string' ? error : 'Unknown error';
 }
 
-function parseNonEmptyString(value: unknown, fieldName: string): string {
-	if (typeof value !== 'string' || value.length === 0) {
-		throw new Error(`${fieldName} must be a non-empty string`);
+function parseUuid(value: unknown, fieldName: string): UUID {
+	if (typeof value !== 'string' || !UUID_REGEX.test(value)) {
+		throw new Error(`${fieldName} must be a valid UUID`);
 	}
 
 	return value;
 }
 
-function parseOptionalNonEmptyString(value: unknown, fieldName: string): string | null {
+function parseOptionalUuid(value: unknown, fieldName: string): UUID | null {
 	if (value === null || value === undefined) {
 		return null;
 	}
 
-	return parseNonEmptyString(value, fieldName);
+	return parseUuid(value, fieldName);
 }
 
 function parseSafeInteger(value: unknown, fieldName: string): number {
@@ -134,7 +137,7 @@ function parseTimestamp(value: unknown, fieldName: string): number {
 
 function parseDispatchCandidateRow(raw: DispatchCandidateRowRaw): DispatchCandidateRow {
 	return {
-		user_id: parseNonEmptyString(raw.user_id, 'user_id'),
+		user_id: parseUuid(raw.user_id, 'user_id'),
 		last_sync_timestamp: parseSafeInteger(raw.last_sync_timestamp, 'last_sync_timestamp'),
 		last_app_open_time_ms: parseTimestamp(raw.last_app_open_date, 'last_app_open_date'),
 		has_active_connections: parseBoolean(raw.has_active_connections, 'has_active_connections'),
@@ -142,15 +145,33 @@ function parseDispatchCandidateRow(raw: DispatchCandidateRowRaw): DispatchCandid
 	};
 }
 
-async function resolveScanUpperUserId(sql: SqlClient): Promise<UUID | null> {
+function normalizeLastSyncTimestamp(userId: UUID, value: number): number {
+	if (value >= 0) {
+		return value;
+	}
+
+	// Keep dispatcher output compatible with queue payload contract while allowing the
+	// run to make progress for other valid users in the same page.
+	console.warn('Clamping negative oauth_connections.last_sync_timestamp to zero', {
+		userId,
+		lastSyncTimestamp: value,
+	});
+	return 0;
+}
+
+async function resolveScanUpperUserIdForSnapshot(
+	sql: SqlClient,
+	snapshotTimeMs: number,
+): Promise<UUID | null> {
 	const rows = await sql<ScanUpperUserIdRowRaw[]>`
 		select max(oc.user_id) as max_user_id
 		from public.oauth_connections as oc
 		where oc.provider = 'google'
 			and oc.sync_status in ('ACTIVE', 'DORMANT')
+			and oc.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
 	`;
 
-	const scanUpperUserId = parseOptionalNonEmptyString(rows[0]?.max_user_id, 'max_user_id');
+	const scanUpperUserId = parseOptionalUuid(rows[0]?.max_user_id, 'max_user_id');
 	return scanUpperUserId;
 }
 
@@ -158,6 +179,7 @@ async function listDispatchCandidatePage(
 	sql: SqlClient,
 	offset: number,
 	scanUpperUserId: UUID | null,
+	snapshotTimeMs: number,
 ): Promise<DispatchCandidateRow[]> {
 	if (scanUpperUserId) {
 		const rows = await sql<DispatchCandidateRowRaw[]>`
@@ -174,6 +196,8 @@ async function listDispatchCandidatePage(
 				on u.id = oc.user_id
 			where oc.provider = 'google'
 				and oc.sync_status in ('ACTIVE', 'DORMANT')
+				and oc.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
+				and u.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
 				and u.id <= ${scanUpperUserId}
 			group by u.id, u.last_app_open_date
 			order by u.id asc
@@ -196,6 +220,8 @@ async function listDispatchCandidatePage(
 			on u.id = oc.user_id
 		where oc.provider = 'google'
 			and oc.sync_status in ('ACTIVE', 'DORMANT')
+			and oc.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
+			and u.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
 		group by u.id, u.last_app_open_date
 		order by u.id asc
 		limit ${DISPATCH_PAGE_LIMIT}
@@ -307,10 +333,14 @@ export async function dispatchEmailSyncUsers(
 	if (maxPagesPerInvocation === 0) {
 		throw new Error('max_pages_per_invocation must be greater than zero');
 	}
+	const snapshotTimeMs = parseNonNegativeSafeInteger(
+		options.snapshot_time_ms ?? nowMs,
+		'snapshot_time_ms',
+	);
 
 	const scanUpperUserId =
-		parseOptionalNonEmptyString(options.scan_upper_user_id, 'scan_upper_user_id') ??
-		(await resolveScanUpperUserId(sql));
+		parseOptionalUuid(options.scan_upper_user_id, 'scan_upper_user_id') ??
+		(await resolveScanUpperUserIdForSnapshot(sql, snapshotTimeMs));
 
 	const result: EmailSyncDispatchResult = {
 		page_count: 0,
@@ -338,7 +368,7 @@ export async function dispatchEmailSyncUsers(
 
 		let page: DispatchCandidateRow[];
 		try {
-			page = await listDispatchCandidatePage(sql, offset, scanUpperUserId);
+			page = await listDispatchCandidatePage(sql, offset, scanUpperUserId, snapshotTimeMs);
 		} catch (error) {
 			if (result.enqueued_user_job_count > 0) {
 				result.continuation_offset = offset;
@@ -376,7 +406,12 @@ export async function dispatchEmailSyncUsers(
 				activeUserIds.push(candidate.user_id);
 			}
 
-			jobs.push(buildEmailSyncUserJob(candidate.user_id, candidate.last_sync_timestamp));
+			jobs.push(
+				buildEmailSyncUserJob(
+					candidate.user_id,
+					normalizeLastSyncTimestamp(candidate.user_id, candidate.last_sync_timestamp),
+				),
+			);
 		}
 
 		try {
@@ -453,8 +488,15 @@ export async function runEmailSyncDispatchJob(
 		{
 			start_offset: dispatchJob.start_offset,
 			scan_upper_user_id: dispatchJob.scan_upper_user_id,
+			snapshot_time_ms: Math.min(dispatchJob.scheduled_time, nowMs),
 		},
 	);
+
+	if (result.failed_user_job_count > 0 && result.enqueued_user_job_count === 0) {
+		throw new Error(
+			`Failed to enqueue ${result.failed_user_job_count} EMAIL_SYNC_USER jobs`,
+		);
+	}
 
 	if (result.continuation_offset !== null) {
 		const continuationJob: EmailSyncDispatchJob = {
@@ -487,12 +529,6 @@ export async function runEmailSyncDispatchJob(
 	}
 
 	if (result.failed_user_job_count > 0) {
-		if (result.enqueued_user_job_count === 0) {
-			throw new Error(
-				`Failed to enqueue ${result.failed_user_job_count} EMAIL_SYNC_USER jobs`,
-			);
-		}
-
 		console.warn('Dispatcher could not enqueue all EMAIL_SYNC_USER jobs; next cron run will backfill', {
 			failedUserJobCount: result.failed_user_job_count,
 		});
