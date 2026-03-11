@@ -365,6 +365,138 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 		expect(terminalUpdates).toEqual(['IGNORED']);
 	});
 
+	it('ignores promotional purchase emails even without cashback wording', async () => {
+		const terminalUpdates: string[] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ed',
+						'Special offer: Get Rs 500 on next purchase',
+					),
+				];
+			}
+			if (query.includes('from public.categories as c')) {
+				return SYSTEM_CATEGORIES;
+			}
+			if (query.includes('for update')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ed',
+						'Special offer: Get Rs 500 on next purchase',
+					),
+				];
+			}
+			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
+				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runNormalizeRawEmailsJob(
+			{
+				job_type: 'NORMALIZE_RAW_EMAILS',
+				raw_email_ids: ['00000000-0000-4000-8000-0000000000ed'],
+			},
+			createEnv(),
+		);
+
+		expect(result.extracted_fact_count).toBe(0);
+		expect(result.created_transaction_count).toBe(0);
+		expect(result.ignored_raw_email_count).toBe(1);
+		expect(terminalUpdates).toEqual(['IGNORED']);
+	});
+
+	it('does not parse coupon-like RS500OFF tokens as currency amounts', async () => {
+		const terminalUpdates: string[] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ee',
+						'Card debited with promotion code RS500OFF at merchant',
+					),
+				];
+			}
+			if (query.includes('from public.categories as c')) {
+				return SYSTEM_CATEGORIES;
+			}
+			if (query.includes('for update')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ee',
+						'Card debited with promotion code RS500OFF at merchant',
+					),
+				];
+			}
+			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
+				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runNormalizeRawEmailsJob(
+			{
+				job_type: 'NORMALIZE_RAW_EMAILS',
+				raw_email_ids: ['00000000-0000-4000-8000-0000000000ee'],
+			},
+			createEnv(),
+		);
+
+		expect(result.extracted_fact_count).toBe(0);
+		expect(result.created_transaction_count).toBe(0);
+		expect(result.ignored_raw_email_count).toBe(1);
+		expect(terminalUpdates).toEqual(['IGNORED']);
+	});
+
+	it('ignores reward-points credits as non-transactional income', async () => {
+		const terminalUpdates: string[] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ef',
+						'Rs 500 credited as reward points for card usage',
+					),
+				];
+			}
+			if (query.includes('from public.categories as c')) {
+				return SYSTEM_CATEGORIES;
+			}
+			if (query.includes('for update')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ef',
+						'Rs 500 credited as reward points for card usage',
+					),
+				];
+			}
+			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
+				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runNormalizeRawEmailsJob(
+			{
+				job_type: 'NORMALIZE_RAW_EMAILS',
+				raw_email_ids: ['00000000-0000-4000-8000-0000000000ef'],
+			},
+			createEnv(),
+		);
+
+		expect(result.extracted_fact_count).toBe(0);
+		expect(result.created_transaction_count).toBe(0);
+		expect(result.ignored_raw_email_count).toBe(1);
+		expect(terminalUpdates).toEqual(['IGNORED']);
+	});
+
 	it('ignores cashback rows even when debit wording is present', async () => {
 		const terminalUpdates: string[] = [];
 		const sql = createSqlMock((query, values) => {
@@ -407,6 +539,105 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 		expect(result.created_transaction_count).toBe(0);
 		expect(result.ignored_raw_email_count).toBe(1);
 		expect(terminalUpdates).toEqual(['IGNORED']);
+	});
+
+	it('ignores cashback when amount and cashback direction are split across adjacent lines', async () => {
+		const terminalUpdates: string[] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000e9',
+						'Rs 350\nCashback credited to your rewards account',
+					),
+				];
+			}
+			if (query.includes('from public.categories as c')) {
+				return SYSTEM_CATEGORIES;
+			}
+			if (query.includes('for update')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000e9',
+						'Rs 350\nCashback credited to your rewards account',
+					),
+				];
+			}
+			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
+				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runNormalizeRawEmailsJob(
+			{
+				job_type: 'NORMALIZE_RAW_EMAILS',
+				raw_email_ids: ['00000000-0000-4000-8000-0000000000e9'],
+			},
+			createEnv(),
+		);
+
+		expect(result.extracted_fact_count).toBe(0);
+		expect(result.created_transaction_count).toBe(0);
+		expect(result.ignored_raw_email_count).toBe(1);
+		expect(terminalUpdates).toEqual(['IGNORED']);
+	});
+
+	it('does not suppress a real debit line just because cashback is mentioned', async () => {
+		let insertedAmount: number | null = null;
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000eb',
+						'Rs 1200 debited to Zomato via UPI ref ZOMA1200 cashback offer active',
+					),
+				];
+			}
+			if (query.includes('from public.categories as c')) {
+				return SYSTEM_CATEGORIES;
+			}
+			if (query.includes('from public.user_merchant_rules as umr')) {
+				return [];
+			}
+			if (query.includes('from public.global_merchant_aliases as gma')) {
+				return [];
+			}
+			if (query.includes('for update')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000eb',
+						'Rs 1200 debited to Zomato via UPI ref ZOMA1200 cashback offer active',
+					),
+				];
+			}
+			if (query.includes('insert into public.financial_events')) {
+				insertedAmount = Number(values[4]);
+				return [{ id: '00000000-0000-4000-8000-0000000000fb' }];
+			}
+			if (query.includes('insert into public.transactions')) {
+				return [{ id: '00000000-0000-4000-8000-0000000000bb', status: 'VERIFIED' }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runNormalizeRawEmailsJob(
+			{
+				job_type: 'NORMALIZE_RAW_EMAILS',
+				raw_email_ids: ['00000000-0000-4000-8000-0000000000eb'],
+			},
+			createEnv(),
+		);
+
+		expect(result.extracted_fact_count).toBe(1);
+		expect(result.created_transaction_count).toBe(1);
+		expect(insertedAmount).toBe(120000);
 	});
 
 	it('does not parse alphanumeric-embedded currency tokens (for example, abc500INR)', async () => {
@@ -617,7 +848,106 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 		expect(result.extracted_fact_count).toBe(1);
 		expect(result.created_transaction_count).toBe(1);
 		expect(insertedAmount).toBe(120000);
-		expect(insertedPaymentMethod).toBe('unknown');
+		expect(insertedPaymentMethod).toBe('upi');
+	});
+
+	it('does not infer direction from adjacent lines that already have their own amount', async () => {
+		const insertedAmounts: number[] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ea',
+						'Offer amount Rs 200\nRs 500 debited to Alpha via UPI ref ALPHA12345',
+					),
+				];
+			}
+			if (query.includes('from public.categories as c')) {
+				return SYSTEM_CATEGORIES;
+			}
+			if (query.includes('from public.user_merchant_rules as umr')) {
+				return [];
+			}
+			if (query.includes('from public.global_merchant_aliases as gma')) {
+				return [];
+			}
+			if (query.includes('for update')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ea',
+						'Offer amount Rs 200\nRs 500 debited to Alpha via UPI ref ALPHA12345',
+					),
+				];
+			}
+			if (query.includes('insert into public.financial_events')) {
+				insertedAmounts.push(Number(values[4]));
+				return [{ id: crypto.randomUUID() }];
+			}
+			if (query.includes('insert into public.transactions')) {
+				return [{ id: crypto.randomUUID(), status: 'VERIFIED' }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runNormalizeRawEmailsJob(
+			{
+				job_type: 'NORMALIZE_RAW_EMAILS',
+				raw_email_ids: ['00000000-0000-4000-8000-0000000000ea'],
+			},
+			createEnv(),
+		);
+
+		expect(result.extracted_fact_count).toBe(1);
+		expect(result.created_transaction_count).toBe(1);
+		expect(insertedAmounts).toEqual([50000]);
+	});
+
+	it('does not infer direction from adjacent promotional purchase text', async () => {
+		const terminalUpdates: string[] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ec',
+						'Rs 500\nUse this on your next purchase',
+					),
+				];
+			}
+			if (query.includes('from public.categories as c')) {
+				return SYSTEM_CATEGORIES;
+			}
+			if (query.includes('for update')) {
+				return [
+					pendingRawEmailRow(
+						'00000000-0000-4000-8000-0000000000ec',
+						'Rs 500\nUse this on your next purchase',
+					),
+				];
+			}
+			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
+				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runNormalizeRawEmailsJob(
+			{
+				job_type: 'NORMALIZE_RAW_EMAILS',
+				raw_email_ids: ['00000000-0000-4000-8000-0000000000ec'],
+			},
+			createEnv(),
+		);
+
+		expect(result.extracted_fact_count).toBe(0);
+		expect(result.created_transaction_count).toBe(0);
+		expect(result.unrecognized_raw_email_count).toBe(1);
+		expect(terminalUpdates).toEqual(['UNRECOGNIZED']);
 	});
 
 	it('does not dedupe legitimate repeated debit events that share the same attributes', async () => {
@@ -1662,7 +1992,7 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				job_type: 'AI_CLASSIFICATION',
 				transaction_id: '00000000-0000-4000-8000-0000000000b8',
 			}),
-			{ contentType: 'json' },
+			{ contentType: 'json', delaySeconds: 30 },
 		);
 	});
 });

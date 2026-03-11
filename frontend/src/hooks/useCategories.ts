@@ -1,10 +1,9 @@
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CategoryRow } from '../../../shared/types';
-import { isRemoteDataEnabled } from '../config/data-source';
 import { apiClient, toErrorMessage } from '../lib/api-client';
 import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
-import { useLocalCategories, type Category } from './local/useLocalCategories';
+import type { Category } from '../types/domain';
 
 interface UseCategoriesResult {
   categories: Category[];
@@ -16,7 +15,6 @@ interface UseCategoriesResult {
   error: string | null;
 }
 
-const REMOTE_DATA_ENABLED = isRemoteDataEnabled();
 const CATEGORIES_QUERY_KEY = ['categories'] as const;
 
 function mapCategoryRows(rows: CategoryRow[]): Category[] {
@@ -50,28 +48,6 @@ function mapCategoryRows(rows: CategoryRow[]): Category[] {
         subCategoryIds: Object.fromEntries(children.map(child => [child.name, child.id])),
       };
     });
-}
-
-function useLocalCategoryFallback(): UseCategoriesResult {
-  const local = useLocalCategories();
-
-  return {
-    categories: local.categories,
-    addCategory: async category => {
-      local.addCategory(category);
-    },
-    deleteCategory: async id => {
-      local.deleteCategory(id);
-    },
-    addSubCategory: async (categoryId, subCategoryName) => {
-      local.addSubCategory(categoryId, subCategoryName);
-    },
-    deleteSubCategory: async (categoryId, subCategoryName) => {
-      local.deleteSubCategory(categoryId, subCategoryName);
-    },
-    isLoading: false,
-    error: null,
-  };
 }
 
 function useRemoteCategories(): UseCategoriesResult {
@@ -227,10 +203,6 @@ function useRemoteCategories(): UseCategoriesResult {
 
 export { type Category };
 
-const useCategoriesImpl: () => UseCategoriesResult = REMOTE_DATA_ENABLED
-  ? useRemoteCategories
-  : useLocalCategoryFallback;
-
 export function useCategories(): UseCategoriesResult {
-  return useCategoriesImpl();
+  return useRemoteCategories();
 }

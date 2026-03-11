@@ -8,6 +8,8 @@ import type {
 	PaginatedResponse,
 	PaymentMethod,
 	RawEmailRow,
+	ReviewTransactionRequest,
+	ReviewTransactionResponse,
 	TransactionFeedItem,
 	TransactionRow,
 	TransactionStatus,
@@ -28,6 +30,7 @@ import {
 	parseLimit,
 	parseNullableString,
 	parseNullableUuid,
+	parseBoolean,
 	parseOptionalFiniteNumber,
 	parseOptionalIsoDateTime,
 	parseOptionalUuid,
@@ -47,6 +50,7 @@ const PAYMENT_METHODS = new Set([
 	'cash',
 	'unknown',
 ] as const);
+const SEARCH_KEY_MAX_LENGTH = 120;
 
 interface TransactionFeedRowRaw {
 	transaction_id: unknown;
@@ -110,6 +114,14 @@ interface TransactionStatusRow {
 	transaction_status: TransactionStatus;
 	financial_event_id: string;
 	raw_email_id: string | null;
+}
+
+interface ReviewContextRow {
+	transaction_id: string;
+	transaction_status: TransactionStatus;
+	transaction_category_id: string | null;
+	transaction_merchant_id: string | null;
+	financial_event_search_key: string | null;
 }
 
 interface TransactionUpdateStateRow extends TransactionStatusRow {
@@ -204,6 +216,18 @@ function parseOptionalAiConfidence(
 	}
 
 	return parsed;
+}
+
+function normalizeSearchKey(value: string | null | undefined): string | null {
+	if (!value) {
+		return null;
+	}
+
+	const normalized = value
+		.toUpperCase()
+		.replace(/[^A-Z0-9]/g, '')
+		.slice(0, SEARCH_KEY_MAX_LENGTH);
+	return normalized.length > 0 ? normalized : null;
 }
 
 function mapTransactionFeedRow(row: TransactionFeedRowRaw): TransactionFeedItem {
@@ -556,6 +580,33 @@ export function parseUpdateTransactionRequest(payload: unknown): UpdateTransacti
 	}
 
 	return updateRequest;
+}
+
+export function parseReviewTransactionRequest(payload: unknown): ReviewTransactionRequest {
+	const body = asRecord(payload);
+	const reviewRequest: ReviewTransactionRequest = {};
+
+	if (body.category_id !== undefined) {
+		reviewRequest.category_id = parseNullableUuid(body.category_id, 'category_id');
+	}
+
+	if (body.merchant_id !== undefined) {
+		reviewRequest.merchant_id = parseNullableUuid(body.merchant_id, 'merchant_id');
+	}
+
+	if (body.user_note !== undefined) {
+		reviewRequest.user_note = parseNullableString(body.user_note, 'user_note');
+	}
+
+	if (body.apply_rule !== undefined) {
+		reviewRequest.apply_rule = parseBoolean(body.apply_rule, 'apply_rule');
+	}
+
+	if (body.rule_search_key !== undefined) {
+		reviewRequest.rule_search_key = parseNullableString(body.rule_search_key, 'rule_search_key');
+	}
+
+	return reviewRequest;
 }
 
 export function prepareTransactionRelationUpdate(params: {
@@ -947,6 +998,138 @@ export async function updateTransaction(
 	}
 
 	return updatedTransaction;
+}
+
+export async function reviewTransaction(
+	sql: SqlClient,
+	userId: string,
+	transactionId: string,
+	input: ReviewTransactionRequest,
+): Promise<ReviewTransactionResponse> {
+	return sql.begin(async (tx) => {
+		const transactionSql = tx as unknown as SqlClient;
+		const contextRows = await transactionSql<ReviewContextRow[]>`
+			select
+				t.id as transaction_id,
+				t.status as transaction_status,
+				t.category_id as transaction_category_id,
+				t.merchant_id as transaction_merchant_id,
+				fe.search_key as financial_event_search_key
+			from public.transactions as t
+			join public.financial_events as fe
+				on fe.id = t.financial_event_id
+				and fe.user_id = t.user_id
+				and fe.status = 'ACTIVE'
+			where t.id = ${transactionId}
+				and t.user_id = ${userId}
+			limit 1
+			for update
+		`;
+
+		if (contextRows.length === 0) {
+			throw notFound('TRANSACTION_NOT_FOUND', 'Transaction not found');
+		}
+
+		const context = contextRows[0];
+		if (context.transaction_status !== 'NEEDS_REVIEW') {
+			throw conflict(
+				'TRANSACTION_REVIEW_CLOSED',
+				'Transaction no longer requires review',
+			);
+		}
+
+		const hasCategoryUpdate = input.category_id !== undefined;
+		const hasMerchantUpdate = input.merchant_id !== undefined;
+		const hasUserNoteUpdate = input.user_note !== undefined;
+
+		const nextCategoryId =
+			input.category_id !== undefined
+				? (input.category_id ?? null)
+				: context.transaction_category_id;
+		const nextMerchantId =
+			input.merchant_id !== undefined
+				? (input.merchant_id ?? null)
+				: context.transaction_merchant_id;
+
+		await transactionSql`
+			update public.transactions as t
+			set
+				category_id = case
+					when ${hasCategoryUpdate} then ${input.category_id ?? null}
+					else t.category_id
+				end,
+				merchant_id = case
+					when ${hasMerchantUpdate} then ${input.merchant_id ?? null}
+					else t.merchant_id
+				end,
+				user_note = case
+					when ${hasUserNoteUpdate} then ${input.user_note ?? null}
+					else t.user_note
+				end,
+				status = 'VERIFIED',
+				classification_source = 'USER'
+			where t.id = ${transactionId}
+				and t.user_id = ${userId}
+				and t.status = 'NEEDS_REVIEW'
+		`;
+
+		const updatedTransaction = await getTransactionFeedItemById(transactionSql, userId, transactionId);
+		if (!updatedTransaction) {
+			throw notFound('TRANSACTION_NOT_FOUND', 'Transaction not found');
+		}
+
+		const shouldApplyRule = input.apply_rule === true;
+		if (!shouldApplyRule) {
+			return {
+				transaction: updatedTransaction,
+				rule_applied: false,
+				applied_search_key: null,
+			};
+		}
+
+		const explicitSearchKey = normalizeSearchKey(input.rule_search_key);
+		const eventSearchKey = normalizeSearchKey(context.financial_event_search_key);
+		const appliedSearchKey = explicitSearchKey ?? eventSearchKey;
+		if (!appliedSearchKey) {
+			throw badRequest(
+				'REVIEW_RULE_SEARCH_KEY_REQUIRED',
+				'Cannot apply review rule because no search key is available',
+			);
+		}
+
+		if (!nextCategoryId && !nextMerchantId) {
+			throw badRequest(
+				'REVIEW_RULE_TARGET_REQUIRED',
+				'Cannot apply review rule without category_id or merchant_id',
+			);
+		}
+
+		await transactionSql`
+			insert into public.user_merchant_rules (
+				user_id,
+				search_key,
+				merchant_id,
+				custom_category_id
+			)
+			values (
+				${userId},
+				${appliedSearchKey},
+				${nextMerchantId},
+				${nextCategoryId}
+			)
+			on conflict (user_id, search_key) do update
+			set
+				merchant_id = excluded.merchant_id,
+				custom_category_id = excluded.custom_category_id,
+				updated_at = now()
+		`;
+
+		return {
+			transaction: updatedTransaction,
+			rule_applied: true,
+			applied_search_key: appliedSearchKey,
+		};
+	});
 }
 
 export async function deleteManualTransaction(

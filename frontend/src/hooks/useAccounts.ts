@@ -1,9 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { isRemoteDataEnabled } from '../config/data-source';
 import { apiClient, toErrorMessage } from '../lib/api-client';
 import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import { paiseToRupees, rupeesToPaise } from '../lib/money';
-import { useLocalAccounts, type Account } from './local/useLocalAccounts';
+import type { Account } from '../types/domain';
 
 interface UseAccountsResult {
   accounts: Account[];
@@ -14,27 +13,7 @@ interface UseAccountsResult {
   error: string | null;
 }
 
-const REMOTE_DATA_ENABLED = isRemoteDataEnabled();
 const ACCOUNTS_QUERY_KEY = ['accounts'] as const;
-
-function useLocalAccountFallback(): UseAccountsResult {
-  const local = useLocalAccounts();
-
-  return {
-    accounts: local.accounts,
-    addAccount: async account => {
-      local.addAccount(account);
-    },
-    updateAccount: async (id, updates) => {
-      local.updateAccount(id, updates);
-    },
-    deleteAccount: async id => {
-      local.deleteAccount(id);
-    },
-    isLoading: false,
-    error: null,
-  };
-}
 
 function useRemoteAccounts(): UseAccountsResult {
   const queryClient = useQueryClient();
@@ -125,10 +104,6 @@ function useRemoteAccounts(): UseAccountsResult {
 
 export { type Account };
 
-const useAccountsImpl: () => UseAccountsResult = REMOTE_DATA_ENABLED
-  ? useRemoteAccounts
-  : useLocalAccountFallback;
-
 export function useAccounts(): UseAccountsResult {
-  return useAccountsImpl();
+  return useRemoteAccounts();
 }

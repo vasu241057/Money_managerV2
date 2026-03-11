@@ -1,5 +1,6 @@
 import { QUEUE_NAMES } from '../lib/infra';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
+import { runAiClassificationJob } from './ai-classifier';
 import { runEmailSyncDispatchJob } from './email-sync-dispatcher';
 import { runEmailSyncUserJob } from './email-sync-fetcher';
 import { runNormalizeRawEmailsJob } from './email-normalizer';
@@ -11,9 +12,100 @@ import {
 } from './queue.messages';
 
 const MAX_PROCESSING_ATTEMPTS = 5;
+const DEFAULT_QUEUE_ALERT_RETRY_RATE_PERCENT = 15;
+const DEFAULT_QUEUE_ALERT_POISON_ACK_COUNT = 3;
+const DEFAULT_QUEUE_ALERT_FINAL_RETRY_COUNT = 1;
+
+interface QueueAlertThresholds {
+	retry_rate_percent: number;
+	poison_ack_count: number;
+	final_retry_count: number;
+}
+
+interface QueueBatchMetrics {
+	total_messages: number;
+	acked_messages: number;
+	poison_acked_messages: number;
+	retried_messages: number;
+	final_retry_messages: number;
+	max_attempts_seen: number;
+}
 
 function retryDelaySeconds(attempts: number): number {
 	return Math.min(60, 2 ** Math.max(0, attempts));
+}
+
+function parseNonNegativeNumber(value: unknown, fallback: number): number {
+	if (typeof value !== 'string') {
+		return fallback;
+	}
+
+	const normalized = value.trim();
+	if (normalized.length === 0) {
+		return fallback;
+	}
+
+	const parsed = Number(normalized);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		return fallback;
+	}
+
+	return parsed;
+}
+
+function parseNonNegativeInteger(value: unknown, fallback: number): number {
+	const parsed = parseNonNegativeNumber(value, fallback);
+	return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+
+function resolveQueueAlertThresholds(env: Env): QueueAlertThresholds {
+	return {
+		retry_rate_percent: parseNonNegativeNumber(
+			env.QUEUE_ALERT_RETRY_RATE_PERCENT,
+			DEFAULT_QUEUE_ALERT_RETRY_RATE_PERCENT,
+		),
+		poison_ack_count: parseNonNegativeInteger(
+			env.QUEUE_ALERT_POISON_ACK_COUNT,
+			DEFAULT_QUEUE_ALERT_POISON_ACK_COUNT,
+		),
+		final_retry_count: parseNonNegativeInteger(
+			env.QUEUE_ALERT_FINAL_RETRY_COUNT,
+			DEFAULT_QUEUE_ALERT_FINAL_RETRY_COUNT,
+		),
+	};
+}
+
+function createQueueBatchMetrics(messageCount: number): QueueBatchMetrics {
+	return {
+		total_messages: messageCount,
+		acked_messages: 0,
+		poison_acked_messages: 0,
+		retried_messages: 0,
+		final_retry_messages: 0,
+		max_attempts_seen: 0,
+	};
+}
+
+function computeRetryRatePercent(metrics: QueueBatchMetrics): number {
+	if (metrics.total_messages === 0) {
+		return 0;
+	}
+
+	return Number(
+		((metrics.retried_messages / metrics.total_messages) * 100).toFixed(2),
+	);
+}
+
+function isQueueAlertThresholdBreached(
+	metrics: QueueBatchMetrics,
+	thresholds: QueueAlertThresholds,
+	retryRatePercent: number,
+): boolean {
+	return (
+		retryRatePercent >= thresholds.retry_rate_percent ||
+		metrics.poison_acked_messages >= thresholds.poison_ack_count ||
+		metrics.final_retry_messages >= thresholds.final_retry_count
+	);
 }
 
 async function handleEmailSyncDispatch(body: unknown, env: Env): Promise<void> {
@@ -68,12 +160,18 @@ async function handleNormalizeRawEmails(body: unknown, env: Env): Promise<void> 
 	});
 }
 
-function handleAiClassification(body: unknown): void {
+async function handleAiClassification(body: unknown, env: Env): Promise<void> {
 	const aiJob = parseAiClassificationJob(body);
+	const result = await runAiClassificationJob(aiJob, env);
 
 	console.info('Processing AI_CLASSIFICATION queue job', {
 		transactionId: aiJob.transaction_id,
 		requestedAt: aiJob.requested_at,
+		outcome: result.outcome,
+		transactionStatus: result.transaction_status,
+		confidenceScore: result.confidence_score,
+		action: result.action,
+		reason: result.reason,
 	});
 }
 
@@ -99,7 +197,7 @@ async function processMessage(queueName: string, body: unknown, env: Env): Promi
 			throw new PoisonMessageError('Invalid EMAIL_SYNC payload');
 		}
 		case QUEUE_NAMES.AI_CLASSIFICATION:
-			handleAiClassification(body);
+			await handleAiClassification(body, env);
 			return;
 		default:
 			throw new TransientMessageError(`Unsupported queue name: ${queueName}`);
@@ -111,10 +209,14 @@ export async function handleQueue(
 	env: Env,
 	_ctx: ExecutionContext,
 ): Promise<void> {
+	const metrics = createQueueBatchMetrics(batch.messages.length);
+
 	for (const message of batch.messages) {
+		metrics.max_attempts_seen = Math.max(metrics.max_attempts_seen, message.attempts);
 		try {
 			await processMessage(batch.queue, message.body, env);
 			message.ack();
+			metrics.acked_messages += 1;
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown queue processing error';
 			const isPoisonPayload = error instanceof PoisonMessageError;
@@ -127,6 +229,8 @@ export async function handleQueue(
 					error: errorMessage,
 				});
 				message.ack();
+				metrics.acked_messages += 1;
+				metrics.poison_acked_messages += 1;
 				continue;
 			}
 
@@ -139,6 +243,8 @@ export async function handleQueue(
 					error: errorMessage,
 				});
 				message.retry();
+				metrics.retried_messages += 1;
+				metrics.final_retry_messages += 1;
 				continue;
 			}
 
@@ -151,6 +257,24 @@ export async function handleQueue(
 				error: errorMessage,
 			});
 			message.retry({ delaySeconds });
+			metrics.retried_messages += 1;
 		}
+	}
+
+	const retryRatePercent = computeRetryRatePercent(metrics);
+	console.info('QUEUE_BATCH_SUMMARY', {
+		queue: batch.queue,
+		...metrics,
+		retry_rate_percent: retryRatePercent,
+	});
+
+	const alertThresholds = resolveQueueAlertThresholds(env);
+	if (isQueueAlertThresholdBreached(metrics, alertThresholds, retryRatePercent)) {
+		console.error('QUEUE_ALERT_THRESHOLD_BREACH', {
+			queue: batch.queue,
+			...metrics,
+			retry_rate_percent: retryRatePercent,
+			alert_thresholds: alertThresholds,
+		});
 	}
 }

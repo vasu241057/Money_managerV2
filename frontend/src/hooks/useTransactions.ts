@@ -1,27 +1,35 @@
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AccountRow, CategoryRow, TransactionFeedItem } from '../../../shared/types';
-import { isRemoteDataEnabled } from '../config/data-source';
+import type {
+  AccountRow,
+  CategoryRow,
+  ReviewTransactionRequest,
+  TransactionFeedItem,
+} from '../../../shared/types';
 import { apiClient, toErrorMessage } from '../lib/api-client';
 import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import { paiseToRupees, rupeesToPaise } from '../lib/money';
+import type { Transaction } from '../types/domain';
 import {
   areImmutableFieldsChanged,
   normalizeOptionalId,
   normalizeOptionalText,
   resolvePersistedCategoryId,
 } from '../lib/transaction-adapter';
-import { useLocalTransactions, type Transaction } from './local/useLocalTransactions';
 
 interface UseTransactionsResult {
   transactions: Transaction[];
+  reviewInbox: Transaction[];
   addTransaction: (transaction: Omit<Transaction, 'id'> | Transaction) => Promise<Transaction>;
+  reviewTransaction: (params: {
+    transactionId: string;
+    payload: ReviewTransactionRequest;
+  }) => Promise<Transaction>;
   deleteTransaction: (id: string) => Promise<void>;
   isLoading: boolean;
   error: string | null;
 }
 
-const REMOTE_DATA_ENABLED = isRemoteDataEnabled();
 const TRANSACTIONS_QUERY_KEY = ['transactions'] as const;
 const ACCOUNTS_QUERY_KEY = ['accounts'] as const;
 const CATEGORIES_QUERY_KEY = ['categories'] as const;
@@ -78,6 +86,13 @@ function mapFeedItemToUiTransaction(
     accountId,
     accountName,
     isManual: item.financial_event.raw_email_id === null,
+    persistedCategoryId: transaction.category_id,
+    merchantId: transaction.merchant_id,
+    merchantName: item.merchant?.canonical_name ?? null,
+    searchKey: item.financial_event.search_key,
+    status: transaction.status,
+    classificationSource: transaction.classification_source,
+    aiConfidenceScore: transaction.ai_confidence_score,
   };
 }
 
@@ -100,20 +115,6 @@ async function listAllTransactions(): Promise<TransactionFeedItem[]> {
   }
 
   return allItems;
-}
-
-function useLocalTransactionFallback(): UseTransactionsResult {
-  const local = useLocalTransactions();
-
-  return {
-    transactions: local.transactions,
-    addTransaction: async transaction => local.addTransaction(transaction),
-    deleteTransaction: async id => {
-      local.deleteTransaction(id);
-    },
-    isLoading: false,
-    error: null,
-  };
 }
 
 function useRemoteTransactions(): UseTransactionsResult {
@@ -157,6 +158,17 @@ function useRemoteTransactions(): UseTransactionsResult {
 
   const transactionsById = useMemo(
     () => new Map(transactions.map(transaction => [transaction.id, transaction])),
+    [transactions],
+  );
+  const reviewInbox = useMemo(
+    () =>
+      transactions
+        .filter(transaction => transaction.status === 'NEEDS_REVIEW')
+        .sort((left, right) => {
+          const leftConfidence = left.aiConfidenceScore ?? Number.POSITIVE_INFINITY;
+          const rightConfidence = right.aiConfidenceScore ?? Number.POSITIVE_INFINITY;
+          return leftConfidence - rightConfidence;
+        }),
     [transactions],
   );
 
@@ -242,16 +254,39 @@ function useRemoteTransactions(): UseTransactionsResult {
     },
   });
 
+  const reviewTransactionMutation = useMutation({
+    mutationFn: async ({
+      transactionId,
+      payload,
+    }: {
+      transactionId: string;
+      payload: ReviewTransactionRequest;
+    }) => {
+      await ensureLegacyLocalDataMigrated();
+      const reviewed = await apiClient.reviewTransaction(transactionId, payload);
+      return mapFeedItemToUiTransaction(reviewed.transaction, accountsById, categoriesById);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+    },
+    onError: async () => {
+      await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+    },
+  });
+
   const firstError =
     transactionsQuery.error ??
     accountsQuery.error ??
     categoriesQuery.error ??
     upsertTransactionMutation.error ??
-    deleteTransactionMutation.error;
+    deleteTransactionMutation.error ??
+    reviewTransactionMutation.error;
 
   return {
     transactions,
+    reviewInbox,
     addTransaction: async transaction => upsertTransactionMutation.mutateAsync(transaction),
+    reviewTransaction: async params => reviewTransactionMutation.mutateAsync(params),
     deleteTransaction: async id => {
       await deleteTransactionMutation.mutateAsync(id);
     },
@@ -260,17 +295,14 @@ function useRemoteTransactions(): UseTransactionsResult {
       accountsQuery.isLoading ||
       categoriesQuery.isLoading ||
       upsertTransactionMutation.isPending ||
-      deleteTransactionMutation.isPending,
+      deleteTransactionMutation.isPending ||
+      reviewTransactionMutation.isPending,
     error: firstError ? toErrorMessage(firstError) : null,
   };
 }
 
 export { type Transaction };
 
-const useTransactionsImpl: () => UseTransactionsResult = REMOTE_DATA_ENABLED
-  ? useRemoteTransactions
-  : useLocalTransactionFallback;
-
 export function useTransactions(): UseTransactionsResult {
-  return useTransactionsImpl();
+  return useRemoteTransactions();
 }

@@ -46,8 +46,8 @@
 			},
 			{
 				"queue": "money-manager-ai-classification",
-				"max_batch_size": 10,
-				"max_batch_timeout": 5,
+				"max_batch_size": 2,
+				"max_batch_timeout": 20,
 				"max_retries": 5,
 				"dead_letter_queue": "money-manager-ai-classification-dlq"
 			}

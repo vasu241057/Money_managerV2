@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Transaction } from '../hooks/local/useLocalTransactions';
+import type { Transaction } from '../types/domain';
 import { paiseToRupees, rupeesToPaise } from './money';
 import {
   areImmutableFieldsChanged,

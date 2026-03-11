@@ -266,6 +266,13 @@ export interface ListTransactionsQuery extends PageRequest {
   credit_card_id?: UUID;
 }
 
+export interface ListGlobalMerchantsQuery {
+  q?: string;
+  limit?: number;
+}
+
+export type GlobalMerchantListItem = Pick<GlobalMerchantRow, 'id' | 'canonical_name' | 'type'>;
+
 export interface CreateAccountRequest {
   name: string;
   type: AccountType;
@@ -371,6 +378,20 @@ export interface UpsertUserMerchantRuleRequest {
   custom_category_id?: UUID | null;
 }
 
+export interface ReviewTransactionRequest {
+  category_id?: UUID | null;
+  merchant_id?: UUID | null;
+  user_note?: string | null;
+  apply_rule?: boolean;
+  rule_search_key?: string | null;
+}
+
+export interface ReviewTransactionResponse {
+  transaction: TransactionFeedItem;
+  rule_applied: boolean;
+  applied_search_key: string | null;
+}
+
 export interface GoogleOAuthStartResponse {
   auth_url: string;
 }
@@ -429,14 +450,8 @@ export interface EmailSyncUserJobPayload {
 }
 
 /**
- * Full payload contract for EMAIL_SYNC_QUEUE.
- * A single queue handles control-plane + per-user jobs, discriminated by job_type.
- */
-export type EmailSyncJobPayload = EmailSyncDispatchJobPayload | EmailSyncUserJobPayload;
-
-/**
  * Optional Phase 3 queue mode: normalize a bounded set of raw emails.
- * (Phase 3 may also run via cron scanning PENDING_EXTRACTION rows.)
+ * Phase 3 may also run via cron scanning PENDING_EXTRACTION rows.
  */
 export const NORMALIZE_RAW_EMAILS_MAX_IDS = 250;
 
@@ -449,12 +464,33 @@ export interface NormalizeRawEmailsJobPayload {
 }
 
 /**
+ * Full payload contract for EMAIL_SYNC_QUEUE.
+ * A single queue handles control-plane + per-user + normalization jobs,
+ * discriminated by job_type.
+ */
+export type EmailSyncJobPayload =
+  | EmailSyncDispatchJobPayload
+  | EmailSyncUserJobPayload
+  | NormalizeRawEmailsJobPayload;
+
+/**
  * Async AI handoff queue payload for unknown classifications.
  */
 export interface AiClassificationJobPayload {
   job_type: 'AI_CLASSIFICATION';
   transaction_id: UUID;
   requested_at: ISODateTimeString;
+}
+
+export interface AiRequiresWebhookRequest {
+  job_type?: 'REQUIRES_AI';
+  transaction_id: UUID;
+  requested_at?: ISODateTimeString;
+}
+
+export interface AiRequiresWebhookResponse {
+  accepted: boolean;
+  queued_at: ISODateTimeString;
 }
 
 // ── Extractor contracts (Phase 3 deterministic engine) ──────

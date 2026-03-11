@@ -8,7 +8,7 @@
   - `AI_CLASSIFICATION_QUEUE` -> `money-manager-ai-classification`
 - Queue consumer bindings:
   - `money-manager-email-sync` (`max_batch_size=10`, DLQ `money-manager-email-sync-dlq`)
-  - `money-manager-ai-classification` (`max_batch_size=10`, DLQ `money-manager-ai-classification-dlq`)
+  - `money-manager-ai-classification` (`max_batch_size=2`, `max_batch_timeout=20`, DLQ `money-manager-ai-classification-dlq`)
 
 ## Milestone 4 API (manual CRUD)
 
@@ -31,9 +31,11 @@ Routes:
 - `GET/POST/PATCH/DELETE /accounts`
 - `GET/POST/PATCH/DELETE /categories`
 - `GET/POST/PATCH/DELETE /transactions`
+- `POST /transactions/:transactionId/review`
 - `POST /oauth/google/start`
 - `POST /oauth/google/callback`
 - `GET/DELETE /oauth/google/connection`
+- `POST /internal/ai/requires` (secret-protected internal webhook)
 
 Manual transaction writes are transaction-safe:
 
@@ -56,9 +58,19 @@ npx wrangler secret put GOOGLE_OAUTH_REDIRECT_URI
 npx wrangler secret put GOOGLE_OAUTH_STATE_SECRET
 npx wrangler secret put GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY
 npx wrangler secret put OPENROUTER_API_KEY
+npx wrangler secret put OPENROUTER_MODEL
+npx wrangler secret put AI_AUTO_VERIFY_MIN_CONFIDENCE
+npx wrangler secret put AI_QUEUE_DELAY_SECONDS
+npx wrangler secret put AI_REQUIRES_WEBHOOK_SECRET
 ```
 
 For local development, create `backend/.dev.vars` from `backend/.dev.vars.example`.
+
+Optional queue alert threshold vars (can be plain vars or secrets):
+
+- `QUEUE_ALERT_RETRY_RATE_PERCENT` (default `15`)
+- `QUEUE_ALERT_POISON_ACK_COUNT` (default `3`)
+- `QUEUE_ALERT_FINAL_RETRY_COUNT` (default `1`)
 
 ## Local invocation checks
 
@@ -81,3 +93,14 @@ You should see scheduled handler logs, then queue handler logs for `EMAIL_SYNC_D
 - reactivates `DORMANT` users to `ACTIVE` when they become active again
 - enqueues `EMAIL_SYNC_USER` jobs in `sendBatch` slices of 100 messages
 - uses continuation payload (`start_offset`, `scan_upper_user_id`) when a single invocation reaches page budget
+
+## Milestone 12 observability
+
+Queue worker emits structured monitoring logs:
+
+- `QUEUE_BATCH_SUMMARY` for each queue batch
+- `QUEUE_ALERT_THRESHOLD_BREACH` when retry/poison/final-retry thresholds are exceeded
+
+Use these with Cloudflare Queue metrics + Supabase SQL panels from:
+
+- `docs/OPERATIONS.md`

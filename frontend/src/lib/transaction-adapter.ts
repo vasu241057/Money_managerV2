@@ -1,5 +1,5 @@
 import type { CategoryRow } from '../../../shared/types';
-import type { Transaction } from '../hooks/local/useLocalTransactions';
+import type { Transaction } from '../types/domain';
 
 export function normalizeOptionalId(value: string | null | undefined): string | null {
   if (!value || value.trim() === '') {

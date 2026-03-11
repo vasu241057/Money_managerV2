@@ -1,5 +1,4 @@
 import type { AccountType, CategoryType, TransactionType, TransactionFeedItem } from '../../../shared/types';
-import { isRemoteDataEnabled } from '../config/data-source';
 import { apiClient } from './api-client';
 import { getAuthToken } from './auth-token';
 import { rupeesToPaise } from './money';
@@ -320,10 +319,6 @@ export async function runLegacyLocalDataMigration(deps: LegacyMigrationDeps): Pr
 export async function ensureLegacyLocalDataMigrated(
   overrides?: Partial<LegacyMigrationDeps>,
 ): Promise<void> {
-  if (!isRemoteDataEnabled()) {
-    return;
-  }
-
   if (typeof window === 'undefined') {
     return;
   }

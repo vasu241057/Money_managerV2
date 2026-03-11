@@ -75,11 +75,13 @@ Declared in `shared/types.ts`:
 - Account CRUD: `CreateAccountRequest`, `UpdateAccountRequest`
 - Category CRUD: `CreateCategoryRequest`, `UpdateCategoryRequest`
 - Manual writes: `CreateManualTransactionRequest`, `UpdateTransactionRequest`
+- Review loop: `ReviewTransactionRequest`, `ReviewTransactionResponse`
 - Card mapping writes: `CreateUserCreditCardRequest`, `UpdateUserCreditCardRequest`
 - Card resolver: `ResolveUserCreditCardRequest`, `ResolveUserCreditCardResponse`
 - Merchant overrides: `UpsertUserMerchantRuleRequest`
 - OAuth: `GoogleOAuthStartResponse`, `GoogleOAuthCallbackRequest`, `GoogleOAuthConnectionResponse`
   - `GoogleOAuthConnectionStatusResponse`
+- Internal AI webhook: `AiRequiresWebhookRequest`, `AiRequiresWebhookResponse`
 
 ### Auth context for backend CRUD (Milestone 4)
 
@@ -112,10 +114,18 @@ Declared in `shared/types.ts`:
       - `scan_upper_user_id` (UUID anchor)
   - `EmailSyncUserJobPayload`
     - `{ job_type: 'EMAIL_SYNC_USER', user_id, last_sync_timestamp }`
-- Phase 3 optional queue mode: `NormalizeRawEmailsJobPayload`
-  - `{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids }`
+  - `NormalizeRawEmailsJobPayload`
+    - `{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids }`
 - Async AI handoff queue: `AiClassificationJobPayload`
   - `{ job_type: 'AI_CLASSIFICATION', transaction_id, requested_at }`
+  - consumed on dedicated low-priority queue settings with Cloudflare DLQ
+
+### Milestone 11 review + async AI loop
+
+- `NEEDS_REVIEW` transactions enqueue `AI_CLASSIFICATION` asynchronously; main normalization pipeline does not block on AI completion.
+- AI queue consumer writes `transactions.ai_confidence_score` and may transition `transactions.status` to `VERIFIED` when confidence threshold policy allows.
+- User review action (`POST /transactions/:transactionId/review`) always sets `classification_source = 'USER'`, marks transaction `VERIFIED`, and can upsert `user_merchant_rules`.
+- Internal webhook `POST /internal/ai/requires` accepts secret-guarded enqueue requests and maps them to `AI_CLASSIFICATION` jobs.
 
 ### Phase 1 dispatcher behavior (Milestone 8)
 
@@ -176,3 +186,15 @@ Milestone 1 baseline is complete when:
 - `v_credit_card_transactions` includes only rows whose linked `financial_events.status = 'ACTIVE'`.
 - Matching helper function: `resolve_user_credit_card(user_id, first4, last4)`.
 - Resolver ambiguity policy: if only `last4` is provided and multiple active cards share that `last4`, no match is returned.
+
+## 11. Milestone 12 Operations Contract (new)
+
+- Queue DLQ authority remains Cloudflare-managed; app handlers only `ack()` poison payloads and retry transient failures.
+- Queue worker emits structured per-batch metrics:
+  - `QUEUE_BATCH_SUMMARY`
+  - `QUEUE_ALERT_THRESHOLD_BREACH`
+- Alert threshold env contract:
+  - `QUEUE_ALERT_RETRY_RATE_PERCENT` (default `15`)
+  - `QUEUE_ALERT_POISON_ACK_COUNT` (default `3`)
+  - `QUEUE_ALERT_FINAL_RETRY_COUNT` (default `1`)
+- Operational dashboards and SLO runbook are documented in `docs/OPERATIONS.md`.

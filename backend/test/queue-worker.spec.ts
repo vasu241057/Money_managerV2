@@ -4,6 +4,7 @@ const {
 	runEmailSyncDispatchJobMock,
 	runEmailSyncUserJobMock,
 	runNormalizeRawEmailsJobMock,
+	runAiClassificationJobMock,
 } = vi.hoisted(() => ({
 	runEmailSyncDispatchJobMock: vi.fn().mockResolvedValue({
 		page_count: 0,
@@ -35,6 +36,14 @@ const {
 		needs_review_transaction_count: 0,
 		ai_enqueued_count: 0,
 	}),
+	runAiClassificationJobMock: vi.fn().mockResolvedValue({
+		transaction_id: '00000000-0000-4000-8000-00000000000a',
+		outcome: 'UPDATED_NEEDS_REVIEW',
+		transaction_status: 'NEEDS_REVIEW',
+		confidence_score: 0.66,
+		action: 'KEEP_REVIEW',
+		reason: 'Needs human confirmation',
+	}),
 }));
 
 vi.mock('../src/workers/email-sync-dispatcher', () => ({
@@ -47,6 +56,10 @@ vi.mock('../src/workers/email-sync-fetcher', () => ({
 
 vi.mock('../src/workers/email-normalizer', () => ({
 	runNormalizeRawEmailsJob: runNormalizeRawEmailsJobMock,
+}));
+
+vi.mock('../src/workers/ai-classifier', () => ({
+	runAiClassificationJob: runAiClassificationJobMock,
 }));
 
 import { QUEUE_NAMES } from '../src/lib/infra';
@@ -212,6 +225,7 @@ describe('queue.worker', () => {
 
 		expect(harness.ack).toHaveBeenCalledTimes(1);
 		expect(harness.retry).not.toHaveBeenCalled();
+		expect(runAiClassificationJobMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('acks poison messages instead of retrying forever', async () => {
@@ -530,5 +544,72 @@ describe('queue.worker', () => {
 		expect(harness.ack).not.toHaveBeenCalled();
 		expect(harness.retry).toHaveBeenCalledTimes(1);
 		expect(harness.retry).toHaveBeenCalledWith();
+	});
+
+	it('emits QUEUE_BATCH_SUMMARY metrics for each processed batch', async () => {
+		const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+		const harness = createMessage(
+			{
+				job_type: 'EMAIL_SYNC_USER',
+				user_id: '00000000-0000-4000-8000-000000000001',
+				last_sync_timestamp: 1_700_000_000,
+			},
+			2,
+		);
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		const summaryCall = infoSpy.mock.calls.find(call => call[0] === 'QUEUE_BATCH_SUMMARY');
+		expect(summaryCall).toBeDefined();
+		expect(summaryCall?.[1]).toEqual(
+			expect.objectContaining({
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				total_messages: 1,
+				acked_messages: 1,
+				poison_acked_messages: 0,
+				retried_messages: 0,
+				final_retry_messages: 0,
+				max_attempts_seen: 2,
+				retry_rate_percent: 0,
+			}),
+		);
+		infoSpy.mockRestore();
+	});
+
+	it('emits QUEUE_ALERT_THRESHOLD_BREACH when retry rate exceeds threshold', async () => {
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const harness = createMessage({ job_type: 'EMAIL_SYNC_DISPATCH' }, 1);
+
+		await handleQueue(
+			{
+				queue: 'unsupported-queue',
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		const alertCall = errorSpy.mock.calls.find(call => call[0] === 'QUEUE_ALERT_THRESHOLD_BREACH');
+		expect(alertCall).toBeDefined();
+		expect(alertCall?.[1]).toEqual(
+			expect.objectContaining({
+				queue: 'unsupported-queue',
+				total_messages: 1,
+				retried_messages: 1,
+				retry_rate_percent: 100,
+			}),
+		);
+		errorSpy.mockRestore();
 	});
 });

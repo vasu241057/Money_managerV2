@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	parseCreateManualTransactionRequest,
 	parseListTransactionsQuery,
+	parseReviewTransactionRequest,
 	parseUpdateTransactionRequest,
 	prepareTransactionRelationUpdate,
 } from '../src/services/transactions.service';
@@ -47,6 +48,32 @@ describe('transactions payload/query validation', () => {
 				page: '1abc',
 			}),
 		).toThrow('page must be a positive integer');
+	});
+
+	it('parses review payload fields', () => {
+		expect(
+			parseReviewTransactionRequest({
+				category_id: '00000000-0000-4000-8000-000000000101',
+				merchant_id: null,
+				user_note: 'looks correct',
+				apply_rule: true,
+				rule_search_key: 'zomato',
+			}),
+		).toEqual({
+			category_id: '00000000-0000-4000-8000-000000000101',
+			merchant_id: null,
+			user_note: 'looks correct',
+			apply_rule: true,
+			rule_search_key: 'zomato',
+		});
+	});
+
+	it('rejects non-boolean review apply_rule', () => {
+		expect(() =>
+			parseReviewTransactionRequest({
+				apply_rule: 'true',
+			}),
+		).toThrow('apply_rule must be a boolean');
 	});
 
 	it('auto-aligns account_id when credit_card_id is updated', () => {

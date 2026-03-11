@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
+import { ReviewInbox } from './components/ReviewInbox';
 import { TransactionList } from './components/TransactionList';
 import { TransactionForm } from './components/TransactionForm';
 import { CategoryManager } from './components/CategoryManager';
@@ -19,13 +20,14 @@ import './styles/app.css';
 function MoneyManagerApp() {
   const {
     transactions,
+    reviewInbox,
     addTransaction,
+    reviewTransaction,
     deleteTransaction,
     isLoading: transactionsLoading,
     error: transactionsError,
   } = useTransactions();
   const {
-    isAvailable: gmailAvailable,
     connection: gmailConnection,
     connectGmail,
     disconnectGmail,
@@ -38,12 +40,8 @@ function MoneyManagerApp() {
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [viewMode, setViewMode] = useState<'daily' | 'monthly'>('daily');
-  const gmailStatusLabel = gmailAvailable
-    ? (gmailConnection?.sync_status ?? 'DISCONNECTED')
-    : 'UNAVAILABLE';
-  const gmailStatusClass = !gmailAvailable
-    ? 'unavailable'
-    : (gmailConnection?.sync_status.toLowerCase() ?? 'disconnected');
+  const gmailStatusLabel = gmailConnection?.sync_status ?? 'DISCONNECTED';
+  const gmailStatusClass = gmailConnection?.sync_status.toLowerCase() ?? 'disconnected';
 
   return (
     <Layout>
@@ -55,7 +53,7 @@ function MoneyManagerApp() {
           >
             Gmail: {gmailStatusLabel}
           </span>
-          {gmailAvailable && gmailConnection ? (
+          {gmailConnection ? (
             <button
               className="settings-btn"
               onClick={() => {
@@ -65,7 +63,7 @@ function MoneyManagerApp() {
             >
               Disconnect Gmail
             </button>
-          ) : gmailAvailable ? (
+          ) : (
             <button
               className="settings-btn"
               onClick={() => {
@@ -75,11 +73,6 @@ function MoneyManagerApp() {
             >
               Connect Gmail
             </button>
-          ) : null}
-          {!gmailAvailable && (
-            <span className="gmail-unavailable-note">
-              Enable remote mode to connect Gmail
-            </span>
           )}
           <button className="settings-btn" onClick={() => setIsAccountManagerOpen(true)}>
             Accounts
@@ -93,6 +86,11 @@ function MoneyManagerApp() {
       <Dashboard 
         transactions={transactions} 
         onBalanceClick={() => setIsAnalyticsOpen(true)}
+      />
+
+      <ReviewInbox
+        items={reviewInbox}
+        onReview={reviewTransaction}
       />
 
       {transactionsError && <p style={{ color: '#dc2626', margin: '8px 0' }}>{transactionsError}</p>}

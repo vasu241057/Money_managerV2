@@ -1,5 +1,4 @@
 import type {
-	AiClassificationJobPayload,
 	ClassificationSource,
 	EventDirection,
 	MerchantType,
@@ -11,18 +10,20 @@ import type {
 	UUID,
 } from '../../../shared/types';
 import { NORMALIZE_RAW_EMAILS_MAX_IDS } from '../../../shared/types';
+import { resolveAiQueueDelaySeconds } from '../lib/ai';
 import { getAppConfig } from '../lib/config';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
 import { toIsoDateTime, toNullableString, toRequiredString } from '../lib/db/serialization';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
+import { buildAiClassificationJob } from './queue.messages';
 
 const KILL_SWITCH_ENV_KEYS = [
 	'NORMALIZATION_KILL_SWITCH',
 	'EMAIL_NORMALIZATION_KILL_SWITCH',
 ] as const;
 const AMOUNT_CANDIDATE_REGEX =
-	/(?:^|[^A-Za-z0-9])(?:₹|inr\.?|rs\.?)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|(?:^|[^A-Za-z0-9])([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:₹|inr\.?|rs\.?)(?=$|[^A-Za-z0-9])/gi;
+	/(?:^|[^A-Za-z0-9])(?:₹|inr\.?|rs\.?)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)(?=$|[^A-Za-z0-9])|(?:^|[^A-Za-z0-9])([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:₹|inr\.?|rs\.?)(?=$|[^A-Za-z0-9])/gi;
 const DEBIT_PATTERNS: readonly RegExp[] = [
 	/\bdebited\b/i,
 	/\bspent\b/i,
@@ -31,12 +32,27 @@ const DEBIT_PATTERNS: readonly RegExp[] = [
 	/\bwithdrawn\b/i,
 	/\bpurchase\b/i,
 ];
+const HARD_DEBIT_PATTERNS: readonly RegExp[] = [
+	/\bdebited\b/i,
+	/\bspent\b/i,
+	/\bpaid\b/i,
+	/\bsent\b/i,
+	/\bwithdrawn\b/i,
+];
 const CREDIT_PATTERNS: readonly RegExp[] = [
 	/\bcredited\b/i,
 	/\breceived\b/i,
 	/\brefund\b/i,
 	/\bdeposited\b/i,
 	/\breversed\b/i,
+];
+const HARD_CREDIT_PATTERNS: readonly RegExp[] = [
+	/\bcredited\b/i,
+	/\breceived\b/i,
+	/\brefund(?:ed)?\b/i,
+	/\breversal\b/i,
+	/\breversed\b/i,
+	/\bdeposited\b/i,
 ];
 const DIRECTION_CUE_PATTERNS = [...DEBIT_PATTERNS, ...CREDIT_PATTERNS] as const;
 const REVERSAL_HINT_REGEX = /\b(reversal|reversed|refund|credited back|reinstated|chargeback)\b/i;
@@ -46,6 +62,11 @@ const TRANSACTION_AMOUNT_HINT_REGEX =
 const BALANCE_AMOUNT_HINT_REGEX =
 	/\b(balance|bal|avl|available|closing|opening|outstanding|limit|due|min(?:imum)?\s+due|total\s+due)\b/i;
 const CASHBACK_HINT_REGEX = /\bcash[\s-]*back\b|\bcashback\b/i;
+const PROMOTIONAL_PURCHASE_HINT_REGEX = /\b(offer|offers|promo|promotion|coupon|deal)\b/i;
+const CASHBACK_REWARD_CONTEXT_REGEX =
+	/\b(reward(?:s|ed)?|reward points?|loyalty points?|points?|coins?)\b/i;
+const CASHBACK_PRIMARY_TXN_CONTEXT_REGEX =
+	/\b(to|at|via|ref|utr|txn(?: id)?|transaction id|merchant|store|shop|card|upi|account|a\/c)\b/i;
 const NON_FINANCIAL_MARKERS = [
 	'otp',
 	'one time password',
@@ -99,6 +120,11 @@ interface AmountCandidate {
 	amount_in_paise: number;
 	index: number;
 	raw_token: string;
+}
+
+interface NeighborDirectionContext {
+	direction: EventDirection;
+	line: string;
 }
 
 interface SystemCategoryRowRaw {
@@ -324,18 +350,99 @@ function detectDirection(value: string): EventDirection | null {
 }
 
 function shouldSuppressCashbackFragment(value: string): boolean {
-	return CASHBACK_HINT_REGEX.test(value);
-}
-
-function detectNeighborDirection(lines: string[], index: number): EventDirection | null {
-	const prevDirection = index > 0 ? detectDirection(lines[index - 1] ?? '') : null;
-	const nextDirection = index + 1 < lines.length ? detectDirection(lines[index + 1] ?? '') : null;
-
-	if (prevDirection && nextDirection && prevDirection !== nextDirection) {
-		return null;
+	const hasCashbackHint = CASHBACK_HINT_REGEX.test(value);
+	const hasRewardContext = CASHBACK_REWARD_CONTEXT_REGEX.test(value);
+	const hasPromotionalPurchaseHint =
+		/\bpurchase\b/i.test(value) && PROMOTIONAL_PURCHASE_HINT_REGEX.test(value);
+	if (!hasCashbackHint && !hasRewardContext && !hasPromotionalPurchaseHint) {
+		return false;
 	}
 
-	return prevDirection ?? nextDirection;
+	const hasHardDebitCue = findFirstRegexIndex(value, HARD_DEBIT_PATTERNS) !== null;
+	const hasHardCreditCue = findFirstRegexIndex(value, HARD_CREDIT_PATTERNS) !== null;
+	const hasPrimaryTxnContext = CASHBACK_PRIMARY_TXN_CONTEXT_REGEX.test(value);
+
+	if (hasPromotionalPurchaseHint && !hasHardDebitCue && !hasHardCreditCue) {
+		return true;
+	}
+	if (hasHardDebitCue && hasPrimaryTxnContext) {
+		return false;
+	}
+	if (hasHardCreditCue && !hasHardDebitCue) {
+		return true;
+	}
+	if (!hasHardDebitCue && !hasHardCreditCue) {
+		return true;
+	}
+
+	return !hasPrimaryTxnContext;
+}
+
+function detectDirectionFromPatterns(
+	value: string,
+	debitPatterns: readonly RegExp[],
+	creditPatterns: readonly RegExp[],
+): EventDirection | null {
+	const debitIndex = findFirstRegexIndex(value, debitPatterns);
+	const creditIndex = findFirstRegexIndex(value, creditPatterns);
+
+	if (debitIndex === null && creditIndex === null) {
+		return null;
+	}
+	if (debitIndex === null) {
+		return 'credit';
+	}
+	if (creditIndex === null) {
+		return 'debit';
+	}
+	return debitIndex <= creditIndex ? 'debit' : 'credit';
+}
+
+function detectNeighborDirection(lines: string[], index: number): NeighborDirectionContext | null {
+	const candidates: NeighborDirectionContext[] = [];
+
+	if (index > 0) {
+		const previousLine = lines[index - 1] ?? '';
+		const previousDirection = detectDirectionFromPatterns(
+			previousLine,
+			HARD_DEBIT_PATTERNS,
+			HARD_CREDIT_PATTERNS,
+		);
+		if (previousDirection && extractAmountInPaise(previousLine) === null) {
+			candidates.push({
+				direction: previousDirection,
+				line: previousLine,
+			});
+		}
+	}
+
+	if (index + 1 < lines.length) {
+		const nextLine = lines[index + 1] ?? '';
+		const nextDirection = detectDirectionFromPatterns(
+			nextLine,
+			HARD_DEBIT_PATTERNS,
+			HARD_CREDIT_PATTERNS,
+		);
+		if (nextDirection && extractAmountInPaise(nextLine) === null) {
+			candidates.push({
+				direction: nextDirection,
+				line: nextLine,
+			});
+		}
+	}
+
+	if (candidates.length === 0) {
+		return null;
+	}
+	if (candidates.length > 1) {
+		const firstDirection = candidates[0]?.direction;
+		const allSameDirection = candidates.every(candidate => candidate.direction === firstDirection);
+		if (!allSameDirection) {
+			return null;
+		}
+	}
+
+	return candidates[0] ?? null;
 }
 
 function parseAmountTokenToPaise(token: string): number | null {
@@ -554,7 +661,7 @@ function resolveNoFactTerminalStatus(cleanText: string): 'IGNORED' | 'UNRECOGNIZ
 	if (normalized.trim().length === 0) {
 		return 'IGNORED';
 	}
-	if (CASHBACK_HINT_REGEX.test(normalized)) {
+	if (shouldSuppressCashbackFragment(normalized)) {
 		return 'IGNORED';
 	}
 	for (const marker of NON_FINANCIAL_MARKERS) {
@@ -599,10 +706,6 @@ function extractDraftFacts(rawEmail: RawEmailRecord): ExtractedFactDraft[] {
 			continue;
 		}
 
-		if (shouldSuppressCashbackFragment(line)) {
-			continue;
-		}
-
 		const lineDirection = detectDirection(line);
 		if (
 			lineDirection === null &&
@@ -612,27 +715,36 @@ function extractDraftFacts(rawEmail: RawEmailRecord): ExtractedFactDraft[] {
 			continue;
 		}
 
-		const neighborDirection = detectNeighborDirection(lines, index);
+		const neighborDirection = lineDirection ? null : detectNeighborDirection(lines, index);
 		const direction =
-			lineDirection ?? neighborDirection ?? (isSingleLineEmail ? globalDirection : null);
+			lineDirection ?? neighborDirection?.direction ?? (isSingleLineEmail ? globalDirection : null);
 		if (!direction) {
 			continue;
 		}
 
-		const linePaymentMethod = detectPaymentMethod(line);
+		const fieldSourceText = lineDirection
+			? line
+			: neighborDirection
+				? `${line} ${neighborDirection.line}`
+				: line;
+		if (shouldSuppressCashbackFragment(fieldSourceText)) {
+			continue;
+		}
+
+		const linePaymentMethod = detectPaymentMethod(fieldSourceText);
 		const paymentMethod =
 			linePaymentMethod === 'unknown' && isSingleLineEmail ? globalPaymentMethod : linePaymentMethod;
-		const lineInstrumentId = extractInstrumentId(line);
+		const lineInstrumentId = extractInstrumentId(fieldSourceText);
 		const instrumentId = lineInstrumentId ?? (isSingleLineEmail ? globalInstrumentId : null);
 		const counterparty =
-			extractCounterparty(line, direction) ??
+			extractCounterparty(fieldSourceText, direction) ??
 			(isSingleLineEmail ? extractCounterparty(normalizedText, direction) : null);
 
 		drafts.push({
 			raw_email_id: rawEmail.id,
 			user_id: rawEmail.user_id,
 			line_index: index,
-			raw_fragment: line,
+			raw_fragment: fieldSourceText,
 			direction,
 			amount_in_paise: amountInPaise,
 			txn_timestamp: rawEmail.internal_date_iso,
@@ -644,6 +756,9 @@ function extractDraftFacts(rawEmail: RawEmailRecord): ExtractedFactDraft[] {
 
 	if (drafts.length > 0) {
 		return drafts;
+	}
+	if (!isSingleLineEmail) {
+		return [];
 	}
 
 	const fallbackAmount = extractAmountInPaise(normalizedText);
@@ -1366,21 +1481,24 @@ async function markRawEmailFailed(
 	});
 }
 
-async function enqueueAiClassificationJobs(queue: Queue, transactionIds: UUID[]): Promise<number> {
+async function enqueueAiClassificationJobs(
+	queue: Queue,
+	transactionIds: UUID[],
+	delaySeconds: number,
+): Promise<number> {
 	const deduped = dedupeUuidPreserveOrder(transactionIds);
 	let enqueuedCount = 0;
 
 	for (const transactionId of deduped) {
-		const payload: AiClassificationJobPayload = {
-			job_type: 'AI_CLASSIFICATION',
-			transaction_id: transactionId,
-			requested_at: new Date().toISOString(),
-		};
+		const payload = buildAiClassificationJob(transactionId);
 
 		let sent = false;
 		for (let attempt = 1; attempt <= MAX_QUEUE_ENQUEUE_ATTEMPTS; attempt += 1) {
 			try {
-				await queue.send(payload, { contentType: 'json' });
+				await queue.send(payload, {
+					contentType: 'json',
+					delaySeconds,
+				});
 				sent = true;
 				enqueuedCount += 1;
 				break;
@@ -1472,7 +1590,7 @@ export async function runNormalizeRawEmailsJob(
 		result.extracted_fact_count += extracted.length;
 		const reconciled = reconcileDraftFacts(rawEmail.clean_text, extracted);
 		result.reconciled_fact_count += reconciled.length;
-			const flagged = reconciled.map(addVpaAndAggregatorFlags);
+		const flagged = reconciled.map(addVpaAndAggregatorFlags);
 		const canonical = flagged.map(canonicalizeFlaggedFact);
 
 		preparedRows.push({
@@ -1527,6 +1645,7 @@ export async function runNormalizeRawEmailsJob(
 	result.ai_enqueued_count = await enqueueAiClassificationJobs(
 		env.AI_CLASSIFICATION_QUEUE,
 		needsReviewTransactionIds,
+		resolveAiQueueDelaySeconds(env),
 	);
 
 	return result;

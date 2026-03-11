@@ -12,7 +12,9 @@ import {
 	listTransactions,
 	parseCreateManualTransactionRequest,
 	parseListTransactionsQuery,
+	parseReviewTransactionRequest,
 	parseUpdateTransactionRequest,
+	reviewTransaction,
 	updateTransaction,
 } from '../services/transactions.service';
 
@@ -56,6 +58,20 @@ export function createTransactionsRouter(): Router {
 
 			const transaction = await updateTransaction(sql, userId, transactionId, payload);
 			res.status(200).json({ data: transaction });
+		}),
+	);
+
+	router.post(
+		'/:transactionId/review',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			const transactionId = parseUuid(req.params.transactionId, 'transactionId');
+			const config = getAppConfig(runtimeEnv);
+			const sql = getSqlClient(config);
+			const payload = parseReviewTransactionRequest(req.body);
+
+			const reviewResult = await reviewTransaction(sql, userId, transactionId, payload);
+			res.status(200).json({ data: reviewResult });
 		}),
 	);
 

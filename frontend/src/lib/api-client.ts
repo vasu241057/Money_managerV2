@@ -8,8 +8,12 @@ import type {
   GoogleOAuthConnectionResponse,
   GoogleOAuthConnectionStatusResponse,
   GoogleOAuthStartResponse,
+  GlobalMerchantListItem,
+  ListGlobalMerchantsQuery,
   ListTransactionsQuery,
   PaginatedResponse,
+  ReviewTransactionRequest,
+  ReviewTransactionResponse,
   TransactionFeedItem,
   UpdateAccountRequest,
   UpdateCategoryRequest,
@@ -189,6 +193,17 @@ export const apiClient = {
     return response;
   },
 
+  async listGlobalMerchants(query: ListGlobalMerchantsQuery = {}): Promise<GlobalMerchantListItem[]> {
+    const response = await request<ApiEnvelope<GlobalMerchantListItem[]>>(
+      `/merchants${buildQueryString({
+        q: query.q,
+        limit: query.limit,
+      })}`,
+    );
+
+    return response.data;
+  },
+
   async createManualTransaction(payload: CreateManualTransactionRequest): Promise<TransactionFeedItem> {
     const response = await request<ApiEnvelope<TransactionFeedItem>>('/transactions', {
       method: 'POST',
@@ -205,6 +220,21 @@ export const apiClient = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
+    return response.data;
+  },
+
+  async reviewTransaction(
+    transactionId: string,
+    payload: ReviewTransactionRequest,
+  ): Promise<ReviewTransactionResponse> {
+    const response = await request<ApiEnvelope<ReviewTransactionResponse>>(
+      `/transactions/${transactionId}/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
+
     return response.data;
   },
 

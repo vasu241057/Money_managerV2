@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { OauthConnectionRow } from '../../../shared/types';
-import { isRemoteDataEnabled } from '../config/data-source';
 import { apiClient, toErrorMessage } from '../lib/api-client';
 import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 
@@ -14,22 +13,7 @@ interface UseGmailConnectionResult {
   error: string | null;
 }
 
-const REMOTE_DATA_ENABLED = isRemoteDataEnabled();
 const GMAIL_CONNECTION_QUERY_KEY = ['gmail-connection'] as const;
-
-function useLocalFallback(): UseGmailConnectionResult {
-  return {
-    isAvailable: false,
-    connection: null,
-    connectGmail: async () => undefined,
-    disconnectGmail: async () => undefined,
-    completeOAuthCallback: async () => {
-      throw new Error('Gmail sync is available only when remote data mode is enabled.');
-    },
-    isLoading: false,
-    error: null,
-  };
-}
 
 function useRemoteGmailConnection(skipStatusQuery = false): UseGmailConnectionResult {
   const queryClient = useQueryClient();
@@ -97,18 +81,10 @@ function useRemoteGmailConnection(skipStatusQuery = false): UseGmailConnectionRe
   };
 }
 
-const useGmailConnectionImpl: () => UseGmailConnectionResult = REMOTE_DATA_ENABLED
-  ? () => useRemoteGmailConnection(false)
-  : useLocalFallback;
-
-const useGmailConnectionCallbackImpl: () => UseGmailConnectionResult = REMOTE_DATA_ENABLED
-  ? () => useRemoteGmailConnection(true)
-  : useLocalFallback;
-
 export function useGmailConnection(): UseGmailConnectionResult {
-  return useGmailConnectionImpl();
+  return useRemoteGmailConnection(false);
 }
 
 export function useGmailConnectionForOAuthCallback(): UseGmailConnectionResult {
-  return useGmailConnectionCallbackImpl();
+  return useRemoteGmailConnection(true);
 }

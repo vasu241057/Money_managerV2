@@ -1,28 +1,20 @@
 # Money Manager Frontend
 
-## Milestone 5 Data Layer
+## Milestone 12 Data Layer Cutover
 
-The frontend now supports two data sources:
+The frontend is now **remote-only**:
 
-- `local` (default): legacy localStorage hooks
-- `remote`: backend API + React Query cache
+- backend API + React Query cache is the only runtime data path
+- legacy local hooks and local data-source toggles are retired
 
-### Feature flag
+### Required env
 
 Set in `.env` (or `.env.local`):
 
 ```bash
-VITE_USE_REMOTE_DATA=true
 VITE_API_BASE_URL=/api
 VITE_DEV_API_PROXY_TARGET=http://127.0.0.1:8787
 ```
-
-Runtime override (for emergency fallback):
-
-- `localStorage.setItem('money-manager:data-source', 'local')`
-- `localStorage.setItem('money-manager:data-source', 'remote')`
-
-Reload after changing the override.
 
 ### Auth contract
 
@@ -60,7 +52,7 @@ This avoids conflicts with existing `/api/analyze` usage.
 
 ## Milestone 6 One-time localStorage bridge
 
-When `remote` mode is enabled and a valid Clerk token is available, the frontend now runs a one-time migration for that authenticated user:
+The frontend still runs a one-time migration for authenticated users to import historical local data:
 
 - Reads legacy localStorage keys: `accounts`, `categories`, `transactions`
 - Migrates relations in order: accounts -> categories/sub-categories -> transactions

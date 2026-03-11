@@ -13,7 +13,7 @@ export type EmailSyncDispatchJob = EmailSyncDispatchJobPayload;
 export type EmailSyncUserJob = EmailSyncUserJobPayload;
 export type NormalizeRawEmailsJob = NormalizeRawEmailsJobPayload;
 export type AiClassificationJob = AiClassificationJobPayload;
-export type EmailSyncQueueJob = EmailSyncJobPayload | NormalizeRawEmailsJob;
+export type EmailSyncQueueJob = EmailSyncJobPayload;
 export type QueueJob = EmailSyncQueueJob | AiClassificationJob;
 
 const UUID_REGEX =
@@ -168,6 +168,17 @@ export function buildEmailSyncUserJob(
 		user_id: userId,
 		last_sync_timestamp: lastSyncTimestamp,
 		...(continuation ?? {}),
+	};
+}
+
+export function buildAiClassificationJob(
+	transactionId: UUID,
+	requestedAt: string = new Date().toISOString(),
+): AiClassificationJob {
+	return {
+		job_type: 'AI_CLASSIFICATION',
+		transaction_id: transactionId,
+		requested_at: requestedAt,
 	};
 }
 
