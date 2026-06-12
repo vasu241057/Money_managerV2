@@ -1,0 +1,40 @@
+# Part 6: Transaction Form Modal (Add/Edit)
+
+Opens when tapping FAB (+) or tapping a transaction row.
+
+## Header
+"Add Transaction" or "Edit Transaction" + [X] close button.
+
+## Type Toggle
+[Expense] [Income] pill buttons. Selected = accent fill. Disabled for bank-detected transactions + transfers.
+
+## Warning (conditional)
+"Amount, type, and date cannot be changed for bank-detected transactions" (shown when editing a non-manual transaction).
+
+## Amount Input
+Large centered number field. Shows "₹ 0" by default. Disabled for locked transactions.
+
+## Date Picker
+Trigger field: "📅 Pick a date ▼". Tapping opens Bottom Sheet Date Picker with month navigation arrows, calendar grid (S M T W T F S), selected day highlighted (accent fill), today with accent border ring, [Today] button.
+
+## Category Selector
+Horizontal scrollable chip row. Filtered by selected type (expense/income). Tap to select — accent highlight. Categories: Food, Transport, Shopping, Entertainment, Bills, Health, etc.
+
+## Sub-Category Selector
+Appears only when selected category has sub-categories. Same chip style. Examples: Groceries, Restaurants, Snacks (under Food).
+
+## Account Picker
+Dropdown trigger: "▼ Select Account". Tapping opens bottom sheet list of all user accounts with checkmark on selected. First option: "No account".
+
+## Note Input
+Text field. Placeholder for optional description.
+
+## Save Button
+Full-width primary button at bottom. "Save Transaction".
+
+## States
+- Add mode: empty form, "Add Transaction"
+- Edit mode: pre-filled, "Edit Transaction"
+- Locked fields: greyed out, disabled
+- Form loading: all fields disabled
+- Error: red text above form

@@ -1,0 +1,26 @@
+# Part 2: Dashboard — Header, Gmail Monitor, Balance Card
+
+## Overall Dashboard
+The main shell screen after authentication. Everything else opens as modals on top. Dark theme, scrollable vertically.
+
+## Header
+- "My Wallet" title (left, h2)
+- Circular avatar (right) — Clerk UserButton. Click opens dropdown menu.
+
+## Gmail Sync Monitor Card
+Always visible. Shows Gmail connection + processing stats.
+- Title: "Gmail Sync Monitor" (small bold)
+- "Connected inbox: vasu@..." (or "Not connected")
+- "Emails seen: 700 | Processed: 350 | Pending: 350 | Failed: 0"
+- Latest email timestamp (if available)
+- Active state: red border + red-tinted dark background (when emails exist)
+- Inactive: dark gray border + dark background (when no emails yet)
+
+## Balance Card
+Gradient background card (blue-ish). Tap opens Analytics modal.
+- "Total Balance" label
+- Large rupee amount: "₹45,230.50" (lifetime net)
+- "Income (This Month): +₹1,25,000" (green)
+- "Expense (This Month): -₹79,770" (red)
+- Hover: slight lift effect
+- Empty state: all zeros when no transactions

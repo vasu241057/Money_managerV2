@@ -1,0 +1,35 @@
+# Part 4: Transaction List + FAB
+
+## Section Header
+"Transactions" heading with [Daily | Monthly] segmented toggle on the right. Daily is default active.
+
+## Transaction List — Daily View
+Grouped by calendar date. Each group has:
+- Date header: "Today", "Yesterday", or "Wed, 4 Jun" + net total for that day
+
+Each row shows:
+- Category circle icon: first letter of category name, colored bg
+- "Category / Subcategory" format (bold)
+- Amount: "-₹350" (red/expense), "+₹1,500" (green/income), "↔₹500" (transfer)
+- Account name below amount
+- Optional description/note beside account
+
+## Transaction List — Monthly View
+Grouped by month. Each month is a collapsible card:
+- Month initial circle + name + transaction count + net total + chevron
+- Expanded → shows daily sub-groups within that month
+
+## Swipe-to-Delete (touch gesture)
+- Swipe left <40px: snaps back (cancel)
+- Swipe left 40-200px: reveals red bg + trash icon + "Delete" label
+- Swipe left >200px: auto-deletes
+- Only one row open at a time
+
+## Tap-to-Edit
+Tapping any row opens the Transaction Form in edit mode.
+
+## Empty State
+"No transactions yet. Tap + to add your first transaction or connect Gmail for automatic tracking." (centered, gray)
+
+## FAB (Floating Action Button)
+Fixed bottom-right (24px from edges). Blue gradient circle, white + icon. Z-index 50. Tap → opens Transaction Form (add mode).

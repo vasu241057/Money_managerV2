@@ -1,0 +1,32 @@
+# Part 8: Category Manager + Analytics
+
+## Category Manager Modal
+Opens from UserButton dropdown → "Categories".
+
+- Header: "Manage Categories" + [X]
+- Type toggle: [Expense] [Income] — filters category list
+- Category list (filtered by toggle):
+  Each row shows category name + sub-count badge "(6 sub)". Tap to expand/collapse.
+  Expanded state shows sub-categories list with [✕] delete per sub.
+  Inline input at bottom: [____] [+ ] to add sub-category.
+  [🗑] delete on parent category (deletes category + all subs).
+- Add Category form at bottom:
+  Name input + [+ Add Category] button. Inherits type from toggle.
+
+User categories only (system categories can't be deleted). Sub-categories inherit parent's type.
+
+## Analytics Modal
+Opens when tapping the Balance Card on Dashboard.
+
+- Header: "Spending Analysis" + [X]
+- Tab: [Category] [Account] — switches pie chart breakdown
+- Pie chart (Recharts, 300px): expense breakdown. Tooltip with ₹ on hover.
+- Legend list: colored dot + name + amount + percentage
+- AI Insights section (below divider):
+  [✨ Analyze Spending] button
+  Loading: spinner + "Analyzing your spending habits..."
+  Result: AI-generated text in highlighted box
+  Error: red error box
+- Empty state (no expenses): "No expense data available for analysis."
+
+Close via [X] or tapping backdrop overlay.

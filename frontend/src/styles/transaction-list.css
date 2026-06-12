@@ -1,0 +1,251 @@
+.transaction-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.date-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0 4px 8px 4px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  transition: background-color 0.2s;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chevron-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.date-header {
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-weight: 500;
+  margin: 0;
+}
+
+.day-total {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.day-total.expense {
+  color: var(--text-primary);
+}
+
+.day-total.income {
+  color: var(--success-color);
+}
+
+.group-total {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.group-total.expense {
+  color: var(--text-primary);
+}
+
+.group-total.income {
+  color: var(--success-color);
+}
+
+/* Month Card - Transaction-like styling */
+.month-card {
+  display: flex;
+  align-items: center;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  gap: 12px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  margin-bottom: 12px;
+}
+
+.month-card:hover {
+  background: var(--bg-tertiary);
+}
+
+.month-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.month-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.month-name {
+  font-weight: 500;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.month-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.month-total {
+  font-weight: 600;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.month-total.expense {
+  color: var(--text-primary);
+}
+
+.month-total.income {
+  color: var(--success-color);
+}
+
+.month-expanded-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.day-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.transactions {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.transaction-item-wrapper {
+  position: relative;
+  overflow: hidden;
+}
+
+.swipe-delete-action {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  /* width is set inline */
+  background: var(--danger-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: white;
+  font-weight: 500;
+  font-size: 14px;
+  z-index: 0; /* Ensure it's behind the item but clickable when revealed */
+  cursor: pointer;
+  transition: width 0.1s ease-out;
+}
+
+.transaction-item {
+  display: flex;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  gap: 12px;
+  position: relative;
+  background: var(--bg-secondary);
+  transition: transform 0.1s ease-out;
+  will-change: transform;
+  z-index: 1; /* Keep above the delete action */
+}
+
+
+.transaction-item:last-child {
+  border-bottom: none;
+}
+
+.t-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.t-details {
+  flex: 1;
+}
+
+.t-main {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.t-category {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.t-cat-group {
+  display: flex;
+  align-items: center;
+}
+
+.t-subcategory {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+
+.t-amount {
+  font-weight: 600;
+}
+
+.t-amount.expense { color: var(--text-primary); }
+.t-amount.income { color: var(--success-color); }
+
+.t-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.t-account {
+  font-weight: 500;
+}
+
+.empty-state {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 40px 20px;
+}

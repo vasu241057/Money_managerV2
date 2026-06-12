@@ -1,0 +1,26 @@
+# Part 7: Account Manager Modal
+
+Opens from UserButton dropdown → "Accounts".
+
+## IMPORTANT UX requirements for redesign:
+
+1. TYPE TABS FILTER THE LIST. Not just select type for new accounts. Cash tab = only cash accounts. Bank tab = only bank accounts. Card tab = only card accounts. Other tab = only other accounts.
+
+2. When "Card" tab is selected, a "Last 4 digits" input field appears (4 digits, numbers only). When not on Card tab, this field is hidden.
+
+3. Existing cards should allow editing their last4 digits. Currently only settable on creation — Sigma should add inline edit on existing card rows.
+
+## Layout
+- Header: "Manage Accounts" + [X]
+- Type tabs: [Cash] [Bank] [Card] [Other] — these FILTER the account list below AND set type for new accounts
+- Account list (filtered by selected tab):
+  Each row: type icon + name + [🗑 delete]. For cards with last4: shows "···· 1234" below name.
+  Icons: Banknote (cash), Building (bank), CreditCard (card), Wallet (other)
+- "Last 4 digits" input (card tab only): [ ____ ] 4 digit max, digits only
+- Account name input: [ ___________ ]
+- [+ Add Account] button
+
+## States
+- Empty tab: no accounts listed, only add form
+- Error: red text below tabs
+- Loading: add button disabled

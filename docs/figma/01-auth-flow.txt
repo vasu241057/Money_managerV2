@@ -1,0 +1,35 @@
+# Part 1: Auth + Splash + OAuth Callback
+
+## 1. Authentication Screen
+Shows when signed out. Dark gradient background.
+- Title: "Sign in to Money Manager" (white h2)
+- Subtitle: "Use mobile number or Google account to continue." (gray)
+- [Sign in] button — opens Clerk's sign-in modal
+- [Sign up] button — opens Clerk's sign-up modal
+Both buttons: full-width, dark bg #1f2937, white text, border #4b5563
+
+## 2. Splash Screen
+Shows for 1 second after sign-in, then fades out (500ms animation).
+- Logo (120x120, pulsing animation) at center
+- "Money Manager" (bold white text) below logo
+- "Made by Vasu Khandelwal" (small gray text) at bottom
+
+## 3. OAuth Callback Screen (Gmail connection)
+Shown after user grants Gmail permission on Google.
+
+Loading state:
+- Bouncing envelope mascot SVG (with green check badge, animated lines inside)
+- "connecting" text with letter-spacing animation
+- Stretching pill bar loader below text
+- Subtext: "Linking your Gmail inbox..." (gray)
+
+Success state (auto-dismisses after 1.8s):
+- Green checkmark in circle
+- "Gmail Connected" (white)
+- "Your inbox is linked. Taking you home..." (gray)
+
+Error state:
+- Red warning icon in circle
+- "Connection Failed" (white)
+- Error message text (gray)
+- [Back to App] button — manual dismiss

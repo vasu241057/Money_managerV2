@@ -1,0 +1,142 @@
+.review-inbox {
+  margin: 12px 0 18px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.review-inbox-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.review-inbox-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.review-inbox-header span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.review-inbox-toolbar {
+  margin-bottom: 10px;
+}
+
+.review-inbox-list {
+  display: grid;
+  gap: 10px;
+}
+
+.review-meta-text {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.review-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.review-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.review-card-title {
+  font-weight: 600;
+  color: #111827;
+}
+
+.review-card-meta {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.review-card-amount {
+  font-weight: 700;
+}
+
+.review-card-amount.expense {
+  color: #dc2626;
+}
+
+.review-card-amount.income {
+  color: #16a34a;
+}
+
+.review-card-amount.transfer {
+  color: #0ea5e9;
+}
+
+.review-card-search-key {
+  font-size: 12px;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.review-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.review-field-label select,
+.review-field-label input,
+.review-field-label textarea {
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.review-field-label textarea {
+  resize: vertical;
+}
+
+.review-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #111827;
+  margin-bottom: 8px;
+}
+
+.review-error-text {
+  margin: 0 0 8px;
+  color: #dc2626;
+  font-size: 12px;
+}
+
+.review-approve-btn {
+  width: 100%;
+  border: none;
+  background: #111827;
+  color: #fff;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.review-approve-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}

@@ -1,0 +1,56 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "backend",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-03-01",
+	"observability": {
+		"enabled": true
+	},
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"vars": {
+		"APP_NAME": "money-manager-backend",
+		"APP_VERSION": "0.1.0",
+		"NODE_ENV": "development",
+		"DB_MAX_CONNECTIONS": "5",
+		"DB_CONNECT_TIMEOUT_SECONDS": "5"
+	},
+	"triggers": {
+		"crons": [
+			"* * * * *"
+		]
+	},
+	"queues": {
+		"producers": [
+			{
+				"binding": "EMAIL_SYNC_QUEUE",
+				"queue": "money-manager-email-sync"
+			},
+			{
+				"binding": "AI_CLASSIFICATION_QUEUE",
+				"queue": "money-manager-ai-classification"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "money-manager-email-sync",
+				"max_batch_size": 10,
+				"max_batch_timeout": 5,
+				"max_retries": 5,
+				"dead_letter_queue": "money-manager-email-sync-dlq"
+			},
+			{
+				"queue": "money-manager-ai-classification",
+				"max_batch_size": 2,
+				"max_batch_timeout": 20,
+				"max_retries": 5,
+				"dead_letter_queue": "money-manager-ai-classification-dlq"
+			}
+		]
+	}
+}

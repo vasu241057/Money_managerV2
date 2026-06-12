@@ -1,0 +1,22 @@
+# Part 3: Review Inbox (NEEDS_REVIEW transactions)
+
+Only visible when transactions need human approval (AI confidence < 85%). Shows between Balance Card and Transaction List.
+
+Each review card contains:
+- Category label + AI confidence % badge
+- Date and amount (red for expense, green for income)
+- Detected search key (text pattern from email)
+- Detected merchant name
+
+Editable fields per card:
+- Merchant dropdown: searchable with debounce (250ms). Shows "Loading merchants..." / "No merchants found..."
+- Category dropdown: shows all user categories for this transaction type. Sub-categories as "Parent / Sub" format
+- Note textarea: free-text
+- "Apply for similar transactions" checkbox: when checked, reveals pre-filled "Rule Search Key" input
+- [Approve] button: full-width. Shows "Saving..." while pending. Validates category/merchant required if rule applied.
+
+States:
+- Items disappear one by one as approved
+- Empty → entire section hidden (returns nothing)
+- Error → red text above Approve button
+- Saving → button changes to "Saving..."

@@ -1,0 +1,22 @@
+# Part 5: UserButton Dropdown Menu
+
+Opens when clicking the circular avatar (👤) in the header.
+
+Menu items from top to bottom:
+1. 🟢 Gmail: ACTIVE — non-clickable status indicator. Green dot + pulsing ring when connected. Gray dot when disconnected. Shows ACTIVE/DORMANT/DISCONNECTED etc.
+2. Action item: "Disconnect Gmail" (if connected) OR "Connect Gmail" (if not) OR "Reconnect Gmail" (if auth revoked)
+3. Divider
+4. "Accounts" — opens Account Manager modal
+5. "Categories" — opens Category Manager modal
+6. Divider
+7. "Manage account" — Clerk default
+8. "Sign out" — Clerk default
+
+Icons:
+- Status dot: green/gray circle SVG
+- Disconnect: X mark icon
+- Connect: + icon (green)
+- Accounts: hamburger/list icon
+- Categories: 4-grid icon
+
+Connect/Reconnect action: redirects browser to Google OAuth consent. Returns via OAuth callback screen. Disconnect: calls API immediately, no confirmation.

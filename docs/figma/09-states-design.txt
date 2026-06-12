@@ -1,0 +1,32 @@
+# Part 9: States — Empty, Loading, Error
+
+## Empty States
+- Transaction List: "No transactions yet. Tap + to add your first or connect Gmail." (centered)
+- Review Inbox: Entire section hidden when no NEEDS_REVIEW items
+- Account Manager: No rows, only add form visible
+- Category Manager: No user categories, only add form
+- Analytics: "No expense data available for analysis."
+- Gmail Monitor: "No Gmail emails ingested yet." when counts are zero
+
+## Loading States
+- Clerk auth: "Loading authentication..." centered (or matching dark bg spinner for OAuth callback URLs)
+- Transactions: "Loading transactions..." below header (only when list is empty)
+- Categories/Accounts in forms: Fields greyed out, disabled
+- AI Analysis: Spinning icon + "Analyzing your spending habits..."
+- Review Approve: "Saving..." on button
+- Gmail OAuth: Redirected to Google (external page)
+
+## Error States
+- Transaction/API errors: Red text "Error: [message]"
+- Category/Account load: Red text above form fields
+- AI analysis error: Red-tinted error box
+- Review validation: "Rule requires category or merchant selection"
+- API save/delete: Browser alert() dialog
+- OAuth callback: Error state on callback screen (red warning + message + [Back to App])
+
+## Design Preferences
+- Dark theme: gradient #1a1a1a to #0a0a0a background
+- Accent color: #0A84FF (Apple blue)
+- Cards: dark bg #111, border #333, rounded corners
+- Type: Inter or system font, white primary, gray (#a1a1aa) secondary
+- Mobile-first. Content max-width ~480px centered.
