@@ -15,6 +15,7 @@ import { getAppConfig } from '../lib/config';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
 import { toIsoDateTime, toNullableString, toRequiredString } from '../lib/db/serialization';
+import { hasLikelyDuplicateEvent, resolveDedupWindowMinutes } from '../lib/txn-dedup';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
 import { buildAiClassificationJob } from './queue.messages';
 
@@ -202,24 +203,24 @@ interface PreparedRawEmailNormalization {
 	canonical_facts: CanonicalFact[];
 }
 
-interface SystemCategoryMap {
+export interface SystemCategoryMap {
 	income: UUID | null;
 	expense: UUID | null;
 	transfer: UUID | null;
 }
 
-interface UserRuleResolution {
+export interface UserRuleResolution {
 	merchant_id: UUID | null;
 	custom_category_id: UUID | null;
 }
 
-interface GlobalAliasResolution {
+export interface GlobalAliasResolution {
 	merchant_id: UUID;
 	default_category_id: UUID | null;
 	merchant_type: MerchantType;
 }
 
-interface IdentityGraphLookup {
+export interface IdentityGraphLookup {
 	system_categories: SystemCategoryMap;
 	user_rules: Map<UUID, Map<string, UserRuleResolution>>;
 	global_aliases: Map<string, GlobalAliasResolution>;
@@ -230,6 +231,12 @@ interface PersistenceOutcome {
 	persisted_financial_event_count: number;
 	persisted_transaction_count: number;
 	created_needs_review_transaction_ids: UUID[];
+}
+
+export interface DeterministicNormalizeOptions {
+	// When true (hybrid engine), UNRECOGNIZED/FAILED outcomes leave the raw
+	// email in PENDING_EXTRACTION so the AI fallback pass can still claim it.
+	deferTerminalStatuses?: boolean;
 }
 
 export interface NormalizeRawEmailsResult {
@@ -294,7 +301,7 @@ function normalizeWhitespace(value: string): string {
 	return value.replace(/\r\n?/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
 }
 
-function toSearchKey(value: string | null): string | null {
+export function toSearchKey(value: string | null): string | null {
 	if (!value) {
 		return null;
 	}
@@ -447,7 +454,7 @@ function detectNeighborDirection(lines: string[], index: number): NeighborDirect
 	return candidates[0] ?? null;
 }
 
-function parseAmountTokenToPaise(token: string): number | null {
+export function parseAmountTokenToPaise(token: string): number | null {
 	const normalized = token.replace(/,/g, '');
 	const rupees = Number.parseFloat(normalized);
 	if (!Number.isFinite(rupees) || rupees <= 0) {
@@ -641,7 +648,7 @@ function extractCounterparty(value: string, direction: EventDirection): string |
 	return null;
 }
 
-function detectVpaHandle(value: string): string | null {
+export function detectVpaHandle(value: string): string | null {
 	const match = value.match(/\b[a-z0-9._-]{2,}@[a-z][a-z0-9.-]{1,}\b/i);
 	if (!match || typeof match[0] !== 'string') {
 		return null;
@@ -649,7 +656,7 @@ function detectVpaHandle(value: string): string | null {
 	return match[0].toLowerCase();
 }
 
-function detectAggregatorKey(value: string): string | null {
+export function detectAggregatorKey(value: string): string | null {
 	for (const entry of AGGREGATOR_PATTERNS) {
 		if (entry.pattern.test(value)) {
 			return entry.key;
@@ -1007,7 +1014,7 @@ function canonicalizeFlaggedFact(fact: FlaggedFact): CanonicalFact {
 	};
 }
 
-async function loadSystemCategoryMap(sql: SqlClient): Promise<SystemCategoryMap> {
+export async function loadSystemCategoryMap(sql: SqlClient): Promise<SystemCategoryMap> {
 	const rows = await sql<SystemCategoryRowRaw[]>`
 		select
 			c.id,
@@ -1034,7 +1041,7 @@ async function loadSystemCategoryMap(sql: SqlClient): Promise<SystemCategoryMap>
 	return map;
 }
 
-async function loadUserRulesForLookup(
+export async function loadUserRulesForLookup(
 	sql: SqlClient,
 	userIds: UUID[],
 	searchKeys: string[],
@@ -1073,7 +1080,7 @@ async function loadUserRulesForLookup(
 	return lookup;
 }
 
-async function loadGlobalAliasesForLookup(
+export async function loadGlobalAliasesForLookup(
 	sql: SqlClient,
 	searchKeys: string[],
 ): Promise<Map<string, GlobalAliasResolution>> {
@@ -1155,7 +1162,7 @@ function shouldInterceptTransfer(
 	return false;
 }
 
-interface IdentityResolution {
+export interface IdentityResolution {
 	merchant_id: UUID | null;
 	merchant_type: MerchantType | null;
 	category_id: UUID | null;
@@ -1163,7 +1170,7 @@ interface IdentityResolution {
 	global_alias_hit: boolean;
 }
 
-function resolveIdentityForSearchKeys(
+export function resolveIdentityForSearchKeys(
 	userId: UUID,
 	searchKeys: string[],
 	lookup: IdentityGraphLookup,
@@ -1294,6 +1301,8 @@ async function persistRawEmailNormalization(
 	sql: SqlClient,
 	rawEmail: RawEmailRecord,
 	resolvedFacts: IdentityResolvedFact[],
+	deferTerminalStatuses: boolean,
+	dedupWindowMinutes: number,
 ): Promise<PersistenceOutcome> {
 	return sql.begin(async (tx) => {
 		const txSql = tx as unknown as SqlClient;
@@ -1321,13 +1330,17 @@ async function persistRawEmailNormalization(
 
 		if (resolvedFacts.length === 0) {
 			const terminalStatus = resolveNoFactTerminalStatus(lockedRow.clean_text);
-			await txSql`
-				update public.raw_emails as re
-				set status = ${terminalStatus}
-				where re.id = ${lockedRow.id}
-					and re.user_id = ${lockedRow.user_id}
-					and re.status = 'PENDING_EXTRACTION'
-			`;
+			const deferUnrecognized =
+				terminalStatus === 'UNRECOGNIZED' && deferTerminalStatuses;
+			if (!deferUnrecognized) {
+				await txSql`
+					update public.raw_emails as re
+					set status = ${terminalStatus}
+					where re.id = ${lockedRow.id}
+						and re.user_id = ${lockedRow.user_id}
+						and re.status = 'PENDING_EXTRACTION'
+				`;
+			}
 
 			return {
 				state: terminalStatus === 'IGNORED' ? 'ignored' : 'unrecognized',
@@ -1389,6 +1402,23 @@ async function persistRawEmailNormalization(
 				);
 			}
 
+			// Cross-email dedup: the same payment often triggers two alerts
+			// (bank + payment app). Never silently auto-verify the second one.
+			let transactionStatus = fact.transaction_status;
+			if (transactionStatus === 'VERIFIED' && dedupWindowMinutes > 0) {
+				const hasDuplicate = await hasLikelyDuplicateEvent(txSql, {
+					user_id: lockedRow.user_id,
+					raw_email_id: lockedRow.id,
+					amount_in_paise: fact.amount_in_paise,
+					direction: fact.direction,
+					txn_timestamp: fact.txn_timestamp,
+					window_minutes: dedupWindowMinutes,
+				});
+				if (hasDuplicate) {
+					transactionStatus = 'NEEDS_REVIEW';
+				}
+			}
+
 			const insertTransactionRows = await txSql<TransactionInsertRowRaw[]>`
 				insert into public.transactions (
 					user_id,
@@ -1416,7 +1446,7 @@ async function persistRawEmailNormalization(
 					${fact.transaction_type},
 					${fact.txn_timestamp},
 					null,
-					${fact.transaction_status},
+					${transactionStatus},
 					${fact.classification_source},
 					null
 				)
@@ -1548,7 +1578,9 @@ function createEmptyResult(requestedCount: number): NormalizeRawEmailsResult {
 export async function runNormalizeRawEmailsJob(
 	job: NormalizeRawEmailsJobPayload,
 	env: Env,
+	options: DeterministicNormalizeOptions = {},
 ): Promise<NormalizeRawEmailsResult> {
+	const deferTerminalStatuses = options.deferTerminalStatuses === true;
 	if (job.raw_email_ids.length > NORMALIZE_RAW_EMAILS_MAX_IDS) {
 		throw new PoisonMessageError(
 			`NORMALIZE_RAW_EMAILS raw_email_ids exceeds max ${NORMALIZE_RAW_EMAILS_MAX_IDS}`,
@@ -1610,6 +1642,7 @@ export async function runNormalizeRawEmailsJob(
 	}
 
 	const identityLookup = await loadIdentityGraphLookup(sql, preparedRows);
+	const dedupWindowMinutes = resolveDedupWindowMinutes(env);
 	const needsReviewTransactionIds: UUID[] = [];
 
 	for (const preparedRow of preparedRows) {
@@ -1619,6 +1652,8 @@ export async function runNormalizeRawEmailsJob(
 				sql,
 				preparedRow.raw_email,
 				resolvedFacts,
+				deferTerminalStatuses,
+				dedupWindowMinutes,
 			);
 
 			switch (persistence.state) {
@@ -1642,7 +1677,15 @@ export async function runNormalizeRawEmailsJob(
 			result.needs_review_transaction_count += persistence.created_needs_review_transaction_ids.length;
 			needsReviewTransactionIds.push(...persistence.created_needs_review_transaction_ids);
 		} catch (error) {
-			await markRawEmailFailed(sql, preparedRow.raw_email, error);
+			if (deferTerminalStatuses) {
+				console.warn('Deferring FAILED status for AI fallback after normalization error', {
+					rawEmailId: preparedRow.raw_email.id,
+					userId: preparedRow.raw_email.user_id,
+					error: error instanceof Error ? error.message : 'Unknown normalization error',
+				});
+			} else {
+				await markRawEmailFailed(sql, preparedRow.raw_email, error);
+			}
 			result.failed_raw_email_count += 1;
 			result.failed_raw_email_ids.push(preparedRow.raw_email.id);
 		}

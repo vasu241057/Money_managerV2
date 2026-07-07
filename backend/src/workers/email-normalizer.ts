@@ -42,7 +42,11 @@ export async function runNormalizeRawEmailsJob(
 			return runAiNormalizer(job, env);
 
 		case 'hybrid': {
-			const detResult = await runDeterministicNormalizer(job, env);
+			// Defer terminal statuses so unrecognized/failed raw emails stay
+			// PENDING_EXTRACTION and remain claimable by the AI retry below.
+			const detResult = await runDeterministicNormalizer(job, env, {
+				deferTerminalStatuses: true,
+			});
 
 			const retryIds = [
 				...detResult.failed_raw_email_ids,
@@ -68,7 +72,8 @@ export async function runNormalizeRawEmailsJob(
 					detResult.ignored_raw_email_count + aiResult.ignored_raw_email_count,
 				unrecognized_raw_email_count: aiResult.unrecognized_raw_email_count,
 				failed_raw_email_count: aiResult.failed_raw_email_count,
-				skipped_raw_email_count: detResult.skipped_raw_email_count,
+				skipped_raw_email_count:
+					detResult.skipped_raw_email_count + aiResult.skipped_raw_email_count,
 				extracted_fact_count:
 					detResult.extracted_fact_count + aiResult.extracted_fact_count,
 				reconciled_fact_count:

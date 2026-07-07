@@ -1,0 +1,27 @@
+# Sender allowlist gate (default: on).
+# Only mail from known bank/fintech senders has its body fetched and
+# normalized; everything else is persisted metadata-only as IGNORED.
+# Set to "off" to disable (not recommended).
+# EMAIL_SENDER_GATE=on
+
+# Extra allowlist entries, comma-separated. Entry kinds by shape:
+#   with '@'  -> exact address match        (alerts@mybank.com)
+#   with '.'  -> domain/subdomain match     (mybank.co.in)
+#   otherwise -> brand token, substring of the whole From header (mybank)
+# EMAIL_SENDER_ALLOWLIST_EXTRA=mybank,otherbank.co.in,alerts@thirdbank.com
+
+# First sync of a connection fetches at most this many days of history (default 90).
+# EMAIL_SYNC_INITIAL_LOOKBACK_DAYS=90
+
+# AI normalizer masks all numbers as <N#> placeholders before the model call
+# (default true). Set to false only for debugging extraction quality.
+# AI_NORMALIZER_MASK_NUMBERS=true
+
+# Emails per model call in masked mode (default 4, max 10, 1 disables
+# batching). Unmasked mode always processes one email per call.
+# AI_NORMALIZER_BATCH_SIZE=4
+
+# Cross-email duplicate window in minutes (default 10; 0 disables). A second
+# alert for the same user+amount+direction inside the window is never
+# auto-verified.
+# TXN_DEDUP_WINDOW_MINUTES=10

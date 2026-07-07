@@ -20,6 +20,8 @@ const DEFAULT_NORMALIZER_TEMPERATURE = 0;
 const DEFAULT_NORMALIZER_MAX_TOKENS = 0;
 const DEFAULT_NORMALIZER_AUTO_VERIFY_CONFIDENCE = 0.85;
 const DEFAULT_NORMALIZER_MIN_CONFIDENCE = 0.3;
+const DEFAULT_NORMALIZER_BATCH_SIZE = 4;
+const MAX_NORMALIZER_BATCH_SIZE = 10;
 
 function normalizeText(value: string | undefined): string | null {
 	if (value === undefined) {
@@ -59,8 +61,9 @@ export function resolveAiQueueDelaySeconds(env: Env): number {
 export function resolveNormalizationEngine(env: Env): NormalizationEngine {
 	const raw = normalizeText(env.NORMALIZATION_ENGINE);
 	if (raw === 'deterministic') return 'deterministic';
-	if (raw === 'hybrid') return 'hybrid';
-	return 'ai';
+	if (raw === 'ai') return 'ai';
+	// Default: deterministic first, AI fallback for what it can't extract.
+	return 'hybrid';
 }
 
 function parseCsvList(value: string | undefined, fallback: string[]): string[] {
@@ -148,7 +151,18 @@ export function resolveNormalizerTierConfig(env: Env): NormalizerTierConfig {
 			0,
 			1,
 		),
-		noTraining: parseEnvBoolean(env.AI_NORMALIZER_NO_TRAINING, true),
+		maskNumbers: parseEnvBoolean(
+			(env as unknown as Record<string, string | undefined>).AI_NORMALIZER_MASK_NUMBERS,
+			true,
+		),
+		batchSize: Math.min(
+			parseEnvInteger(
+				(env as unknown as Record<string, string | undefined>).AI_NORMALIZER_BATCH_SIZE,
+				DEFAULT_NORMALIZER_BATCH_SIZE,
+				1,
+			),
+			MAX_NORMALIZER_BATCH_SIZE,
+		),
 	};
 }
 

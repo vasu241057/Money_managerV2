@@ -115,6 +115,9 @@ function createEnv(): Env {
 		APP_NAME: 'money-manager-backend',
 		APP_VERSION: '0.1.0',
 		NODE_ENV: 'test',
+		// This suite exercises the deterministic engine; without this the
+		// orchestrator routes to the AI engine (the env default) and skips.
+		NORMALIZATION_ENGINE: 'deterministic',
 		SUPABASE_POOLER_URL: 'postgres://postgres:postgres@localhost:6543/postgres',
 		DB_MAX_CONNECTIONS: '5',
 		DB_CONNECT_TIMEOUT_SECONDS: '5',
@@ -201,6 +204,9 @@ function createSqlHarness(params: {
 			throw new Error('FAILED status update should not run in replay cases');
 		}
 
+		if (query.includes('fe.amount_in_paise =')) {
+			return [];
+		}
 		throw new Error(`Unexpected query: ${query}`);
 	};
 

@@ -9,6 +9,7 @@ import {
 	toRequiredString,
 	toSafeInteger,
 } from '../lib/db/serialization';
+import { maskNumericTokens } from '../lib/masking';
 import { TransientMessageError } from './queue.errors';
 import type { AiClassificationJob } from './queue.messages';
 
@@ -279,7 +280,7 @@ function buildAiPromptContext(row: AiCandidateRow): string {
 		? row.raw_email_clean_text.slice(0, MAX_RAW_EMAIL_TEXT_LENGTH)
 		: null;
 
-	return JSON.stringify(
+	const context = JSON.stringify(
 		{
 			transaction_type: row.transaction_type,
 			amount_in_paise: row.transaction_amount_in_paise,
@@ -295,6 +296,11 @@ function buildAiPromptContext(row: AiCandidateRow): string {
 		null,
 		2,
 	);
+
+	// Triage judges clarity, not arithmetic: mask every digit (amounts,
+	// balances, account numbers, dates) before the context leaves us — the
+	// same no-digits guarantee as the extraction path.
+	return maskNumericTokens(context).masked;
 }
 
 async function callOpenCodeGoForDecision(params: {
@@ -319,6 +325,7 @@ async function callOpenCodeGoForDecision(params: {
 				role: 'user',
 				content: [
 					'Decide if this transaction can be auto-verified.',
+					'All numbers in the context are replaced with <N#> placeholders; judge structure and clarity, not magnitudes.',
 					'Rules:',
 					'- VERIFY only for clear financial transactions with low ambiguity.',
 					'- KEEP_REVIEW for unclear merchant, unclear category, promo/reward/OTP style content, or uncertainty.',

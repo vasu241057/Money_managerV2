@@ -40,7 +40,7 @@ function createEnv(overrides?: Partial<Env>): Env {
 		SUPABASE_POOLER_URL: 'postgres://postgres:postgres@localhost:6543/postgres',
 		DB_MAX_CONNECTIONS: '5',
 		DB_CONNECT_TIMEOUT_SECONDS: '5',
-		OPENROUTER_API_KEY: 'test-openrouter-key',
+		OPENCODE_GO_API_KEY: 'test-openrouter-key',
 		...(overrides ?? {}),
 	} as unknown as Env;
 }
@@ -149,7 +149,7 @@ describe('ai-classifier worker', () => {
 				transaction_id: '00000000-0000-4000-8000-0000000000a1',
 				requested_at: '2026-03-11T10:01:00.000Z',
 			},
-			createEnv({ OPENROUTER_API_KEY: ' ' }),
+			createEnv({ OPENCODE_GO_API_KEY: ' ' }),
 		);
 
 		expect(result.outcome).toBe('SKIPPED_AI_DISABLED');
@@ -470,7 +470,7 @@ describe('ai-classifier worker', () => {
 		expect(result.reason).toContain('missing required action/confidence');
 	});
 
-	it('throws transient error for rate-limited OpenRouter response', async () => {
+	it('throws transient error for rate-limited OpenCode Go response', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
@@ -498,6 +498,6 @@ describe('ai-classifier worker', () => {
 				},
 				createEnv(),
 			),
-		).rejects.toThrow('OpenRouter transient HTTP 429');
+		).rejects.toThrow('OpenCode Go transient HTTP 429');
 	});
 });

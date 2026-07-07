@@ -3,10 +3,13 @@ import type {
 	EmailSyncDispatchJobPayload,
 	EmailSyncJobPayload,
 	EmailSyncUserJobPayload,
+	MerchantMappingJobPayload,
 	NormalizeRawEmailsJobPayload,
+	SenderBackfillJobPayload,
+	SenderClassificationJobPayload,
 	UUID,
 } from '../../../shared/types';
-import { NORMALIZE_RAW_EMAILS_MAX_IDS } from '../../../shared/types';
+import { NORMALIZE_RAW_EMAILS_MAX_IDS, SENDER_BACKFILL_MAX_IDS } from '../../../shared/types';
 import { EMAIL_SYNC_CRON } from '../lib/infra';
 import { PoisonMessageError } from './queue.errors';
 
@@ -14,6 +17,9 @@ export type EmailSyncDispatchJob = EmailSyncDispatchJobPayload;
 export type EmailSyncUserJob = EmailSyncUserJobPayload;
 export type NormalizeRawEmailsJob = NormalizeRawEmailsJobPayload;
 export type AiClassificationJob = AiClassificationJobPayload;
+export type SenderClassificationJob = SenderClassificationJobPayload;
+export type SenderBackfillJob = SenderBackfillJobPayload;
+export type MerchantMappingJob = MerchantMappingJobPayload;
 export type EmailSyncQueueJob = EmailSyncJobPayload;
 export type QueueJob = EmailSyncQueueJob | AiClassificationJob;
 
@@ -142,6 +148,81 @@ export function isNormalizeRawEmailsJob(value: unknown): value is NormalizeRawEm
 	}
 
 	return value.job_type === 'NORMALIZE_RAW_EMAILS' && isNonEmptyUuidArray(value.raw_email_ids);
+}
+
+export function isSenderClassificationJob(value: unknown): value is SenderClassificationJob {
+	if (!isRecord(value)) {
+		return false;
+	}
+
+	return (
+		value.job_type === 'SENDER_CLASSIFICATION' && isIsoDateTimeString(value.triggered_at)
+	);
+}
+
+export function isSenderBackfillJob(value: unknown): value is SenderBackfillJob {
+	if (!isRecord(value)) {
+		return false;
+	}
+
+	return (
+		value.job_type === 'SENDER_BACKFILL' &&
+		isUuidString(value.user_id) &&
+		Array.isArray(value.raw_email_ids) &&
+		value.raw_email_ids.length > 0 &&
+		value.raw_email_ids.length <= SENDER_BACKFILL_MAX_IDS &&
+		value.raw_email_ids.every(entry => isUuidString(entry))
+	);
+}
+
+export function buildSenderClassificationJob(
+	triggeredAt: string = new Date().toISOString(),
+): SenderClassificationJob {
+	return {
+		job_type: 'SENDER_CLASSIFICATION',
+		triggered_at: triggeredAt,
+	};
+}
+
+export function isMerchantMappingJob(value: unknown): value is MerchantMappingJob {
+	if (!isRecord(value)) {
+		return false;
+	}
+
+	return value.job_type === 'MERCHANT_MAPPING' && isIsoDateTimeString(value.triggered_at);
+}
+
+export function buildMerchantMappingJob(
+	triggeredAt: string = new Date().toISOString(),
+): MerchantMappingJob {
+	return {
+		job_type: 'MERCHANT_MAPPING',
+		triggered_at: triggeredAt,
+	};
+}
+
+export function parseMerchantMappingJob(value: unknown): MerchantMappingJob {
+	if (!isMerchantMappingJob(value)) {
+		throw new PoisonMessageError('Invalid MERCHANT_MAPPING payload');
+	}
+
+	return value;
+}
+
+export function parseSenderClassificationJob(value: unknown): SenderClassificationJob {
+	if (!isSenderClassificationJob(value)) {
+		throw new PoisonMessageError('Invalid SENDER_CLASSIFICATION payload');
+	}
+
+	return value;
+}
+
+export function parseSenderBackfillJob(value: unknown): SenderBackfillJob {
+	if (!isSenderBackfillJob(value)) {
+		throw new PoisonMessageError('Invalid SENDER_BACKFILL payload');
+	}
+
+	return value;
 }
 
 export function buildEmailSyncDispatchJob(controller: ScheduledController): EmailSyncDispatchJob {

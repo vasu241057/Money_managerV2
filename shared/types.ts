@@ -168,6 +168,8 @@ export interface RawEmailRow {
   source_id: string; // unique per user mailbox (user_id + source_id)
   internal_date: ISODateTimeString;
   clean_text: string;
+  from_address: string | null;
+  subject: string | null;
   status: RawEmailStatus;
   created_at: ISODateTimeString;
 }
@@ -476,6 +478,37 @@ export interface NormalizeRawEmailsJobPayload {
 }
 
 /**
+ * Daily sender-classification job: sends the distinct unknown gated sender
+ * addresses to AI once, persists ALLOW/DENY rules in sender_rules.
+ */
+export interface SenderClassificationJobPayload {
+  job_type: 'SENDER_CLASSIFICATION';
+  triggered_at: ISODateTimeString;
+}
+
+export const SENDER_BACKFILL_MAX_IDS = 100;
+
+/**
+ * Daily merchant-mapping job: sends the distinct unmapped counterparty names
+ * to AI once, persists canonical merchants + aliases, and re-links recent
+ * transactions to the new merchants.
+ */
+export interface MerchantMappingJobPayload {
+  job_type: 'MERCHANT_MAPPING';
+  triggered_at: ISODateTimeString;
+}
+
+/**
+ * Backfill job for a newly allowlisted sender: refetches full bodies for the
+ * user's metadata-only gated raw emails and re-enters them into extraction.
+ */
+export interface SenderBackfillJobPayload {
+  job_type: 'SENDER_BACKFILL';
+  user_id: UUID;
+  raw_email_ids: UUID[];
+}
+
+/**
  * Full payload contract for EMAIL_SYNC_QUEUE.
  * A single queue handles control-plane + per-user + normalization jobs,
  * discriminated by job_type.
@@ -483,7 +516,10 @@ export interface NormalizeRawEmailsJobPayload {
 export type EmailSyncJobPayload =
   | EmailSyncDispatchJobPayload
   | EmailSyncUserJobPayload
-  | NormalizeRawEmailsJobPayload;
+  | NormalizeRawEmailsJobPayload
+  | SenderClassificationJobPayload
+  | SenderBackfillJobPayload
+  | MerchantMappingJobPayload;
 
 /**
  * Async AI handoff queue payload for unknown classifications.
@@ -595,5 +631,8 @@ export interface NormalizerTierConfig {
   maxTokens: number;
   autoVerifyConfidence: number;
   minConfidence: number;
-  noTraining: boolean;
+  /** Mask numeric tokens as <N#> before the AI call (privacy). Default on. */
+  maskNumbers: boolean;
+  /** Emails per model call in masked mode (1 disables batching). */
+  batchSize: number;
 }

@@ -4,13 +4,18 @@ import { QUEUE_NAMES } from '../lib/infra';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
 import { runAiClassificationJob } from './ai-classifier';
 import { runEmailSyncDispatchJob } from './email-sync-dispatcher';
-import { runEmailSyncUserJob } from './email-sync-fetcher';
+import { runEmailSyncUserJob, runSenderBackfillJob } from './email-sync-fetcher';
 import { runNormalizeRawEmailsJob } from './email-normalizer';
+import { runMerchantMappingJob } from './merchant-mapper';
+import { runSenderClassificationJob } from './sender-classifier';
 import {
 	parseAiClassificationJob,
 	parseEmailSyncDispatchJob,
 	parseEmailSyncUserJob,
+	parseMerchantMappingJob,
 	parseNormalizeRawEmailsJob,
+	parseSenderBackfillJob,
+	parseSenderClassificationJob,
 } from './queue.messages';
 
 const MAX_PROCESSING_ATTEMPTS = 5;
@@ -150,7 +155,7 @@ async function handleEmailSyncUser(body: unknown, env: Env): Promise<void> {
 		result.inserted_or_retried_raw_email_count > 0 ||
 		result.skipped_existing_raw_email_count > 0;
 	if (hasEmailActivity) {
-		console.error('EMAIL_SYNC_ACTIVITY_HIGHLIGHT', {
+		console.info('EMAIL_SYNC_ACTIVITY_HIGHLIGHT', {
 			userId: syncJob.user_id,
 			fetchedMessageCount: result.fetched_message_count,
 			insertedOrRetriedRawEmailCount: result.inserted_or_retried_raw_email_count,
@@ -172,6 +177,49 @@ async function handleNormalizeRawEmails(body: unknown, env: Env): Promise<void> 
 		createdTransactionCount: result.created_transaction_count,
 		needsReviewTransactionCount: result.needs_review_transaction_count,
 		aiEnqueuedCount: result.ai_enqueued_count,
+	});
+}
+
+async function handleSenderClassification(body: unknown, env: Env): Promise<void> {
+	const job = parseSenderClassificationJob(body);
+	const result = await runSenderClassificationJob(job, env);
+
+	console.info('Processing SENDER_CLASSIFICATION queue job', {
+		triggeredAt: job.triggered_at,
+		candidateCount: result.candidate_count,
+		classifiedCount: result.classified_count,
+		allowRuleCount: result.allow_rule_count,
+		denyRuleCount: result.deny_rule_count,
+		backfillRawEmailCount: result.backfill_raw_email_count,
+		backfillJobCount: result.backfill_job_count,
+		skippedReason: result.skipped_reason,
+	});
+}
+
+async function handleSenderBackfill(body: unknown, env: Env): Promise<void> {
+	const job = parseSenderBackfillJob(body);
+	const result = await runSenderBackfillJob(job, env);
+
+	console.info('Processing SENDER_BACKFILL queue job', {
+		userId: job.user_id,
+		requestedCount: result.requested_count,
+		refetchedCount: result.refetched_count,
+		skippedCount: result.skipped_count,
+		normalizeEnqueued: result.normalize_enqueued,
+	});
+}
+
+async function handleMerchantMapping(body: unknown, env: Env): Promise<void> {
+	const job = parseMerchantMappingJob(body);
+	const result = await runMerchantMappingJob(job, env);
+
+	console.info('Processing MERCHANT_MAPPING queue job', {
+		triggeredAt: job.triggered_at,
+		candidateCount: result.candidate_count,
+		mappedCount: result.mapped_count,
+		aliasCreatedCount: result.alias_created_count,
+		relinkedTransactionCount: result.relinked_transaction_count,
+		skippedReason: result.skipped_reason,
 	});
 }
 
@@ -206,6 +254,21 @@ async function processMessage(queueName: string, body: unknown, env: Env): Promi
 
 			if (jobType === 'NORMALIZE_RAW_EMAILS') {
 				await handleNormalizeRawEmails(body, env);
+				return;
+			}
+
+			if (jobType === 'SENDER_CLASSIFICATION') {
+				await handleSenderClassification(body, env);
+				return;
+			}
+
+			if (jobType === 'SENDER_BACKFILL') {
+				await handleSenderBackfill(body, env);
+				return;
+			}
+
+			if (jobType === 'MERCHANT_MAPPING') {
+				await handleMerchantMapping(body, env);
 				return;
 			}
 

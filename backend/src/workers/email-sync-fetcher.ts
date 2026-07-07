@@ -1,5 +1,11 @@
 import { NORMALIZE_RAW_EMAILS_MAX_IDS } from '../../../shared/types';
-import type { EmailSyncUserJobPayload, OauthConnectionRow, RawEmailStatus, UUID } from '../../../shared/types';
+import type {
+	EmailSyncUserJobPayload,
+	OauthConnectionRow,
+	RawEmailStatus,
+	SenderBackfillJobPayload,
+	UUID,
+} from '../../../shared/types';
 import type { SqlClient } from '../lib/db/client';
 import { getAppConfig } from '../lib/config';
 import { getSqlClient } from '../lib/db/client';
@@ -9,6 +15,12 @@ import {
 	toRequiredString,
 	toSafeInteger,
 } from '../lib/db/serialization';
+import {
+	isAllowedSender,
+	loadSenderRuleEntries,
+	parseFromAddress,
+	resolveSenderGateConfig,
+} from '../lib/sender-gate';
 import { TransientMessageError } from './queue.errors';
 import { buildEmailSyncUserJob } from './queue.messages';
 
@@ -23,6 +35,22 @@ const GMAIL_LIST_MAX_PAGES = 1000;
 const TOKEN_REFRESH_OCC_MAX_ATTEMPTS = 3;
 const CONTINUATION_ENQUEUE_MAX_ATTEMPTS = 3;
 const MAX_CLEAN_TEXT_LENGTH = 50_000;
+// First sync of a connection is capped to a bounded lookback instead of
+// walking the entire mailbox history.
+const DEFAULT_INITIAL_LOOKBACK_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function resolveInitialLookbackDays(env: Env): number {
+	const raw = (env as unknown as Record<string, unknown>).EMAIL_SYNC_INITIAL_LOOKBACK_DAYS;
+	if (typeof raw !== 'string' || raw.trim().length === 0) {
+		return DEFAULT_INITIAL_LOOKBACK_DAYS;
+	}
+	const parsed = Number.parseInt(raw.trim(), 10);
+	if (!Number.isFinite(parsed) || parsed < 1) {
+		return DEFAULT_INITIAL_LOOKBACK_DAYS;
+	}
+	return parsed;
+}
 
 interface OAuthConnectionFetchRowRaw {
 	id: unknown;
@@ -85,10 +113,15 @@ interface GoogleApiErrorResponse {
 	} | null;
 }
 
+const MAX_SUBJECT_LENGTH = 500;
+
 interface RawEmailUpsertRecord {
 	source_id: string;
 	internal_date_iso: string;
 	clean_text: string;
+	from_address: string | null;
+	subject: string | null;
+	status: 'PENDING_EXTRACTION' | 'IGNORED';
 }
 
 interface ExistingRawEmailStatus {
@@ -102,6 +135,7 @@ interface EmailSyncConnectionResult {
 	fetched_message_count: number;
 	inserted_or_retried_raw_email_count: number;
 	skipped_existing_raw_email_count: number;
+	sender_gated_raw_email_count: number;
 	revoked: boolean;
 	paused: boolean;
 	continuation_enqueued: boolean;
@@ -122,6 +156,7 @@ export interface EmailSyncUserResult {
 	fetched_message_count: number;
 	inserted_or_retried_raw_email_count: number;
 	skipped_existing_raw_email_count: number;
+	sender_gated_raw_email_count: number;
 }
 
 interface FetchLike {
@@ -867,6 +902,28 @@ function collectMessageBodyText(
 	}
 }
 
+function extractMessageHeader(
+	message: GmailMessageResponse,
+	headerName: string,
+): string | null {
+	const payloadRecord = asRecord(message.payload);
+	const headers = payloadRecord?.headers;
+	if (!Array.isArray(headers)) {
+		return null;
+	}
+
+	const target = headerName.toLowerCase();
+	for (const entry of headers) {
+		const record = asRecord(entry);
+		const name = typeof record?.name === 'string' ? record.name.toLowerCase() : null;
+		const value = typeof record?.value === 'string' ? record.value.trim() : null;
+		if (name === target && value && value.length > 0) {
+			return value;
+		}
+	}
+	return null;
+}
+
 function buildSanitizedEmailText(message: GmailMessageResponse): string {
 	const plainParts: string[] = [];
 	const htmlParts: string[] = [];
@@ -897,9 +954,14 @@ async function gmailGetMessage(
 	accessToken: string,
 	messageId: string,
 	fetcher: FetchLike,
+	format: 'metadata' | 'full',
 ): Promise<{ revoked: boolean; paused: boolean; message: GmailMessageResponse | null }> {
 	const url = new URL(`${GMAIL_API_MESSAGES_GET_ENDPOINT}/${encodeURIComponent(messageId)}`);
-	url.searchParams.set('format', 'full');
+	url.searchParams.set('format', format);
+	if (format === 'metadata') {
+		url.searchParams.append('metadataHeaders', 'From');
+		url.searchParams.append('metadataHeaders', 'Subject');
+	}
 
 	let response: Response;
 	try {
@@ -1011,6 +1073,8 @@ async function persistRawEmailsAndCursor(
 					source_id,
 					internal_date,
 					clean_text,
+					from_address,
+					subject,
 					status
 				)
 				values (
@@ -1019,19 +1083,25 @@ async function persistRawEmailsAndCursor(
 					${record.source_id},
 					${record.internal_date_iso},
 					${record.clean_text},
-					'PENDING_EXTRACTION'
+					${record.from_address},
+					${record.subject},
+					${record.status}
 				)
 				on conflict (user_id, source_id) do update
 				set
 					oauth_connection_id = excluded.oauth_connection_id,
 					internal_date = excluded.internal_date,
 					clean_text = excluded.clean_text,
-					status = 'PENDING_EXTRACTION'
+					from_address = excluded.from_address,
+					subject = excluded.subject,
+					status = excluded.status
 				where raw_emails.status = 'FAILED'
 				returning id
 			`;
 
-			if (result.length > 0) {
+			// Sender-gated rows are persisted for dedupe/auditing but must
+			// never be handed to the normalizers.
+			if (result.length > 0 && record.status === 'PENDING_EXTRACTION') {
 				insertedIds.push(result[0].id);
 			}
 		}
@@ -1084,6 +1154,7 @@ async function processConnection(
 			fetched_message_count: 0,
 			inserted_or_retried_raw_email_count: 0,
 			skipped_existing_raw_email_count: 0,
+			sender_gated_raw_email_count: 0,
 			revoked: true,
 			paused: false,
 			continuation_enqueued: false,
@@ -1096,6 +1167,7 @@ async function processConnection(
 			fetched_message_count: 0,
 			inserted_or_retried_raw_email_count: 0,
 			skipped_existing_raw_email_count: 0,
+			sender_gated_raw_email_count: 0,
 			revoked: false,
 			paused: false,
 			continuation_enqueued: false,
@@ -1103,14 +1175,38 @@ async function processConnection(
 	}
 
 	const accessToken = refreshOutcome.accessToken;
+	const senderGate = resolveSenderGateConfig(env);
+	let senderGateEntries: readonly string[] = senderGate.entries;
+	if (senderGate.enabled) {
+		// sender_rules is the exhaustive allowlist. Without it the gate would
+		// silently drop every bank email's body, so a load failure must retry
+		// the sync rather than proceed.
+		try {
+			const dbEntries = await loadSenderRuleEntries(sql);
+			senderGateEntries = [...senderGate.entries, ...dbEntries];
+		} catch (error) {
+			throw new TransientMessageError(
+				`Failed to load sender_rules allowlist: ${
+					error instanceof Error ? error.message : 'Unknown error'
+				}`,
+			);
+		}
+	}
+	let senderGatedCount = 0;
 	const jobContinuation = getJobContinuationStateForConnection(job, connection.id);
 	const baseCursor = Math.min(
 		Math.max(0, job.last_sync_timestamp),
 		Math.max(0, refreshOutcome.connection.last_sync_timestamp),
 	);
+	// A zero cursor means this connection has never synced; cap the initial
+	// backfill instead of walking the whole mailbox history.
+	const effectiveCursor =
+		baseCursor > 0
+			? baseCursor
+			: Date.now() - resolveInitialLookbackDays(env) * DAY_MS;
 	const afterSeconds =
 		jobContinuation?.after_seconds ??
-		Math.max(0, Math.floor((baseCursor - GMAIL_QUERY_OVERLAP_MS) / 1000));
+		Math.max(0, Math.floor((effectiveCursor - GMAIL_QUERY_OVERLAP_MS) / 1000));
 
 	let fetchedMessageCount = 0;
 	let insertedOrRetriedCount = 0;
@@ -1125,6 +1221,21 @@ async function processConnection(
 	const searchFilterApplied = afterSeconds > 0;
 	let hitPageCap = false;
 	let continuationPageToken: string | null = null;
+
+	const buildInterruptedResult = (
+		revoked: boolean,
+		paused: boolean,
+	): EmailSyncConnectionResult => ({
+		connection_id: connection.id,
+		email_address: connection.email_address,
+		fetched_message_count: fetchedMessageCount,
+		inserted_or_retried_raw_email_count: insertedOrRetriedCount,
+		skipped_existing_raw_email_count: skippedExistingCount,
+		sender_gated_raw_email_count: senderGatedCount,
+		revoked,
+		paused,
+		continuation_enqueued: false,
+	});
 
 	while (true) {
 		pageCount += 1;
@@ -1163,6 +1274,7 @@ async function processConnection(
 				fetched_message_count: fetchedMessageCount,
 				inserted_or_retried_raw_email_count: insertedOrRetriedCount,
 				skipped_existing_raw_email_count: skippedExistingCount,
+				sender_gated_raw_email_count: senderGatedCount,
 				revoked: true,
 				paused: false,
 				continuation_enqueued: false,
@@ -1181,6 +1293,7 @@ async function processConnection(
 				fetched_message_count: fetchedMessageCount,
 				inserted_or_retried_raw_email_count: insertedOrRetriedCount,
 				skipped_existing_raw_email_count: skippedExistingCount,
+				sender_gated_raw_email_count: senderGatedCount,
 				revoked: false,
 				paused: true,
 				continuation_enqueued: false,
@@ -1210,56 +1323,87 @@ async function processConnection(
 		const recordsToPersist: RawEmailUpsertRecord[] = [];
 		let fetchedMessagesThisPage = 0;
 		for (const messageId of idsToFetch) {
-			const getResult = await gmailGetMessage(accessToken, messageId, fetcher);
-			if (getResult.revoked) {
+			// Phase 1: headers only. The body is fetched (phase 2) solely for
+			// allowlisted senders, so gated mail's body never leaves Gmail.
+			const metaResult = await gmailGetMessage(accessToken, messageId, fetcher, 'metadata');
+			if (metaResult.revoked) {
 				await markConnectionRevoked(sql, connection.id, connection.user_id, 'gmail_unauthorized');
-				return {
-					connection_id: connection.id,
-					email_address: connection.email_address,
-					fetched_message_count: fetchedMessageCount,
-					inserted_or_retried_raw_email_count: insertedOrRetriedCount,
-					skipped_existing_raw_email_count: skippedExistingCount,
-					revoked: true,
-					paused: false,
-					continuation_enqueued: false,
-				};
+				return buildInterruptedResult(true, false);
 			}
-			if (getResult.paused) {
+			if (metaResult.paused) {
 				await markConnectionErrorPaused(
 					sql,
 					connection.id,
 					connection.user_id,
 					'gmail_get_permission_denied',
 				);
-				return {
-					connection_id: connection.id,
-					email_address: connection.email_address,
-					fetched_message_count: fetchedMessageCount,
-					inserted_or_retried_raw_email_count: insertedOrRetriedCount,
-					skipped_existing_raw_email_count: skippedExistingCount,
-					revoked: false,
-					paused: true,
-					continuation_enqueued: false,
-				};
+				return buildInterruptedResult(false, true);
 			}
-			const message = getResult.message;
-			if (!message) {
+			const metaMessage = metaResult.message;
+			if (!metaMessage) {
 				continue;
 			}
 			fetchedMessagesThisPage += 1;
 
-			const sourceId = typeof message.id === 'string' ? message.id : messageId;
-			const internalTimestamp = parseMessageInternalTimestamp(message.internalDate);
+			const sourceId = typeof metaMessage.id === 'string' ? metaMessage.id : messageId;
+			const internalTimestamp = parseMessageInternalTimestamp(metaMessage.internalDate);
 			if (internalTimestamp === null) {
 				continue;
 			}
 
 			maxInternalTimestampSeen = Math.max(maxInternalTimestampSeen, internalTimestamp);
-			const cleanText = buildSanitizedEmailText(message);
+
+			const fromHeader = extractMessageHeader(metaMessage, 'From');
+			const subjectHeader = extractMessageHeader(metaMessage, 'Subject');
+			const fromAddress = parseFromAddress(fromHeader);
+			const senderAllowed =
+				!senderGate.enabled || isAllowedSender(fromHeader, fromAddress, senderGateEntries);
+			const internalDateIso = new Date(internalTimestamp).toISOString();
+			const subject = subjectHeader ? subjectHeader.slice(0, MAX_SUBJECT_LENGTH) : null;
+
+			if (!senderAllowed) {
+				senderGatedCount += 1;
+				// Metadata-only row: keeps dedupe + an audit trail of gated
+				// senders while entering terminally IGNORED, so it can never
+				// reach a normalizer or an AI call.
+				recordsToPersist.push({
+					source_id: sourceId,
+					internal_date_iso: internalDateIso,
+					clean_text: '',
+					from_address: fromAddress,
+					subject,
+					status: 'IGNORED',
+				});
+				continue;
+			}
+
+			// Phase 2: full body, allowlisted senders only.
+			const fullResult = await gmailGetMessage(accessToken, messageId, fetcher, 'full');
+			if (fullResult.revoked) {
+				await markConnectionRevoked(sql, connection.id, connection.user_id, 'gmail_unauthorized');
+				return buildInterruptedResult(true, false);
+			}
+			if (fullResult.paused) {
+				await markConnectionErrorPaused(
+					sql,
+					connection.id,
+					connection.user_id,
+					'gmail_get_permission_denied',
+				);
+				return buildInterruptedResult(false, true);
+			}
+			const fullMessage = fullResult.message;
+			if (!fullMessage) {
+				continue;
+			}
+
 			recordsToPersist.push({
 				source_id: sourceId,
-				internal_date_iso: new Date(internalTimestamp).toISOString(),
-				clean_text: cleanText,
+				internal_date_iso: internalDateIso,
+				clean_text: buildSanitizedEmailText(fullMessage),
+				from_address: fromAddress,
+				subject,
+				status: 'PENDING_EXTRACTION',
 			});
 		}
 		fetchedMessageCount += fetchedMessagesThisPage;
@@ -1337,10 +1481,137 @@ async function processConnection(
 		fetched_message_count: fetchedMessageCount,
 		inserted_or_retried_raw_email_count: insertedOrRetriedCount,
 		skipped_existing_raw_email_count: skippedExistingCount,
+		sender_gated_raw_email_count: senderGatedCount,
 		revoked: false,
 		paused: false,
 		continuation_enqueued: hitPageCap,
 	};
+}
+
+interface BackfillRawEmailRowRaw {
+	id: unknown;
+	source_id: unknown;
+	oauth_connection_id: unknown;
+}
+
+export interface SenderBackfillResult {
+	user_id: UUID;
+	requested_count: number;
+	refetched_count: number;
+	skipped_count: number;
+	normalize_enqueued: boolean;
+}
+
+// Refetches full bodies for metadata-only gated raw emails whose sender was
+// later allowlisted (by the daily AI classification job or manually), then
+// re-enters them into the extraction pipeline.
+export async function runSenderBackfillJob(
+	job: SenderBackfillJobPayload,
+	env: Env,
+	fetcher: FetchLike = fetch,
+): Promise<SenderBackfillResult> {
+	const config = getAppConfig(env);
+	const sql = getSqlClient(config);
+
+	const result: SenderBackfillResult = {
+		user_id: job.user_id,
+		requested_count: job.raw_email_ids.length,
+		refetched_count: 0,
+		skipped_count: 0,
+		normalize_enqueued: false,
+	};
+
+	const rows = await sql<BackfillRawEmailRowRaw[]>`
+		select re.id, re.source_id, re.oauth_connection_id
+		from public.raw_emails as re
+		where re.id = any(${job.raw_email_ids}::uuid[])
+			and re.user_id = ${job.user_id}
+			and re.status = 'IGNORED'
+			and re.clean_text = ''
+	`;
+	if (rows.length === 0) {
+		result.skipped_count = job.raw_email_ids.length;
+		return result;
+	}
+
+	const googleConfig = getGoogleRefreshConfig(env);
+	const connections = await listEligibleConnectionsForUser(sql, job.user_id);
+	if (connections.length === 0) {
+		result.skipped_count = job.raw_email_ids.length;
+		return result;
+	}
+
+	// Prefer each row's original connection; fall back to the first eligible
+	// one (oauth_connection_id is set null when a connection is deleted).
+	const connectionById = new Map<UUID, OauthConnectionRow>();
+	for (const connection of connections) {
+		connectionById.set(connection.id, connection);
+	}
+	const accessTokenByConnectionId = new Map<UUID, string>();
+	const updatedRawEmailIds: UUID[] = [];
+
+	for (const row of rows) {
+		const rawEmailId = toRequiredString(row.id, 'raw_emails.id');
+		const sourceId = toRequiredString(row.source_id, 'raw_emails.source_id');
+		const connectionId = toNullableString(
+			row.oauth_connection_id,
+			'raw_emails.oauth_connection_id',
+		);
+		const connection =
+			(connectionId ? connectionById.get(connectionId) : undefined) ?? connections[0];
+
+		let accessToken = accessTokenByConnectionId.get(connection.id);
+		if (!accessToken) {
+			const refreshOutcome = await refreshAccessTokenWithOcc(
+				sql,
+				connection,
+				googleConfig,
+				fetcher,
+			);
+			if (refreshOutcome.revoked || refreshOutcome.inactive) {
+				result.skipped_count += 1;
+				continue;
+			}
+			accessToken = refreshOutcome.accessToken;
+			accessTokenByConnectionId.set(connection.id, accessToken);
+		}
+
+		const getResult = await gmailGetMessage(accessToken, sourceId, fetcher, 'full');
+		if (getResult.revoked || getResult.paused || !getResult.message) {
+			result.skipped_count += 1;
+			continue;
+		}
+
+		const cleanText = buildSanitizedEmailText(getResult.message);
+		const updated = await sql<{ id: UUID }[]>`
+			update public.raw_emails as re
+			set
+				clean_text = ${cleanText},
+				status = 'PENDING_EXTRACTION'
+			where re.id = ${rawEmailId}
+				and re.user_id = ${job.user_id}
+				and re.status = 'IGNORED'
+				and re.clean_text = ''
+			returning re.id
+		`;
+		if (updated.length > 0) {
+			result.refetched_count += 1;
+			updatedRawEmailIds.push(updated[0].id);
+		} else {
+			result.skipped_count += 1;
+		}
+	}
+
+	result.skipped_count += rows.length < job.raw_email_ids.length
+		? job.raw_email_ids.length - rows.length
+		: 0;
+
+	if (updatedRawEmailIds.length > 0) {
+		await enqueueNormalizeRawEmailsJobs(env.EMAIL_SYNC_QUEUE, updatedRawEmailIds);
+		result.normalize_enqueued = true;
+	}
+
+	return result;
 }
 
 export async function runEmailSyncUserJob(
@@ -1364,6 +1635,7 @@ export async function runEmailSyncUserJob(
 		fetched_message_count: 0,
 		inserted_or_retried_raw_email_count: 0,
 		skipped_existing_raw_email_count: 0,
+		sender_gated_raw_email_count: 0,
 	};
 
 	for (const connection of connections) {
@@ -1374,6 +1646,7 @@ export async function runEmailSyncUserJob(
 		result.inserted_or_retried_raw_email_count +=
 			connectionResult.inserted_or_retried_raw_email_count;
 		result.skipped_existing_raw_email_count += connectionResult.skipped_existing_raw_email_count;
+		result.sender_gated_raw_email_count += connectionResult.sender_gated_raw_email_count;
 		if (connectionResult.revoked) {
 			result.revoked_connection_count += 1;
 		}

@@ -65,6 +65,8 @@ interface RawEmailState {
 	source_id: string;
 	internal_date: string;
 	clean_text: string;
+	from_address: string | null;
+	subject: string | null;
 	status: RawEmailStatus;
 	created_at: string;
 }
@@ -421,6 +423,9 @@ function createSqlHarness(state: PipelineState): SqlMock {
 			const sourceId = values[2] as string;
 			const internalDate = values[3] as string;
 			const cleanText = values[4] as string;
+			const fromAddress = (values[5] as string | null) ?? null;
+			const subject = (values[6] as string | null) ?? null;
+			const insertStatus = (values[7] as RawEmailStatus | undefined) ?? 'PENDING_EXTRACTION';
 			const lookup = rawEmailLookupKey(userId, sourceId);
 			const existingId = state.raw_email_id_by_user_source.get(lookup);
 
@@ -433,7 +438,9 @@ function createSqlHarness(state: PipelineState): SqlMock {
 					source_id: sourceId,
 					internal_date: internalDate,
 					clean_text: cleanText,
-					status: 'PENDING_EXTRACTION',
+					from_address: fromAddress,
+					subject,
+					status: insertStatus,
 					created_at: state.now_iso,
 				};
 				state.raw_emails_by_id.set(id, record);
@@ -446,7 +453,9 @@ function createSqlHarness(state: PipelineState): SqlMock {
 				existing.oauth_connection_id = connectionId;
 				existing.internal_date = internalDate;
 				existing.clean_text = cleanText;
-				existing.status = 'PENDING_EXTRACTION';
+				existing.from_address = fromAddress;
+				existing.subject = subject;
+				existing.status = insertStatus;
 			}
 
 			return [];
@@ -635,6 +644,15 @@ function createSqlHarness(state: PipelineState): SqlMock {
 			return [];
 		}
 
+		if (query.includes('from public.sender_rules')) {
+			return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+		}
+
+		// Cross-email dedup probe: no duplicates in these scenarios.
+		if (query.includes('fe.amount_in_paise =')) {
+			return [];
+		}
+
 		throw new Error(`Unexpected query execution: ${query}`);
 	};
 
@@ -673,6 +691,9 @@ function createEnv(params: {
 		APP_NAME: 'money-manager-backend',
 		APP_VERSION: '0.1.0',
 		NODE_ENV: 'test',
+		// This suite exercises the deterministic engine; without this the
+		// orchestrator routes to the AI engine (the env default) and skips.
+		NORMALIZATION_ENGINE: 'deterministic',
 		SUPABASE_POOLER_URL: 'postgres://postgres:postgres@localhost:6543/postgres',
 		DB_MAX_CONNECTIONS: '5',
 		DB_CONNECT_TIMEOUT_SECONDS: '5',
@@ -687,9 +708,21 @@ function createEnv(params: {
 	} as unknown as Env;
 }
 
+const GMAIL_METADATA_SUFFIX = '?format=metadata&metadataHeaders=From&metadataHeaders=Subject';
+
+// The fetcher requests headers (format=metadata) before deciding whether to
+// fetch the body. Fixtures serve the same message JSON for both phases, so
+// metadata URLs are rewritten to their format=full equivalent here.
+function normalizeGmailGetUrl(url: string): string {
+	if (url.endsWith(GMAIL_METADATA_SUFFIX)) {
+		return `${url.slice(0, -GMAIL_METADATA_SUFFIX.length)}?format=full`;
+	}
+	return url;
+}
+
 function createGoogleFetcher(message: GmailMessageFixture) {
 	return vi.fn(async (input: RequestInfo | URL) => {
-		const url = typeof input === 'string' ? input : input.toString();
+		const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 
 		if (url.includes('oauth2.googleapis.com/token')) {
 			return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
@@ -711,6 +744,13 @@ function createGoogleFetcher(message: GmailMessageFixture) {
 					id: message.id,
 					internalDate: String(message.internal_date_ms),
 					snippet: message.text,
+					payload: {
+						// Allowlisted bank sender so the sender gate admits the email.
+						headers: [
+							{ name: 'From', value: 'HDFC Bank InstaAlerts <alerts@hdfcbank.net>' },
+							{ name: 'Subject', value: 'Transaction alert' },
+						],
+					},
 				}),
 				{
 					status: 200,

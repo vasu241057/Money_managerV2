@@ -44,6 +44,9 @@ function createEnv(overrides?: Partial<Env>): Env {
 		APP_NAME: 'money-manager-backend',
 		APP_VERSION: '0.1.0',
 		NODE_ENV: 'test',
+		// This suite exercises the deterministic engine; without this the
+		// orchestrator routes to the AI engine (the env default) and skips.
+		NORMALIZATION_ENGINE: 'deterministic',
 		SUPABASE_POOLER_URL: 'postgres://postgres:postgres@localhost:6543/postgres',
 		DB_MAX_CONNECTIONS: '5',
 		DB_CONNECT_TIMEOUT_SECONDS: '5',
@@ -143,6 +146,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -204,6 +210,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -259,6 +268,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -301,6 +313,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			}
 			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
 				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -347,6 +362,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				terminalUpdates.push(String(values[0]));
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -389,6 +407,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			}
 			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
 				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -435,6 +456,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				terminalUpdates.push(String(values[0]));
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -477,6 +501,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			}
 			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
 				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -523,6 +550,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				terminalUpdates.push(String(values[0]));
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -565,6 +595,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			}
 			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
 				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -623,6 +656,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -664,6 +700,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			}
 			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
 				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -722,6 +761,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -773,6 +815,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				return [{ id: '00000000-0000-4000-8000-0000000000b2', status: 'VERIFIED' }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -833,6 +878,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -889,6 +937,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -930,6 +981,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			}
 			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
 				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -990,6 +1044,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1043,6 +1100,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				return [{ id: '00000000-0000-4000-8000-0000000000ba', status: 'VERIFIED' }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -1101,6 +1161,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				return [{ id: crypto.randomUUID(), status: 'VERIFIED' }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -1162,6 +1225,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1221,6 +1287,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1278,6 +1347,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1330,6 +1402,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				return [{ id: crypto.randomUUID(), status: String(values[7]) }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -1386,6 +1461,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				return [{ id: crypto.randomUUID(), status: 'VERIFIED' }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -1450,6 +1528,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1511,6 +1592,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1569,6 +1653,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				return [{ id: '00000000-0000-4000-8000-0000000000bc', status: 'VERIFIED' }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -1668,6 +1755,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1733,6 +1823,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1787,6 +1880,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1837,6 +1933,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			}
 			if (query.includes('update public.raw_emails as re') && !query.includes("'PROCESSED'")) {
 				terminalUpdates.push(String(values[0]));
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -1915,6 +2014,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -1970,6 +2072,9 @@ describe('email-normalizer (milestone 10 pipeline)', () => {
 				return [{ id: '00000000-0000-4000-8000-0000000000b8', status: 'NEEDS_REVIEW' }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);

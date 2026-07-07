@@ -2,8 +2,6 @@ import { useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import type { Transaction } from '../hooks/useTransactions';
-import { analyzeSpending } from '../services/ai';
-import { Sparkles, Loader2 } from 'lucide-react';
 import '../styles/analytics-modal.css';
 
 interface AnalyticsModalProps {
@@ -14,10 +12,6 @@ interface AnalyticsModalProps {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#ff7300'];
 
 export function AnalyticsModal({ transactions, onClose }: AnalyticsModalProps) {
-  const [analysis, setAnalysis] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const [viewMode, setViewMode] = useState<'category' | 'account'>('category');
 
   const categoryData = useMemo(() => {
@@ -136,49 +130,6 @@ export function AnalyticsModal({ transactions, onClose }: AnalyticsModalProps) {
           </div>
         </div>
 
-        <div className="ai-section">
-          <div className="ai-header">
-            <h3><Sparkles size={18} className="ai-icon" /> AI Insights</h3>
-            {!analysis && !isLoading && (
-              <button 
-                className="analyze-btn" 
-                onClick={async () => {
-                  setIsLoading(true);
-                  setError(null);
-                  try {
-                    const result = await analyzeSpending(transactions);
-                    setAnalysis(result);
-                  } catch (err) {
-                    setError(err instanceof Error ? err.message : "Failed to generate analysis");
-                  } finally {
-                    setIsLoading(false);
-                  }
-                }}
-              >
-                Analyze Spending
-              </button>
-            )}
-          </div>
-
-          {isLoading && (
-            <div className="ai-loading">
-              <Loader2 size={24} className="animate-spin" />
-              <p>Analyzing your spending habits...</p>
-            </div>
-          )}
-
-          {error && (
-            <div className="ai-error">
-              <p>{error}</p>
-            </div>
-          )}
-
-          {analysis && (
-            <div className="ai-result">
-              <p>{analysis}</p>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

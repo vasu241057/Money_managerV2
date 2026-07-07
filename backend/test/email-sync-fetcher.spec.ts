@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../src/lib/config';
 import type { SqlClient } from '../src/lib/db/client';
-import { runEmailSyncUserJob } from '../src/workers/email-sync-fetcher';
+import { runEmailSyncUserJob, runSenderBackfillJob } from '../src/workers/email-sync-fetcher';
 import { TransientMessageError } from '../src/workers/queue.errors';
 
 const { getAppConfigMock, getSqlClientMock } = vi.hoisted(() => ({
@@ -26,6 +26,18 @@ interface SqlMock extends SqlClient {
 
 function normalizeQuery(strings: TemplateStringsArray): string {
 	return strings.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+const GMAIL_METADATA_SUFFIX = '?format=metadata&metadataHeaders=From&metadataHeaders=Subject';
+
+// The fetcher requests headers (format=metadata) before deciding whether to
+// fetch the body. Fixtures serve the same message JSON for both phases, so
+// metadata URLs are rewritten to their format=full equivalent here.
+function normalizeGmailGetUrl(url: string): string {
+	if (url.endsWith(GMAIL_METADATA_SUFFIX)) {
+		return `${url.slice(0, -GMAIL_METADATA_SUFFIX.length)}?format=full`;
+	}
+	return url;
 }
 
 function createSqlMock(handler: QueryHandler): SqlMock {
@@ -102,6 +114,9 @@ describe('email-sync-fetcher', () => {
 			if (query.includes("set access_token = null") && query.includes("sync_status = 'AUTH_REVOKED'")) {
 				return [];
 			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		const fetcher = vi.fn().mockResolvedValue(
@@ -161,11 +176,14 @@ describe('email-sync-fetcher', () => {
 				cursorUpdateValue = values[0] as number;
 				return [];
 			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 
 		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-			const url = typeof input === 'string' ? input : input.toString();
+			const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 
 			if (url.includes('oauth2.googleapis.com/token')) {
 				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
@@ -241,7 +259,7 @@ describe('email-sync-fetcher', () => {
 			expect(result.revoked_connection_count).toBe(0);
 		});
 
-	it('uses broad bootstrap Gmail list query when cursor is zero', async () => {
+	it('caps the initial sync to the lookback window when cursor is zero', async () => {
 		const listUrls: string[] = [];
 		const insertedSourceIds: string[] = [];
 		let cursorUpdateValue: number | null = null;
@@ -269,11 +287,14 @@ describe('email-sync-fetcher', () => {
 				cursorUpdateValue = values[0] as number;
 				return [];
 			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 
 		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-			const url = typeof input === 'string' ? input : input.toString();
+			const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 			if (url.includes('oauth2.googleapis.com/token')) {
 				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 					status: 200,
@@ -313,7 +334,14 @@ describe('email-sync-fetcher', () => {
 		);
 
 		expect(listUrls).toHaveLength(1);
-		expect(listUrls[0]).not.toContain('q=');
+		// First sync is bounded: the query filters to the lookback window
+		// (default 90 days) instead of listing the whole mailbox.
+		expect(listUrls[0]).toContain('q=');
+		expect(decodeURIComponent(listUrls[0] ?? '')).toContain('after:');
+		const afterMatch = decodeURIComponent(listUrls[0] ?? '').match(/after:(\d+)/);
+		const afterSeconds = Number(afterMatch?.[1]);
+		const expectedSeconds = Math.floor((Date.now() - 90 * 24 * 60 * 60 * 1000) / 1000);
+		expect(Math.abs(afterSeconds - expectedSeconds)).toBeLessThan(24 * 60 * 60);
 		expect(listUrls[0]).toContain('includeSpamTrash=true');
 		expect(insertedSourceIds).toEqual(['bootstrap-broad-1']);
 		expect(cursorUpdateValue).toBe(1_700_000_500_000);
@@ -346,11 +374,14 @@ describe('email-sync-fetcher', () => {
 			if (query.includes('insert into public.raw_emails')) {
 				return [];
 			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 
 		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-			const url = typeof input === 'string' ? input : input.toString();
+			const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 			if (url.includes('oauth2.googleapis.com/token')) {
 				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 					status: 200,
@@ -396,11 +427,14 @@ describe('email-sync-fetcher', () => {
 				if (query.includes('where oc.id =') && query.includes('limit 1')) {
 					return [buildConnectionRow({ sync_status: 'DORMANT' })];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -447,11 +481,14 @@ describe('email-sync-fetcher', () => {
 				if (query.includes('last_sync_timestamp = greatest')) {
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -470,6 +507,11 @@ describe('email-sync-fetcher', () => {
 							id: 'u1',
 							internalDate: '1700000100000',
 							snippet: '₹1,250 debited',
+							payload: {
+								headers: [
+									{ name: 'From', value: 'HDFC Bank InstaAlerts <alerts@hdfcbank.net>' },
+								],
+							},
 						}),
 						{ status: 200, headers: { 'content-type': 'application/json' } },
 					);
@@ -493,6 +535,195 @@ describe('email-sync-fetcher', () => {
 			expect(insertedTexts[0]).toContain('₹1,250 debited');
 		});
 
+		it('persists non-allowlisted senders body-less as IGNORED and keeps bank mail pending', async () => {
+			const insertedRows: Array<{
+				source_id: string;
+				clean_text: string;
+				from_address: string | null;
+				subject: string | null;
+				status: string;
+			}> = [];
+			const sql = createSqlMock((query, values) => {
+				if (query.includes("from public.oauth_connections as oc") && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+					return [buildConnectionRow()];
+				}
+				if (query.includes('and oc.access_token is not distinct from') && query.includes("set access_token =")) {
+					return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z' })];
+				}
+				if (query.includes('from public.raw_emails as re')) {
+					return [];
+				}
+				if (query.includes('insert into public.raw_emails')) {
+					insertedRows.push({
+						source_id: values[2] as string,
+						clean_text: values[4] as string,
+						from_address: values[5] as string | null,
+						subject: values[6] as string | null,
+						status: values[7] as string,
+					});
+					return [];
+				}
+				if (query.includes('last_sync_timestamp = greatest')) {
+					return [];
+				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
+				throw new Error(`Unexpected query: ${query}`);
+			});
+
+			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
+				if (url.includes('oauth2.googleapis.com/token')) {
+					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					});
+				}
+				if (url.includes('/gmail/v1/users/me/messages?')) {
+					return new Response(JSON.stringify({ messages: [{ id: 'bank1' }, { id: 'personal1' }] }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					});
+				}
+				if (url.endsWith('/bank1?format=full')) {
+					return new Response(
+						JSON.stringify({
+							id: 'bank1',
+							internalDate: '1700000100000',
+							snippet: 'Rs.500 debited from a/c 1234',
+							payload: {
+								headers: [
+									{ name: 'From', value: 'ICICI Bank <alerts@icicibank.com>' },
+									{ name: 'Subject', value: 'Debit alert' },
+								],
+							},
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					);
+				}
+				if (url.endsWith('/personal1?format=full')) {
+					return new Response(
+						JSON.stringify({
+							id: 'personal1',
+							internalDate: '1700000200000',
+							snippet: 'Hey, are we still on for dinner tonight?',
+							payload: {
+								headers: [
+									{ name: 'From', value: 'A Friend <friend@example.com>' },
+									{ name: 'Subject', value: 'Dinner plans' },
+								],
+							},
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					);
+				}
+				throw new Error(`Unexpected URL: ${url}`);
+			});
+			getAppConfigMock.mockReturnValue(appConfig);
+			getSqlClientMock.mockReturnValue(sql);
+
+			const result = await runEmailSyncUserJob(
+				{
+					job_type: 'EMAIL_SYNC_USER',
+					user_id: '00000000-0000-4000-8000-000000000001',
+					last_sync_timestamp: 1_700_000_000_000,
+				},
+				createEnv(),
+				fetcher,
+			);
+
+			expect(insertedRows).toHaveLength(2);
+
+			const bankRow = insertedRows.find(row => row.source_id === 'bank1');
+			expect(bankRow?.status).toBe('PENDING_EXTRACTION');
+			expect(bankRow?.clean_text).toContain('Rs.500 debited');
+			expect(bankRow?.from_address).toBe('alerts@icicibank.com');
+			expect(bankRow?.subject).toBe('Debit alert');
+
+			const personalRow = insertedRows.find(row => row.source_id === 'personal1');
+			expect(personalRow?.status).toBe('IGNORED');
+			expect(personalRow?.clean_text).toBe('');
+			expect(personalRow?.from_address).toBe('friend@example.com');
+			expect(personalRow?.subject).toBe('Dinner plans');
+
+			expect(result.sender_gated_raw_email_count).toBe(1);
+		});
+
+		it('backfills gated raw emails: refetches body, marks PENDING_EXTRACTION, enqueues normalize', async () => {
+			const rawEmailId = '00000000-0000-4000-8000-00000000000a';
+			let updatedCleanText: string | null = null;
+			const sql = createSqlMock((query, values) => {
+				if (query.includes('re.source_id, re.oauth_connection_id')) {
+					return [
+						{
+							id: rawEmailId,
+							source_id: 'g1',
+							oauth_connection_id: '00000000-0000-4000-8000-0000000000aa',
+						},
+					];
+				}
+				if (query.includes("from public.oauth_connections as oc") && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+					return [buildConnectionRow()];
+				}
+				if (query.includes('and oc.refresh_token is not distinct from') && query.includes("set access_token =")) {
+					return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z' })];
+				}
+				if (query.includes('set clean_text =')) {
+					updatedCleanText = values[0] as string;
+					return [{ id: rawEmailId }];
+				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
+				throw new Error(`Unexpected query: ${query}`);
+			});
+
+			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
+				if (url.includes('oauth2.googleapis.com/token')) {
+					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					});
+				}
+				if (url.endsWith('/g1?format=full')) {
+					return new Response(
+						JSON.stringify({
+							id: 'g1',
+							internalDate: '1700000100000',
+							snippet: 'Rs.999 debited from a/c 4321',
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					);
+				}
+				throw new Error(`Unexpected URL: ${url}`);
+			});
+			getAppConfigMock.mockReturnValue(appConfig);
+			getSqlClientMock.mockReturnValue(sql);
+
+			const queueSend = vi.fn().mockResolvedValue(undefined);
+			const result = await runSenderBackfillJob(
+				{
+					job_type: 'SENDER_BACKFILL',
+					user_id: '00000000-0000-4000-8000-000000000001',
+					raw_email_ids: [rawEmailId],
+				},
+				createEnv({ EMAIL_SYNC_QUEUE: { send: queueSend } as unknown as Queue }),
+				fetcher,
+			);
+
+			expect(result.refetched_count).toBe(1);
+			expect(result.skipped_count).toBe(0);
+			expect(result.normalize_enqueued).toBe(true);
+			expect(updatedCleanText).toContain('Rs.999 debited');
+			expect(queueSend).toHaveBeenCalledTimes(1);
+			expect(queueSend.mock.calls[0]?.[0]).toEqual({
+				job_type: 'NORMALIZE_RAW_EMAILS',
+				raw_email_ids: [rawEmailId],
+			});
+		});
+
 		it('marks connection ERROR_PAUSED on non-retryable Gmail permission errors and acks path', async () => {
 			const queries: string[] = [];
 			const sql = createSqlMock((query) => {
@@ -506,11 +737,14 @@ describe('email-sync-fetcher', () => {
 				if (query.includes("set sync_status = 'ERROR_PAUSED'")) {
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -562,11 +796,14 @@ describe('email-sync-fetcher', () => {
 				if (query.includes('from public.raw_emails as re')) {
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -623,11 +860,14 @@ describe('email-sync-fetcher', () => {
 				if (query.includes("set sync_status = 'ERROR_PAUSED'")) {
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -691,12 +931,15 @@ describe('email-sync-fetcher', () => {
 					cursorUpdateValue = values[0] as number;
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const maxSeenTimestamp = 1_700_000_400_000;
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -765,7 +1008,15 @@ describe('email-sync-fetcher', () => {
 			expect(continuationPayload?.continuation_connection_id).toBe(
 				'00000000-0000-4000-8000-0000000000aa',
 			);
-			expect(continuationPayload?.continuation_after_seconds).toBe(0);
+			// Zero cursor is capped to the initial lookback window, and the
+			// continuation carries that same capped query window forward.
+			const continuationAfterSeconds = continuationPayload?.continuation_after_seconds ?? 0;
+			const expectedLookbackSeconds = Math.floor(
+				(Date.now() - 90 * 24 * 60 * 60 * 1000) / 1000,
+			);
+			expect(Math.abs(continuationAfterSeconds - expectedLookbackSeconds)).toBeLessThan(
+				24 * 60 * 60,
+			);
 			expect(continuationPayload?.continuation_page_token).toBe('p1000');
 			expect(continuationPayload?.continuation_max_internal_timestamp_seen).toBe(
 				maxSeenTimestamp,
@@ -822,12 +1073,15 @@ describe('email-sync-fetcher', () => {
 				if (query.includes('insert into public.raw_emails')) {
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const maxSeenTimestamp = 1_700_000_400_000;
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -911,11 +1165,14 @@ describe('email-sync-fetcher', () => {
 					cursorUpdateValue = values[0] as number;
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -984,11 +1241,14 @@ describe('email-sync-fetcher', () => {
 				if (query.includes('last_sync_timestamp = greatest')) {
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
@@ -1056,11 +1316,14 @@ describe('email-sync-fetcher', () => {
 				if (query.includes('from public.raw_emails as re')) {
 					return [];
 				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
 				throw new Error(`Unexpected query: ${query}`);
 			});
 
 			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-				const url = typeof input === 'string' ? input : input.toString();
+				const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
 				if (url.includes('oauth2.googleapis.com/token')) {
 					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
 						status: 200,
