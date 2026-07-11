@@ -4,7 +4,6 @@ import { requireAuthenticatedUser } from '../lib/auth';
 import { createAccountsRouter } from './accounts';
 import { createCategoriesRouter } from './categories';
 import { createHealthRouter } from './health';
-import { createInternalAiRouter } from './internal-ai';
 import { createInternalRequeueRouter } from './internal-requeue';
 import { createMerchantsRouter } from './merchants';
 import { createOAuthRouter } from './oauth';
@@ -16,7 +15,6 @@ export function createRoutes(): Router {
 
 	router.use('/health', createHealthRouter());
 	router.use('/version', createVersionRouter());
-	router.use('/internal/ai', createInternalAiRouter());
 	router.use('/internal/requeue', createInternalRequeueRouter());
 	router.use('/accounts', requireAuthenticatedUser, createAccountsRouter());
 	router.use('/categories', requireAuthenticatedUser, createCategoriesRouter());

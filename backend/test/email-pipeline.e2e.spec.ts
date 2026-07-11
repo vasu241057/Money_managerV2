@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// End-to-end pipeline: dispatch → fetch (sender gate) → normalize.
+// Normalization is the single template→AI→learn engine: the first email of
+// a format pays one masked model call and teaches a template; structurally
+// identical emails after that are resolved locally with zero AI calls.
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
 	EmailSyncJobPayload,
@@ -9,7 +14,7 @@ import type {
 } from '../../shared/types';
 import type { AppConfig } from '../src/lib/config';
 import type { SqlClient } from '../src/lib/db/client';
-import { runNormalizeRawEmailsJob } from '../src/workers/email-normalizer';
+import { runNormalizeRawEmailsJob } from '../src/workers/email-ai-normalizer';
 import { dispatchEmailSyncUsers } from '../src/workers/email-sync-dispatcher';
 import { runEmailSyncUserJob } from '../src/workers/email-sync-fetcher';
 
@@ -114,6 +119,17 @@ interface GlobalAliasState {
 	merchant_type: 'MERCHANT' | 'TRANSFER_INSTITUTION' | 'AGGREGATOR' | 'P2P';
 }
 
+interface EmailTemplateState {
+	id: UUID;
+	from_address: string;
+	skeleton_hash: string;
+	skeleton: string;
+	slot_map_json: string;
+	status: 'ACTIVE' | 'DISABLED';
+	hit_count: number;
+	failure_count: number;
+}
+
 interface PipelineState {
 	now_iso: string;
 	user: UserState;
@@ -126,6 +142,7 @@ interface PipelineState {
 	financial_event_id_by_fact_key: Map<string, UUID>;
 	transactions_by_id: Map<UUID, TransactionState>;
 	transaction_id_by_financial_event_id: Map<UUID, UUID>;
+	email_templates_by_key: Map<string, EmailTemplateState>;
 	next_uuid_counter: number;
 }
 
@@ -195,6 +212,7 @@ function createPipelineState(input: PipelineScenarioInput = {}): PipelineState {
 		financial_event_id_by_fact_key: new Map<string, UUID>(),
 		transactions_by_id: new Map<UUID, TransactionState>(),
 		transaction_id_by_financial_event_id: new Map<UUID, UUID>(),
+		email_templates_by_key: new Map<string, EmailTemplateState>(),
 		next_uuid_counter: 2_000,
 	};
 
@@ -231,6 +249,7 @@ function mapRawEmailToRow(rawEmail: RawEmailState) {
 		user_id: rawEmail.user_id,
 		internal_date: rawEmail.internal_date,
 		clean_text: rawEmail.clean_text,
+		from_address: rawEmail.from_address,
 		status: rawEmail.status,
 	};
 }
@@ -496,6 +515,14 @@ function createSqlHarness(state: PipelineState): SqlMock {
 				.map(mapRawEmailToRow);
 		}
 
+		// User-scoped categories for the AI prompt context (none in fixtures).
+		if (
+			query.includes('from public.categories as c') &&
+			query.includes('c.is_system = false')
+		) {
+			return [];
+		}
+
 		if (
 			query.includes('from public.categories as c') &&
 			query.includes('c.user_id is null')
@@ -504,6 +531,10 @@ function createSqlHarness(state: PipelineState): SqlMock {
 				id: row.id,
 				type: row.type,
 			}));
+		}
+
+		if (query.includes('from public.accounts as a')) {
+			return [];
 		}
 
 		if (query.includes('from public.user_merchant_rules as umr')) {
@@ -519,6 +550,69 @@ function createSqlHarness(state: PipelineState): SqlMock {
 					merchant_id: alias.merchant_id,
 					default_category_id: alias.default_category_id,
 					merchant_type: alias.merchant_type,
+				}));
+		}
+
+		if (query.includes('insert into public.email_templates')) {
+			const fromAddress = values[0] as string;
+			const skeletonHash = values[1] as string;
+			const key = `${fromAddress}:${skeletonHash}`;
+			if (state.email_templates_by_key.has(key)) {
+				return [];
+			}
+			const id = nextUuid(state);
+			state.email_templates_by_key.set(key, {
+				id,
+				from_address: fromAddress,
+				skeleton_hash: skeletonHash,
+				skeleton: values[2] as string,
+				slot_map_json: values[3] as string,
+				status: 'ACTIVE',
+				hit_count: 0,
+				failure_count: 0,
+			});
+			return [{ id }];
+		}
+
+		if (query.includes('delete from public.email_templates')) {
+			return [];
+		}
+
+		if (query.includes('set hit_count = et.hit_count + 1')) {
+			const templateId = values[0] as UUID;
+			for (const template of state.email_templates_by_key.values()) {
+				if (template.id === templateId) {
+					template.hit_count += 1;
+					template.failure_count = 0;
+				}
+			}
+			return [];
+		}
+
+		if (query.includes('set failure_count = et.failure_count + 1')) {
+			const templateId = values[1] as UUID;
+			for (const template of state.email_templates_by_key.values()) {
+				if (template.id === templateId) {
+					template.failure_count += 1;
+					if (template.failure_count >= 3) {
+						template.status = 'DISABLED';
+					}
+				}
+			}
+			return [];
+		}
+
+		if (query.includes('from public.email_templates')) {
+			const senders = new Set<string>((values[0] as string[]) ?? []);
+			return Array.from(state.email_templates_by_key.values())
+				.filter((template) => template.status === 'ACTIVE' && senders.has(template.from_address))
+				.map((template) => ({
+					id: template.id,
+					from_address: template.from_address,
+					skeleton: template.skeleton,
+					slot_map: JSON.parse(template.slot_map_json) as unknown,
+					hit_count: template.hit_count,
+					failure_count: template.failure_count,
 				}));
 		}
 
@@ -561,20 +655,10 @@ function createSqlHarness(state: PipelineState): SqlMock {
 			return [{ id }];
 		}
 
-		if (
-			query.includes('select fe.id') &&
-			query.includes('from public.financial_events as fe') &&
-			query.includes('where fe.raw_email_id =')
-		) {
-			const rawEmailId = values[0] as UUID;
-			const extractionIndex = Number(values[1]);
-			const existingId = state.financial_event_id_by_fact_key.get(
-				financialEventFactKey(rawEmailId, extractionIndex),
-			);
-
-			return existingId ? [{ id: existingId }] : [];
-		}
-
+		// AI-engine transactions insert layout:
+		// 0 user_id, 1 financial_event_id, 2 account_id, 3 category_id,
+		// 4 merchant_id, 5 amount, 6 type, 7 txn_date, 8 status,
+		// 9 classification_source, 10 ai_confidence_score.
 		if (query.includes('insert into public.transactions')) {
 			const userId = values[0] as UUID;
 			const financialEventId = values[1] as UUID;
@@ -589,17 +673,17 @@ function createSqlHarness(state: PipelineState): SqlMock {
 				id,
 				user_id: userId,
 				financial_event_id: financialEventId,
-				account_id: null,
-				category_id: (values[2] as UUID | null) ?? null,
-				merchant_id: (values[3] as UUID | null) ?? null,
+				account_id: (values[2] as UUID | null) ?? null,
+				category_id: (values[3] as UUID | null) ?? null,
+				merchant_id: (values[4] as UUID | null) ?? null,
 				credit_card_id: null,
-				amount_in_paise: Number(values[4]),
-				type: values[5] as TransactionState['type'],
-				txn_date: values[6] as string,
+				amount_in_paise: Number(values[5]),
+				type: values[6] as TransactionState['type'],
+				txn_date: values[7] as string,
 				user_note: null,
-				status: values[7] as TransactionStatus,
-				classification_source: values[8] as TransactionState['classification_source'],
-				ai_confidence_score: null,
+				status: values[8] as TransactionStatus,
+				classification_source: values[9] as TransactionState['classification_source'],
+				ai_confidence_score: typeof values[10] === 'number' ? values[10] : null,
 				created_at: state.now_iso,
 				updated_at: state.now_iso,
 			};
@@ -629,17 +713,12 @@ function createSqlHarness(state: PipelineState): SqlMock {
 			return [];
 		}
 
-		if (
-			query.includes('update public.raw_emails as re') &&
-			query.includes('set status =') &&
-			query.includes('and re.status = \'pending_extraction\'')
-		) {
-			const terminalStatus = String(values[0]) as RawEmailStatus;
-			const rawEmailId = values[1] as UUID;
-			const userId = values[2] as UUID;
+		if (query.includes("set status = 'ignored'")) {
+			const rawEmailId = values[0] as UUID;
+			const userId = values[1] as UUID;
 			const record = state.raw_emails_by_id.get(rawEmailId);
 			if (record && record.user_id === userId && record.status === 'PENDING_EXTRACTION') {
-				record.status = terminalStatus;
+				record.status = 'IGNORED';
 			}
 			return [];
 		}
@@ -680,31 +759,19 @@ function createEmailSyncQueueCapture() {
 	return { queue, userJobs };
 }
 
-function createEnv(params: {
-	emailSyncQueue: Queue<EmailSyncJobPayload>;
-	aiQueueSend?: ReturnType<typeof vi.fn>;
-	aiQueueDelaySeconds?: string;
-}): Env {
-	const aiSend = params.aiQueueSend ?? vi.fn().mockResolvedValue(undefined);
-
+function createEnv(params: { emailSyncQueue: Queue<EmailSyncJobPayload> }): Env {
 	return {
 		APP_NAME: 'money-manager-backend',
 		APP_VERSION: '0.1.0',
 		NODE_ENV: 'test',
-		// This suite exercises the deterministic engine; without this the
-		// orchestrator routes to the AI engine (the env default) and skips.
-		NORMALIZATION_ENGINE: 'deterministic',
 		SUPABASE_POOLER_URL: 'postgres://postgres:postgres@localhost:6543/postgres',
 		DB_MAX_CONNECTIONS: '5',
 		DB_CONNECT_TIMEOUT_SECONDS: '5',
 		GOOGLE_CLIENT_ID: 'google-client-id',
 		GOOGLE_CLIENT_SECRET: 'google-client-secret',
 		GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY: btoa('0123456789abcdef0123456789abcdef'),
+		OPENCODE_GO_API_KEY: 'test-key',
 		EMAIL_SYNC_QUEUE: params.emailSyncQueue,
-		AI_CLASSIFICATION_QUEUE: {
-			send: aiSend,
-		},
-		AI_QUEUE_DELAY_SECONDS: params.aiQueueDelaySeconds,
 	} as unknown as Env;
 }
 
@@ -763,270 +830,249 @@ function createGoogleFetcher(message: GmailMessageFixture) {
 	});
 }
 
-describe('email sync pipeline e2e', () => {
+function aiJsonResponse(payload: unknown): Response {
+	return new Response(
+		JSON.stringify({
+			choices: [{ message: { content: JSON.stringify(payload) } }],
+		}),
+		{ status: 200, headers: { 'content-type': 'application/json' } },
+	);
+}
+
+// Syncs one Gmail fixture into raw_emails and returns its raw email id.
+async function syncEmail(
+	state: PipelineState,
+	sql: SqlMock,
+	env: Env,
+	fixture: GmailMessageFixture,
+): Promise<UUID> {
+	const { queue: emailSyncQueue, userJobs } = createEmailSyncQueueCapture();
+	await dispatchEmailSyncUsers(sql, emailSyncQueue, Date.parse(state.now_iso), {
+		scan_upper_user_id: state.user.id,
+	});
+	expect(userJobs).toHaveLength(1);
+
+	await runEmailSyncUserJob(
+		userJobs[0] as EmailSyncUserJobPayload,
+		env,
+		createGoogleFetcher(fixture),
+	);
+
+	const rawEmailId = state.raw_email_id_by_user_source.get(
+		rawEmailLookupKey(state.user.id, fixture.id),
+	);
+	expect(rawEmailId).toBeDefined();
+	return rawEmailId as UUID;
+}
+
+describe('email sync pipeline e2e (template → AI → learn)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		getAppConfigMock.mockReturnValue(TEST_APP_CONFIG);
 	});
 
-	it('processes dispatch -> fetcher -> normalizer into VERIFIED transaction for known alias', async () => {
-		const state = createPipelineState({
-			merchant_alias: {
-				search_key: 'AMAZON',
-				merchant_id: buildUuid(900),
-				category_id: buildUuid(102),
-			},
-		});
-		const sql = createSqlHarness(state);
-		getSqlClientMock.mockReturnValue(sql);
-
-		const { queue: emailSyncQueue, userJobs } = createEmailSyncQueueCapture();
-		const aiSend = vi.fn().mockResolvedValue(undefined);
-		const env = createEnv({
-			emailSyncQueue,
-			aiQueueSend: aiSend,
-		});
-
-		const dispatchResult = await dispatchEmailSyncUsers(
-			sql,
-			emailSyncQueue,
-			Date.parse('2026-03-11T00:00:00.000Z'),
-			{
-				scan_upper_user_id: state.user.id,
-			},
-		);
-
-		expect(dispatchResult.enqueued_user_job_count).toBe(1);
-		expect(userJobs).toHaveLength(1);
-
-		const fetchResult = await runEmailSyncUserJob(
-			userJobs[0] as EmailSyncUserJobPayload,
-			env,
-			createGoogleFetcher({
-				id: 'gmail-msg-1',
-				internal_date_ms: 1_700_000_300_000,
-				text: 'Rs 123.45 debited to Amazon via UPI ref AXIS123456',
-			}),
-		);
-
-		expect(fetchResult.fetched_message_count).toBe(1);
-		expect(fetchResult.inserted_or_retried_raw_email_count).toBe(1);
-
-		const rawEmailId = state.raw_email_id_by_user_source.get(
-			rawEmailLookupKey(state.user.id, 'gmail-msg-1'),
-		);
-		expect(rawEmailId).toBeDefined();
-
-		const normalizeResult = await runNormalizeRawEmailsJob(
-			{
-				job_type: 'NORMALIZE_RAW_EMAILS',
-				raw_email_ids: [rawEmailId as UUID],
-			},
-			env,
-		);
-
-		expect(normalizeResult.processed_raw_email_count).toBe(1);
-		expect(normalizeResult.created_transaction_count).toBe(1);
-		expect(normalizeResult.needs_review_transaction_count).toBe(0);
-		expect(normalizeResult.ai_enqueued_count).toBe(0);
-
-		expect(state.transactions_by_id.size).toBe(1);
-		const createdTransaction = Array.from(state.transactions_by_id.values())[0];
-		expect(createdTransaction?.status).toBe('VERIFIED');
-		expect(createdTransaction?.classification_source).toBe('HEURISTIC');
-		expect(aiSend).not.toHaveBeenCalled();
-
-		const persistedRawEmail = state.raw_emails_by_id.get(rawEmailId as UUID);
-		expect(persistedRawEmail?.status).toBe('PROCESSED');
+	afterEach(() => {
+		vi.unstubAllGlobals();
 	});
 
-	it('remains idempotent when the same fetch + normalize inputs are replayed', async () => {
-		const state = createPipelineState({
-			merchant_alias: {
-				search_key: 'AMAZON',
-				merchant_id: buildUuid(901),
-				category_id: buildUuid(102),
-			},
-		});
-		const sql = createSqlHarness(state);
-		getSqlClientMock.mockReturnValue(sql);
-
-		const { queue: emailSyncQueue, userJobs } = createEmailSyncQueueCapture();
-		const aiSend = vi.fn().mockResolvedValue(undefined);
-		const env = createEnv({
-			emailSyncQueue,
-			aiQueueSend: aiSend,
-		});
-		await dispatchEmailSyncUsers(sql, emailSyncQueue, Date.parse('2026-03-11T00:00:00.000Z'), {
-			scan_upper_user_id: state.user.id,
-		});
-		expect(userJobs).toHaveLength(1);
-
-		const replayMessage = {
-			id: 'gmail-msg-replay',
-			internal_date_ms: 1_700_000_350_000,
-			text: 'Rs 299 debited to Amazon via UPI ref AXIS678901',
-		};
-
-		const firstFetchResult = await runEmailSyncUserJob(
-			userJobs[0] as EmailSyncUserJobPayload,
-			env,
-			createGoogleFetcher(replayMessage),
-		);
-		expect(firstFetchResult.inserted_or_retried_raw_email_count).toBe(1);
-		expect(firstFetchResult.skipped_existing_raw_email_count).toBe(0);
-
-		const rawEmailId = state.raw_email_id_by_user_source.get(
-			rawEmailLookupKey(state.user.id, replayMessage.id),
-		);
-		expect(rawEmailId).toBeDefined();
-
-		const firstNormalizeResult = await runNormalizeRawEmailsJob(
-			{
-				job_type: 'NORMALIZE_RAW_EMAILS',
-				raw_email_ids: [rawEmailId as UUID],
-			},
-			env,
-		);
-		expect(firstNormalizeResult.created_transaction_count).toBe(1);
-		expect(firstNormalizeResult.persisted_financial_event_count).toBe(1);
-		expect(state.financial_events_by_id.size).toBe(1);
-		expect(state.transactions_by_id.size).toBe(1);
-
-		const replayFetchResult = await runEmailSyncUserJob(
-			userJobs[0] as EmailSyncUserJobPayload,
-			env,
-			createGoogleFetcher(replayMessage),
-		);
-		expect(replayFetchResult.inserted_or_retried_raw_email_count).toBe(0);
-		expect(replayFetchResult.skipped_existing_raw_email_count).toBeGreaterThanOrEqual(1);
-
-		const replayNormalizeResult = await runNormalizeRawEmailsJob(
-			{
-				job_type: 'NORMALIZE_RAW_EMAILS',
-				raw_email_ids: [rawEmailId as UUID],
-			},
-			env,
-		);
-		expect(replayNormalizeResult.created_transaction_count).toBe(0);
-		expect(replayNormalizeResult.persisted_financial_event_count).toBe(0);
-		expect(replayNormalizeResult.skipped_raw_email_count).toBe(1);
-		expect(state.financial_events_by_id.size).toBe(1);
-		expect(state.transactions_by_id.size).toBe(1);
-		expect(aiSend).not.toHaveBeenCalled();
-	});
-
-	it('keeps pipeline non-blocking for unknown merchants by creating NEEDS_REVIEW and enqueueing AI', async () => {
+	it('pays one AI call for a new format, learns a template, and resolves the next email locally', async () => {
 		const state = createPipelineState();
 		const sql = createSqlHarness(state);
 		getSqlClientMock.mockReturnValue(sql);
 
-		const { queue: emailSyncQueue, userJobs } = createEmailSyncQueueCapture();
-		const aiSend = vi.fn().mockResolvedValue(undefined);
-		const env = createEnv({
-			emailSyncQueue,
-			aiQueueSend: aiSend,
+		const { queue: emailSyncQueue } = createEmailSyncQueueCapture();
+		const env = createEnv({ emailSyncQueue });
+
+		// Masking order for email 1: N1=123.45, N2=9876, N3=05, N4=07, N5=26,
+		// N6=5544332211 (ref), N7=18002586161 (call helpline).
+		const aiFetch = vi.fn().mockResolvedValue(
+			aiJsonResponse({
+				transactions: [
+					{
+						direction: 'debit',
+						amount_token: 'N1',
+						date_text: '<N3>-<N4>-<N5>',
+						payment_method: 'upi',
+						counterparty_raw: 'zepto@ybl',
+						instrument_token: 'N2',
+						category_id: null,
+						sub_category_id: null,
+						confidence: 0.9,
+					},
+				],
+			}),
+		);
+		vi.stubGlobal('fetch', aiFetch);
+
+		const rawEmailId1 = await syncEmail(state, sql, env, {
+			id: 'gmail-msg-1',
+			internal_date_ms: 1_700_000_300_000,
+			text: 'Dear Customer, Rs.123.45 has been debited from your account **9876 on 05-07-26 to VPA zepto@ybl. UPI Ref No 5544332211. Not you? Call 18002586161.',
 		});
 
-		await dispatchEmailSyncUsers(
-			sql,
-			emailSyncQueue,
-			Date.parse('2026-03-11T00:00:00.000Z'),
-			{
-				scan_upper_user_id: state.user.id,
-			},
-		);
-		expect(userJobs).toHaveLength(1);
-
-		await runEmailSyncUserJob(
-			userJobs[0] as EmailSyncUserJobPayload,
-			env,
-			createGoogleFetcher({
-				id: 'gmail-msg-2',
-				internal_date_ms: 1_700_000_400_000,
-				text: 'Rs 799 debited to UnknownShop ref X12345',
-			}),
-		);
-
-		const rawEmailId = state.raw_email_id_by_user_source.get(
-			rawEmailLookupKey(state.user.id, 'gmail-msg-2'),
-		);
-		expect(rawEmailId).toBeDefined();
-
-		const normalizeResult = await runNormalizeRawEmailsJob(
-			{
-				job_type: 'NORMALIZE_RAW_EMAILS',
-				raw_email_ids: [rawEmailId as UUID],
-			},
+		const firstResult = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [rawEmailId1] },
 			env,
 		);
 
-		expect(normalizeResult.processed_raw_email_count).toBe(1);
-		expect(normalizeResult.created_transaction_count).toBe(1);
-		expect(normalizeResult.needs_review_transaction_count).toBe(1);
-		expect(normalizeResult.ai_enqueued_count).toBe(1);
-		expect(aiSend).toHaveBeenCalledTimes(1);
-		expect(aiSend).toHaveBeenCalledWith(
-			expect.objectContaining({
-				job_type: 'AI_CLASSIFICATION',
-			}),
-			{ contentType: 'json', delaySeconds: 30 },
+		expect(aiFetch).toHaveBeenCalledTimes(1);
+		expect(firstResult.processed_raw_email_count).toBe(1);
+		expect(firstResult.created_transaction_count).toBe(1);
+		expect(firstResult.template_matched_count).toBe(0);
+		expect(firstResult.template_learned_count).toBe(1);
+		expect(state.email_templates_by_key.size).toBe(1);
+
+		// The learned skeleton keeps bank boilerplate literal and wildcards
+		// the merchant span, so a different merchant still matches.
+		const learnedTemplate = Array.from(state.email_templates_by_key.values())[0];
+		expect(learnedTemplate?.from_address).toBe('alerts@hdfcbank.net');
+		expect(learnedTemplate?.skeleton).toContain('{{M}}');
+		expect(learnedTemplate?.skeleton).toContain('has been debited from your account');
+
+		// Same format, different merchant/amount/date/ref: no AI call.
+		const rawEmailId2 = await syncEmail(state, sql, env, {
+			id: 'gmail-msg-2',
+			internal_date_ms: 1_700_000_400_000,
+			text: 'Dear Customer, Rs.999.00 has been debited from your account **9876 on 06-07-26 to VPA swiggy@icici. UPI Ref No 9988776655. Not you? Call 18002586161.',
+		});
+
+		const secondResult = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [rawEmailId2] },
+			env,
 		);
 
-		const createdTransaction = Array.from(state.transactions_by_id.values())[0];
-		expect(createdTransaction?.status).toBe('NEEDS_REVIEW');
-		expect(createdTransaction?.classification_source).toBe('SYSTEM_DEFAULT');
+		expect(aiFetch).toHaveBeenCalledTimes(1);
+		expect(secondResult.processed_raw_email_count).toBe(1);
+		expect(secondResult.created_transaction_count).toBe(1);
+		expect(secondResult.template_matched_count).toBe(1);
+		expect(secondResult.template_learned_count).toBe(0);
+		expect(learnedTemplate?.hit_count).toBe(1);
+
+		const transactions = Array.from(state.transactions_by_id.values());
+		expect(transactions).toHaveLength(2);
+		expect(transactions.map(txn => txn.amount_in_paise).sort((a, b) => a - b)).toEqual([
+			12_345, 99_900,
+		]);
+
+		const events = Array.from(state.financial_events_by_id.values());
+		const templateEvent = events.find(event => event.amount_in_paise === 99_900);
+		expect(templateEvent?.counterparty_raw).toBe('swiggy@icici');
+		expect(templateEvent?.instrument_id).toBe('9876');
+		// 06-07-26 (DD-MM-YY) midnight IST.
+		expect(templateEvent?.txn_timestamp).toBe('2026-07-05T18:30:00.000Z');
+
+		// No identity signals → both stay NEEDS_REVIEW regardless of engine.
+		expect(new Set(transactions.map(txn => txn.status))).toEqual(new Set(['NEEDS_REVIEW']));
+		expect(state.raw_emails_by_id.get(rawEmailId1)?.status).toBe('PROCESSED');
+		expect(state.raw_emails_by_id.get(rawEmailId2)?.status).toBe('PROCESSED');
 	});
 
-	it('does not fail normalization when AI enqueue retries are exhausted', async () => {
+	it('auto-verifies via global alias on the AI path and records AI classification', async () => {
+		const merchantId = buildUuid(900);
+		const aliasCategoryId = buildUuid(555);
+		const state = createPipelineState({
+			merchant_alias: {
+				search_key: 'ZEPTOMARKETPLACEPRIVATELIMITED',
+				merchant_id: merchantId,
+				category_id: aliasCategoryId,
+			},
+		});
+		const sql = createSqlHarness(state);
+		getSqlClientMock.mockReturnValue(sql);
+
+		const { queue: emailSyncQueue } = createEmailSyncQueueCapture();
+		const env = createEnv({ emailSyncQueue });
+
+		// Masking order: N1=450.00, N2=9876, N3=05, N4=07, N5=26, N6=ref.
+		const aiFetch = vi.fn().mockResolvedValue(
+			aiJsonResponse({
+				transactions: [
+					{
+						direction: 'debit',
+						amount_token: 'N1',
+						date_text: '<N3>-<N4>-<N5>',
+						payment_method: 'upi',
+						counterparty_raw: 'ZEPTO MARKETPLACE PRIVATE LIMITED',
+						instrument_token: 'N2',
+						category_id: null,
+						sub_category_id: null,
+						// Deliberately low: VERIFIED must come from the alias hit,
+						// never from model confidence.
+						confidence: 0.55,
+					},
+				],
+			}),
+		);
+		vi.stubGlobal('fetch', aiFetch);
+
+		const rawEmailId = await syncEmail(state, sql, env, {
+			id: 'gmail-msg-3',
+			internal_date_ms: 1_700_000_500_000,
+			text: 'Dear Customer, Rs.450.00 has been debited from your account **9876 on 05-07-26 to ZEPTO MARKETPLACE PRIVATE LIMITED. UPI Ref No 1122334455.',
+		});
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [rawEmailId] },
+			env,
+		);
+
+		expect(result.processed_raw_email_count).toBe(1);
+		expect(result.created_transaction_count).toBe(1);
+		expect(result.needs_review_transaction_count).toBe(0);
+
+		const transaction = Array.from(state.transactions_by_id.values())[0];
+		expect(transaction?.status).toBe('VERIFIED');
+		expect(transaction?.classification_source).toBe('AI');
+		expect(transaction?.merchant_id).toBe(merchantId);
+		expect(transaction?.category_id).toBe(aliasCategoryId);
+
+		const event = Array.from(state.financial_events_by_id.values())[0];
+		expect(event?.search_key).toBe('ZEPTOMARKETPLACEPRIVATELIMITED');
+	});
+
+	it('learns an IGNORE template from a no-transaction answer and gates the next OTP email without AI', async () => {
 		const state = createPipelineState();
 		const sql = createSqlHarness(state);
 		getSqlClientMock.mockReturnValue(sql);
 
-		const { queue: emailSyncQueue, userJobs } = createEmailSyncQueueCapture();
-		const aiSend = vi.fn().mockRejectedValue(new Error('queue unavailable'));
-		const env = createEnv({
-			emailSyncQueue,
-			aiQueueSend: aiSend,
+		const { queue: emailSyncQueue } = createEmailSyncQueueCapture();
+		const env = createEnv({ emailSyncQueue });
+
+		const aiFetch = vi.fn().mockResolvedValue(aiJsonResponse({ transactions: [] }));
+		vi.stubGlobal('fetch', aiFetch);
+
+		const rawEmailId1 = await syncEmail(state, sql, env, {
+			id: 'gmail-otp-1',
+			internal_date_ms: 1_700_000_600_000,
+			text: 'Dear Customer, your OTP for netbanking login is 482913. It is valid for 10 minutes. Do not share it with anyone for safety reasons.',
 		});
 
-		await dispatchEmailSyncUsers(
-			sql,
-			emailSyncQueue,
-			Date.parse('2026-03-11T00:00:00.000Z'),
-			{
-				scan_upper_user_id: state.user.id,
-			},
-		);
-
-		await runEmailSyncUserJob(
-			userJobs[0] as EmailSyncUserJobPayload,
-			env,
-			createGoogleFetcher({
-				id: 'gmail-msg-3',
-				internal_date_ms: 1_700_000_500_000,
-				text: 'Rs 450 debited to UnknownMerchant ref Y12345',
-			}),
-		);
-
-		const rawEmailId = state.raw_email_id_by_user_source.get(
-			rawEmailLookupKey(state.user.id, 'gmail-msg-3'),
-		);
-		expect(rawEmailId).toBeDefined();
-
-		const normalizeResult = await runNormalizeRawEmailsJob(
-			{
-				job_type: 'NORMALIZE_RAW_EMAILS',
-				raw_email_ids: [rawEmailId as UUID],
-			},
+		const firstResult = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [rawEmailId1] },
 			env,
 		);
 
-		expect(normalizeResult.processed_raw_email_count).toBe(1);
-		expect(normalizeResult.created_transaction_count).toBe(1);
-		expect(normalizeResult.needs_review_transaction_count).toBe(1);
-		expect(normalizeResult.ai_enqueued_count).toBe(0);
-		expect(aiSend).toHaveBeenCalledTimes(3);
-		expect(Array.from(state.transactions_by_id.values())[0]?.status).toBe('NEEDS_REVIEW');
+		expect(aiFetch).toHaveBeenCalledTimes(1);
+		expect(firstResult.ignored_raw_email_count).toBe(1);
+		expect(firstResult.template_learned_count).toBe(1);
+		expect(state.raw_emails_by_id.get(rawEmailId1)?.status).toBe('IGNORED');
+
+		const rawEmailId2 = await syncEmail(state, sql, env, {
+			id: 'gmail-otp-2',
+			internal_date_ms: 1_700_000_700_000,
+			text: 'Dear Customer, your OTP for netbanking login is 771122. It is valid for 10 minutes. Do not share it with anyone for safety reasons.',
+		});
+
+		const secondResult = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [rawEmailId2] },
+			env,
+		);
+
+		// The recurring OTP format never reaches the model again.
+		expect(aiFetch).toHaveBeenCalledTimes(1);
+		expect(secondResult.ignored_raw_email_count).toBe(1);
+		expect(secondResult.template_matched_count).toBe(1);
+		expect(state.raw_emails_by_id.get(rawEmailId2)?.status).toBe('IGNORED');
+		expect(state.transactions_by_id.size).toBe(0);
 	});
 });

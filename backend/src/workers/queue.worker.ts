@@ -2,14 +2,12 @@ import { getAppConfig } from '../lib/config';
 import { runWithSqlClientLifecycle } from '../lib/db/client';
 import { QUEUE_NAMES } from '../lib/infra';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
-import { runAiClassificationJob } from './ai-classifier';
 import { runEmailSyncDispatchJob } from './email-sync-dispatcher';
 import { runEmailSyncUserJob, runSenderBackfillJob } from './email-sync-fetcher';
-import { runNormalizeRawEmailsJob } from './email-normalizer';
+import { runNormalizeRawEmailsJob } from './email-ai-normalizer';
 import { runMerchantMappingJob } from './merchant-mapper';
 import { runSenderClassificationJob } from './sender-classifier';
 import {
-	parseAiClassificationJob,
 	parseEmailSyncDispatchJob,
 	parseEmailSyncUserJob,
 	parseMerchantMappingJob,
@@ -176,7 +174,8 @@ async function handleNormalizeRawEmails(body: unknown, env: Env): Promise<void> 
 		skippedRawEmailCount: result.skipped_raw_email_count,
 		createdTransactionCount: result.created_transaction_count,
 		needsReviewTransactionCount: result.needs_review_transaction_count,
-		aiEnqueuedCount: result.ai_enqueued_count,
+		templateMatchedCount: result.template_matched_count,
+		templateLearnedCount: result.template_learned_count,
 	});
 }
 
@@ -223,21 +222,6 @@ async function handleMerchantMapping(body: unknown, env: Env): Promise<void> {
 	});
 }
 
-async function handleAiClassification(body: unknown, env: Env): Promise<void> {
-	const aiJob = parseAiClassificationJob(body);
-	const result = await runAiClassificationJob(aiJob, env);
-
-	console.info('Processing AI_CLASSIFICATION queue job', {
-		transactionId: aiJob.transaction_id,
-		requestedAt: aiJob.requested_at,
-		outcome: result.outcome,
-		transactionStatus: result.transaction_status,
-		confidenceScore: result.confidence_score,
-		action: result.action,
-		reason: result.reason,
-	});
-}
-
 async function processMessage(queueName: string, body: unknown, env: Env): Promise<void> {
 	switch (queueName) {
 		case QUEUE_NAMES.EMAIL_SYNC: {
@@ -274,9 +258,6 @@ async function processMessage(queueName: string, body: unknown, env: Env): Promi
 
 			throw new PoisonMessageError('Invalid EMAIL_SYNC payload');
 		}
-		case QUEUE_NAMES.AI_CLASSIFICATION:
-			await handleAiClassification(body, env);
-			return;
 		default:
 			throw new TransientMessageError(`Unsupported queue name: ${queueName}`);
 	}

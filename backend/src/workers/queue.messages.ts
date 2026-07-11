@@ -1,5 +1,4 @@
 import type {
-	AiClassificationJobPayload,
 	EmailSyncDispatchJobPayload,
 	EmailSyncJobPayload,
 	EmailSyncUserJobPayload,
@@ -16,12 +15,11 @@ import { PoisonMessageError } from './queue.errors';
 export type EmailSyncDispatchJob = EmailSyncDispatchJobPayload;
 export type EmailSyncUserJob = EmailSyncUserJobPayload;
 export type NormalizeRawEmailsJob = NormalizeRawEmailsJobPayload;
-export type AiClassificationJob = AiClassificationJobPayload;
 export type SenderClassificationJob = SenderClassificationJobPayload;
 export type SenderBackfillJob = SenderBackfillJobPayload;
 export type MerchantMappingJob = MerchantMappingJobPayload;
 export type EmailSyncQueueJob = EmailSyncJobPayload;
-export type QueueJob = EmailSyncQueueJob | AiClassificationJob;
+export type QueueJob = EmailSyncQueueJob;
 
 const UUID_REGEX =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -127,18 +125,6 @@ export function isEmailSyncUserJob(value: unknown): value is EmailSyncUserJob {
 		isOptionalNonNegativeInteger(value.continuation_after_seconds) &&
 		isOptionalNonNegativeInteger(value.continuation_max_internal_timestamp_seen) &&
 		hasValidEmailSyncUserContinuationShape(value)
-	);
-}
-
-export function isAiClassificationJob(value: unknown): value is AiClassificationJob {
-	if (!isRecord(value)) {
-		return false;
-	}
-
-	return (
-		value.job_type === 'AI_CLASSIFICATION' &&
-		isUuidString(value.transaction_id) &&
-		isIsoDateTimeString(value.requested_at)
 	);
 }
 
@@ -253,17 +239,6 @@ export function buildEmailSyncUserJob(
 	};
 }
 
-export function buildAiClassificationJob(
-	transactionId: UUID,
-	requestedAt: string = new Date().toISOString(),
-): AiClassificationJob {
-	return {
-		job_type: 'AI_CLASSIFICATION',
-		transaction_id: transactionId,
-		requested_at: requestedAt,
-	};
-}
-
 export function parseEmailSyncDispatchJob(value: unknown): EmailSyncDispatchJob {
 	if (!isEmailSyncDispatchJob(value)) {
 		throw new PoisonMessageError('Invalid EMAIL_SYNC_DISPATCH payload');
@@ -275,14 +250,6 @@ export function parseEmailSyncDispatchJob(value: unknown): EmailSyncDispatchJob 
 export function parseEmailSyncUserJob(value: unknown): EmailSyncUserJob {
 	if (!isEmailSyncUserJob(value)) {
 		throw new PoisonMessageError('Invalid EMAIL_SYNC_USER payload');
-	}
-
-	return value;
-}
-
-export function parseAiClassificationJob(value: unknown): AiClassificationJob {
-	if (!isAiClassificationJob(value)) {
-		throw new PoisonMessageError('Invalid AI_CLASSIFICATION payload');
 	}
 
 	return value;

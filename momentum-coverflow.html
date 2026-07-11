@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Momentum Coverflow Gallery</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(1200px 700px at 50% -10%, #1c2740, #0b0f17 62%);
+    color: #dce5f2;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: grid;
+    place-items: center;
+    overflow-x: hidden;
+  }
+  .gallery {
+    width: min(100vw, 1100px);
+    padding: 24px 0 40px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .gallery h1 {
+    text-align: center;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: #8fa2c0;
+    margin-bottom: 10px;
+  }
+  .viewport {
+    position: relative;
+    width: 100%;
+    perspective: 1200px;
+    touch-action: none;      /* we own all panning gestures */
+    cursor: grab;
+    overflow: hidden;
+  }
+  .viewport.dragging { cursor: grabbing; }
+  .track { position: absolute; inset: 0; transform-style: preserve-3d; }
+  .card {
+    position: absolute;
+    left: 50%; top: 50%;
+    border-radius: 18px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+    border: 1px solid rgba(255,255,255,.14);
+    outline: none;
+  }
+  .card:focus-visible {
+    outline: 3px solid #8ecbff;
+    outline-offset: 4px;
+  }
+  /* drop shadow whose strength is driven per-frame via --e (expand spring value) */
+  .card::after {
+    content: "";
+    position: absolute; inset: 0;
+    border-radius: inherit;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.6), 0 34px 70px rgba(0,0,0,.55);
+    opacity: var(--e, 0);
+    pointer-events: none;
+  }
+  .card header { display: flex; justify-content: space-between; align-items: baseline; }
+  .card .num  { font-size: 44px; font-weight: 800; color: rgba(255,255,255,.92); text-shadow: 0 2px 10px rgba(0,0,0,.35); }
+  .card .name { font-size: 14px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.85); }
+  .card .more {
+    font-size: 13px; line-height: 1.45; color: rgba(255,255,255,.95);
+    opacity: var(--e, 0);           /* revealed by the expand spring */
+  }
+  .card .bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.45); width: 40%; }
+  .dots {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    padding: 22px 0 4px;
+  }
+  .dots button {
+    width: 10px; height: 10px;
+    padding: 0; border: 0; border-radius: 50%;
+    background: #3a475e;
+    cursor: pointer;
+  }
+  .dots button:focus-visible { outline: 2px solid #8ecbff; outline-offset: 3px; }
+  .dot-indicator {
+    position: absolute;
+    left: 0; top: 0;                 /* recompute() aligns it with the first dot */
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #8ecbff;
+    box-shadow: 0 0 10px rgba(142,203,255,.8);
+    pointer-events: none;
+    will-change: transform;
+  }
+  .hint { text-align: center; font-size: 12.5px; color: #7386a4; margin-top: 10px; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px;
+    clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<main class="gallery" id="gallery">
+  <h1>Momentum Coverflow</h1>
+  <section class="viewport" id="viewport" role="region" aria-roledescription="carousel" aria-label="Momentum coverflow gallery">
+    <div class="track" id="track"></div>
+  </section>
+  <div class="dots" id="dots" aria-label="Choose card">
+    <span class="dot-indicator" id="dotInd" aria-hidden="true"></span>
+  </div>
+  <p class="hint">Drag, fling, scroll or use ← → Home End · click the centered card to expand</p>
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- constants ----------
+  const N = 7;
+  const MIN = 0, MAXI = N - 1;
+  const DECAY = 3.2;               // 1/s exponential velocity decay for flings
+  const MAX_V = 14;                // cards/s cap on release velocity
+  const SPRING_K = 130;            // settle spring (slightly underdamped)
+  const SPRING_C = 2 * 0.92 * Math.sqrt(SPRING_K);
+  const SNAP_K = 700;              // reduced-motion: stiff, short eased snap
+  const SNAP_C = 2 * Math.sqrt(SNAP_K);
+  const EXP_K = 280;               // expand spring (bouncy, distinct feel)
+  const EXP_C = 2 * 0.5 * Math.sqrt(EXP_K);
+  const LIMIT = 0.9, ELAST = 0.8;  // rubber-band, in card units
+  const CLICK_DIST = 6;            // px — under this a pointer gesture is a click
+  const WHEEL_IDLE = 150;          // ms without wheel events => wheel gesture ended
+  const AUTOPLAY_MS = 3400;
+  const MAX_ROT = 45;
+
+  const names = ["Aurora", "Dune", "Reef", "Ember", "Fjord", "Nebula", "Moss"];
+
+  // ---------- DOM ----------
+  const gallery = document.getElementById("gallery");
+  const viewport = document.getElementById("viewport");
+  const track = document.getElementById("track");
+  const dotsBox = document.getElementById("dots");
+  const dotInd = document.getElementById("dotInd");
+  const live = document.getElementById("live");
+
+  const cards = [];
+  const dots = [];
+  for (let i = 0; i < N; i++) {
+    const el = document.createElement("article");
+    el.className = "card";
+    el.dataset.index = i;
+    el.setAttribute("role", "group");
+    el.setAttribute("aria-roledescription", "slide");
+    el.setAttribute("aria-label", `Card ${i + 1} of ${N}`);
+    el.tabIndex = i === 0 ? 0 : -1;
+    const h = 205 + i * 46;
+    el.style.backgroundImage =
+      `linear-gradient(140deg, hsl(${h} 75% 58%), hsl(${h + 50} 72% 38%))`;
+    el.innerHTML =
+      `<header><span class="num">${String(i + 1).padStart(2, "0")}</span>` +
+      `<span class="name">${names[i]}</span></header>` +
+      `<div class="more">Expanded detail for ${names[i]}. Click again (or press Escape) to collapse.</div>` +
+      `<footer class="bar"></footer>`;
+    track.appendChild(el);
+    cards.push(el);
+
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("aria-label", `Go to card ${i + 1}`);
+    b.addEventListener("click", () => goTo(i));
+    dotsBox.appendChild(b);
+    dots.push(b);
+  }
+
+  // ---------- state ----------
+  let pos = 0;                 // fractional index, card units; card i centered at pos === i
+  let v = 0;                   // cards/s
+  let target = 0;              // spring target index
+  let activeIndex = 0;         // settled index
+  let mode = "idle";           // idle | drag | momentum | spring | wheel
+
+  let expandIndex = -1;        // which card the expand spring applies to
+  let eVal = 0, eV = 0, eT = 0;
+
+  let spacing = 180, cardW = 280, cardH = 350, dotPitch = 22, dotBase = 0;
+
+  let reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", e => {
+    reduced = e.matches;
+    resetAutoplay();
+  });
+
+  // pointer / gesture
+  let pointerId = null;
+  let dragRaw = 0;             // unrubbered position during drag
+  let lastClientX = 0, downX = 0, downY = 0, movedMax = 0;
+  let downCard = null;
+  let vEst = 0, lastMoveT = 0, lastMoveP = 0;
+
+  // wheel
+  let wheelRaw = 0, lastWheelT = 0;
+
+  // autoplay pause reasons
+  let hovered = false, focusWithin = false;
+  let autoplayTimer = null;
+
+  // rAF loop
+  let rafId = null, running = false, lastT = 0;
+
+  // ---------- helpers ----------
+  const clampNum = (x, a, b) => Math.min(b, Math.max(a, x));
+  const clampP = p => clampNum(p, MIN, MAXI);
+  const clampI = i => clampNum(Math.round(i), MIN, MAXI);
+
+  // resistance ~= limit * (1 - exp(-offset / (limit * elasticity)))
+  const rubber = o => LIMIT * (1 - Math.exp(-o / (LIMIT * ELAST)));
+  function applyRubber(raw) {
+    if (raw < MIN) return MIN - rubber(MIN - raw);
+    if (raw > MAXI) return MAXI + rubber(raw - MAXI);
+    return raw;
+  }
+  function invRubber(p) {   // displayed position -> raw, so grabs while overscrolled stay continuous
+    if (p >= MIN && p <= MAXI) return p;
+    if (p < MIN) {
+      const over = Math.min(MIN - p, LIMIT * 0.999);
+      return MIN + LIMIT * ELAST * Math.log(1 - over / LIMIT);
+    }
+    const over = Math.min(p - MAXI, LIMIT * 0.999);
+    return MAXI - LIMIT * ELAST * Math.log(1 - over / LIMIT);
+  }
+
+  // ---------- rAF loop with idle parking ----------
+  function isAnimating() {
+    return mode !== "idle" || pointerId !== null ||
+           Math.abs(eVal - eT) > 0.0008 || Math.abs(eV) > 0.01;
+  }
+  function wake() {
+    if (!running) {
+      running = true;
+      lastT = performance.now();
+      rafId = requestAnimationFrame(frame);
+    }
+  }
+  function park() {
+    if (rafId !== null) cancelAnimationFrame(rafId);
+    rafId = null;
+    running = false;
+  }
+  function frame(t) {
+    const dt = clampNum((t - lastT) / 1000, 0.001, 0.033);
+    lastT = t;
+    step(t, dt);
+    render();
+    if (isAnimating()) rafId = requestAnimationFrame(frame);
+    else park();
+  }
+
+  // ---------- physics ----------
+  function step(now, dt) {
+    if (mode === "wheel" && now - lastWheelT > WHEEL_IDLE) {
+      // trackpad inertia already arrived as deltas: settle with NO extra momentum
+      v = 0;
+      beginSpring(clampI(clampP(pos)));
+    }
+
+    if (mode === "momentum") {
+      v *= Math.exp(-DECAY * dt);
+      pos += v * dt;
+      if (pos < MIN || pos > MAXI) {
+        v = clampNum(v, -6, 6);                    // temper boundary overshoot
+        beginSpring(clampI(clampP(pos)));
+      } else if (Math.abs(v) < 2.0) {
+        const proj = pos + v / DECAY;              // where the decay would end
+        beginSpring(clampI(proj));                 // nearest card to the projected stop
+      }
+    } else if (mode === "spring") {
+      const k = reduced ? SNAP_K : SPRING_K;
+      const c = reduced ? SNAP_C : SPRING_C;
+      const x = pos - target;
+      v += (-k * x - c * v) * dt;
+      pos += v * dt;
+      if (Math.abs(pos - target) < 0.0006 && Math.abs(v) < 0.01) {
+        pos = target; v = 0; mode = "idle";
+        onSettle();
+      }
+    }
+
+    if (expandIndex >= 0) {
+      const x = eVal - eT;
+      if (Math.abs(x) > 0.0008 || Math.abs(eV) > 0.01) {
+        const k = reduced ? SNAP_K : EXP_K;
+        const c = reduced ? SNAP_C : EXP_C;
+        eV += (-k * x - c * eV) * dt;
+        eVal += eV * dt;
+      } else { eVal = eT; eV = 0; }
+    }
+  }
+
+  function beginSpring(idx) {
+    target = idx;
+    mode = "spring";
+    setRoving(target);
+    syncDots();
+  }
+
+  function releaseFling(vRel) {
+    v = clampNum(vRel, -MAX_V, MAX_V);
+    if (pos < MIN || pos > MAXI) {                 // overscrolled: spring back to boundary
+      v = clampNum(v, -6, 6);
+      beginSpring(clampI(clampP(pos)));
+    } else if (reduced) {                          // no momentum: short eased snap
+      v = 0;
+      beginSpring(clampI(pos));
+    } else if (Math.abs(v) < 0.4) {
+      beginSpring(clampI(pos));
+    } else {
+      mode = "momentum";
+    }
+    wake();
+  }
+
+  function onSettle() {
+    activeIndex = target;
+    setRoving(activeIndex);
+    syncDots();
+    live.textContent = `Card ${activeIndex + 1} of ${N}` +
+      (eT === 1 && expandIndex === activeIndex ? ", expanded" : "");
+    const ae = document.activeElement;
+    if (ae && ae.classList && ae.classList.contains("card") && ae !== cards[activeIndex]) {
+      cards[activeIndex].focus({ preventScroll: true });
+    }
+  }
+
+  // ---------- navigation ----------
+  function goTo(i) {
+    const idx = clampI(i);
+    if (expandIndex !== idx) eT = 0;               // moving away collapses any expansion
+    if (reduced) v = 0;
+    beginSpring(idx);
+    wake();
+    resetAutoplay();
+  }
+
+  function toggleExpand(i) {
+    if (eT === 1 && expandIndex === i) {
+      eT = 0;
+    } else {
+      expandIndex = i;
+      eT = 1;
+    }
+    beginSpring(i);                                 // re-center precisely under the card
+    live.textContent = `Card ${i + 1} of ${N}${eT === 1 ? ", expanded" : ", collapsed"}`;
+    wake();
+    resetAutoplay();
+  }
+
+  function setRoving(i) {
+    for (let j = 0; j < N; j++) cards[j].tabIndex = j === i ? 0 : -1;
+  }
+  function syncDots() {
+    for (let j = 0; j < N; j++) {
+      if (j === target) dots[j].setAttribute("aria-current", "true");
+      else dots[j].removeAttribute("aria-current");
+    }
+  }
+
+  // ---------- render (continuous depth from fractional position) ----------
+  function render() {
+    for (let i = 0; i < N; i++) {
+      const el = cards[i];
+      const d = i - pos;                           // signed distance from center
+      const ad = Math.abs(d);
+      let rot, scale, z;
+      if (reduced) {
+        rot = 0; z = 0;
+        scale = 1 - 0.06 * Math.min(ad, 3);
+      } else {
+        rot = -MAX_ROT * Math.tanh(d * 0.9);
+        scale = 1 / (1 + 0.22 * ad);
+        z = -140 * Math.tanh(ad * 0.7);
+      }
+      let y = 0;
+      const ex = i === expandIndex ? eVal : 0;
+      if (ex !== 0) {
+        scale *= 1 + 0.32 * ex;
+        rot *= 1 - ex;
+        z += 150 * ex;
+        y = -14 * ex;
+      }
+      const op = clampNum(1 - 0.18 * ad, 0.15, 1);
+      el.style.transform =
+        `translate(-50%,-50%) translate3d(${(d * spacing).toFixed(2)}px,${y.toFixed(2)}px,${z.toFixed(2)}px) ` +
+        `rotateY(${rot.toFixed(3)}deg) scale(${scale.toFixed(4)})`;
+      el.style.opacity = op.toFixed(3);
+      el.style.zIndex = String(200 - Math.round(ad * 10) + (ex > 0.02 ? 300 : 0));
+      el.style.setProperty("--e", ex.toFixed(3));
+    }
+    // pagination indicator tracks the live fractional position
+    dotInd.style.transform = `translate3d(${(dotBase + clampP(pos) * dotPitch).toFixed(2)}px,0,0)`;
+  }
+
+  // ---------- pointer input ----------
+  viewport.addEventListener("pointerdown", e => {
+    if (pointerId !== null) return;                // ignore extra touches
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointerId = e.pointerId;
+    viewport.setPointerCapture(pointerId);
+    viewport.classList.add("dragging");
+
+    // INTERRUPT: inherit the in-flight velocity so a grab-and-flick continues the motion
+    vEst = (mode === "momentum" || mode === "spring") ? v : 0;
+    mode = "drag";
+    v = 0;
+    dragRaw = invRubber(pos);
+    lastClientX = downX = e.clientX;
+    downY = e.clientY;
+    movedMax = 0;
+    downCard = e.target.closest ? e.target.closest(".card") : null;
+    lastMoveT = performance.now();
+    lastMoveP = pos;
+    wake();
+    resetAutoplay();
+  });
+
+  viewport.addEventListener("pointermove", e => {
+    if (e.pointerId !== pointerId) return;
+    const dx = e.clientX - lastClientX;
+    lastClientX = e.clientX;
+    dragRaw -= dx / spacing;                       // 1:1 within bounds
+    pos = applyRubber(dragRaw);                    // progressive resistance past the ends
+    movedMax = Math.max(movedMax, Math.hypot(e.clientX - downX, e.clientY - downY));
+    if (movedMax > CLICK_DIST && eT === 1) eT = 0; // dragging collapses the expanded card
+
+    const now = performance.now();
+    const dt = (now - lastMoveT) / 1000;
+    if (dt > 0.001) {
+      const inst = (pos - lastMoveP) / dt;
+      const a = 1 - Math.exp(-dt / 0.04);          // ~40ms EMA
+      vEst += (inst - vEst) * a;
+    }
+    lastMoveT = now;
+    lastMoveP = pos;
+  });
+
+  function endPointer(e, cancelled) {
+    if (e.pointerId !== pointerId) return;
+    pointerId = null;
+    viewport.classList.remove("dragging");
+
+    if (!cancelled && movedMax < CLICK_DIST) {     // CLICK, not drag
+      if (downCard) {
+        const i = +downCard.dataset.index;
+        if (Math.abs(pos - i) < 0.35) toggleExpand(i);
+        else goTo(i);
+      } else {
+        v = 0;
+        beginSpring(clampI(clampP(pos)));
+        wake();
+      }
+    } else {
+      const stale = performance.now() - lastMoveT > 90;   // finger stopped before lifting
+      releaseFling(stale ? 0 : vEst);
+    }
+    downCard = null;
+    resetAutoplay();
+  }
+  viewport.addEventListener("pointerup", e => endPointer(e, false));
+  viewport.addEventListener("pointercancel", e => endPointer(e, true));
+
+  // ---------- wheel / trackpad ----------
+  viewport.addEventListener("wheel", e => {
+    if (e.ctrlKey) return;                         // let pinch-zoom through
+    e.preventDefault();
+    let dx = e.deltaX, dy = e.deltaY;
+    if (e.deltaMode === 1) { dx *= 16; dy *= 16; }
+    else if (e.deltaMode === 2) { dx *= innerWidth; dy *= innerHeight; }
+    const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy;   // vertical, shift+wheel, horizontal
+
+    if (mode !== "wheel") {                        // wheel takes over any motion, no restart jump
+      wheelRaw = invRubber(pos);
+      mode = "wheel";
+      v = 0;
+      if (eT === 1) eT = 0;
+    }
+    wheelRaw += delta / spacing;
+    wheelRaw = clampNum(wheelRaw, MIN - LIMIT * 2, MAXI + LIMIT * 2);
+    pos = applyRubber(wheelRaw);
+    lastWheelT = performance.now();
+    wake();
+    resetAutoplay();
+  }, { passive: false });
+
+  // ---------- keyboard ----------
+  gallery.addEventListener("keydown", e => {
+    const onCard = e.target.classList && e.target.classList.contains("card");
+    const base = mode === "spring" ? target : clampI(clampP(pos));
+    let handled = true;
+    switch (e.key) {
+      case "ArrowLeft":  goTo(base - 1); cards[target].focus({ preventScroll: true }); break;
+      case "ArrowRight": goTo(base + 1); cards[target].focus({ preventScroll: true }); break;
+      case "Home":       goTo(MIN);      cards[target].focus({ preventScroll: true }); break;
+      case "End":        goTo(MAXI);     cards[target].focus({ preventScroll: true }); break;
+      case "Escape":
+        if (eT === 1) { eT = 0; wake(); } else handled = false;
+        break;
+      case "Enter": case " ":
+        if (onCard) {
+          const i = +e.target.dataset.index;
+          if (Math.abs(pos - i) < 0.35) toggleExpand(i); else goTo(i);
+        } else handled = false;
+        break;
+      default: handled = false;
+    }
+    if (handled) e.preventDefault();
+  });
+
+  // ---------- autoplay (setTimeout only SCHEDULES the next advance;
+  //             all motion still runs in the single rAF loop) ----------
+  function canAutoplay() {
+    return !reduced && !hovered && !focusWithin && pointerId === null &&
+           !document.hidden && eT !== 1;
+  }
+  function resetAutoplay() {
+    clearTimeout(autoplayTimer);
+    autoplayTimer = setTimeout(autoplayTick, AUTOPLAY_MS);
+  }
+  function autoplayTick() {
+    if (canAutoplay() && mode === "idle") {
+      const base = clampI(clampP(pos));
+      goTo((base + 1) % N);                        // goTo reschedules via resetAutoplay
+    } else {
+      resetAutoplay();                             // paused: try again after the interval
+    }
+  }
+
+  gallery.addEventListener("pointerenter", () => { hovered = true; });
+  gallery.addEventListener("pointerleave", () => { hovered = false; resetAutoplay(); });
+  gallery.addEventListener("focusin",  () => { focusWithin = true; });
+  gallery.addEventListener("focusout", () => { focusWithin = false; resetAutoplay(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) clearTimeout(autoplayTimer);
+    else resetAutoplay();
+  });
+
+  // ---------- responsive geometry ----------
+  function recompute() {
+    const w = viewport.clientWidth || innerWidth;
+    cardW = clampNum(w * 0.32, 160, 300);
+    cardH = cardW * 1.24;
+    spacing = cardW * 0.62;
+    viewport.style.height = `${Math.round(cardH * 1.3)}px`;
+    for (const el of cards) {
+      el.style.width = `${Math.round(cardW)}px`;
+      el.style.height = `${Math.round(cardH)}px`;
+    }
+    dotBase = dots[0].offsetLeft;
+    dotInd.style.top = `${dots[0].offsetTop}px`;
+    dotPitch = dots.length > 1 ? dots[1].offsetLeft - dots[0].offsetLeft : 22;
+    render();   // pos is in card units, so the centered card stays centered for free
+  }
+  new ResizeObserver(recompute).observe(viewport);
+
+  // ---------- init ----------
+  recompute();
+  syncDots();
+  resetAutoplay();
+  render();
+})();
+</script>
+</body>
+</html>

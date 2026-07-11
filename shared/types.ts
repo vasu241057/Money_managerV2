@@ -521,20 +521,6 @@ export type EmailSyncJobPayload =
   | SenderBackfillJobPayload
   | MerchantMappingJobPayload;
 
-/**
- * Async AI handoff queue payload for unknown classifications.
- */
-export interface AiClassificationJobPayload {
-  job_type: 'AI_CLASSIFICATION';
-  transaction_id: UUID;
-  requested_at: ISODateTimeString;
-}
-
-export interface AiRequiresWebhookRequest {
-  job_type?: 'REQUIRES_AI';
-  transaction_id: UUID;
-  requested_at?: ISODateTimeString;
-}
 
 export interface AiRequiresWebhookResponse {
   accepted: boolean;
@@ -600,8 +586,6 @@ export const TRANSACTION_STATUS_TRANSITIONS: Record<
   VERIFIED: ['NEEDS_REVIEW'],
   NEEDS_REVIEW: ['VERIFIED'],
 };
-
-export type NormalizationEngine = 'ai' | 'deterministic' | 'hybrid';
 
 export interface AiNormalizedTransactionItem {
   direction: 'debit' | 'credit';

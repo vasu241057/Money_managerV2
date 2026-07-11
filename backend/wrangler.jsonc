@@ -31,10 +31,6 @@
 			{
 				"binding": "EMAIL_SYNC_QUEUE",
 				"queue": "money-manager-email-sync"
-			},
-			{
-				"binding": "AI_CLASSIFICATION_QUEUE",
-				"queue": "money-manager-ai-classification"
 			}
 		],
 		"consumers": [
@@ -44,13 +40,6 @@
 				"max_batch_timeout": 5,
 				"max_retries": 5,
 				"dead_letter_queue": "money-manager-email-sync-dlq"
-			},
-			{
-				"queue": "money-manager-ai-classification",
-				"max_batch_size": 2,
-				"max_batch_timeout": 20,
-				"max_retries": 5,
-				"dead_letter_queue": "money-manager-ai-classification-dlq"
 			}
 		]
 	}

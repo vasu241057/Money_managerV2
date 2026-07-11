@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../src/lib/config';
 import type { SqlClient } from '../src/lib/db/client';
+import { induceExtractTemplate } from '../src/lib/email-templates';
+import { maskNumericTokens } from '../src/lib/masking';
 import { runNormalizeRawEmailsJob } from '../src/workers/email-ai-normalizer';
 
 const { getAppConfigMock, getSqlClientMock } = vi.hoisted(() => ({
@@ -157,13 +159,11 @@ describe('email-ai-normalizer identity graph integration', () => {
 		getSqlClientMock.mockReturnValue(sql);
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(aiModelResponse()));
 
-		const aiSend = vi.fn().mockResolvedValue(undefined);
 		const result = await runNormalizeRawEmailsJob(
 			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
 			{
 				OPENCODE_GO_API_KEY: 'test-key',
 				AI_NORMALIZER_MASK_NUMBERS: 'false',
-				AI_CLASSIFICATION_QUEUE: { send: aiSend },
 			} as unknown as Env,
 		);
 
@@ -181,9 +181,8 @@ describe('email-ai-normalizer identity graph integration', () => {
 		expect(transactionValues[8]).toBe('VERIFIED');
 		expect(transactionValues[9]).toBe('USER');
 
-		// VERIFIED via user rule → nothing enqueued for AI review triage.
+		// VERIFIED via user rule → no review needed.
 		expect(result.needs_review_transaction_count).toBe(0);
-		expect(aiSend).not.toHaveBeenCalled();
 	});
 
 	it('masked mode: no digits reach the model; amount/date/last4 resolved locally; alias hit auto-verifies', async () => {
@@ -275,13 +274,9 @@ describe('email-ai-normalizer identity graph integration', () => {
 		);
 		vi.stubGlobal('fetch', fetchMock);
 
-		const aiSend = vi.fn().mockResolvedValue(undefined);
 		const result = await runNormalizeRawEmailsJob(
 			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
-			{
-				OPENCODE_GO_API_KEY: 'test-key',
-				AI_CLASSIFICATION_QUEUE: { send: aiSend },
-			} as unknown as Env,
+			{ OPENCODE_GO_API_KEY: 'test-key' } as unknown as Env,
 		);
 
 		expect(result.processed_raw_email_count).toBe(1);
@@ -356,13 +351,11 @@ describe('email-ai-normalizer identity graph integration', () => {
 		getSqlClientMock.mockReturnValue(sql);
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(aiModelResponse()));
 
-		const aiSend = vi.fn().mockResolvedValue(undefined);
 		const result = await runNormalizeRawEmailsJob(
 			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
 			{
 				OPENCODE_GO_API_KEY: 'test-key',
 				AI_NORMALIZER_MASK_NUMBERS: 'false',
-				AI_CLASSIFICATION_QUEUE: { send: aiSend },
 			} as unknown as Env,
 		);
 
@@ -477,13 +470,9 @@ describe('email-ai-normalizer identity graph integration', () => {
 		);
 		vi.stubGlobal('fetch', fetchMock);
 
-		const aiSend = vi.fn().mockResolvedValue(undefined);
 		const result = await runNormalizeRawEmailsJob(
 			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID, RAW_EMAIL_ID_2] },
-			{
-				OPENCODE_GO_API_KEY: 'test-key',
-				AI_CLASSIFICATION_QUEUE: { send: aiSend },
-			} as unknown as Env,
+			{ OPENCODE_GO_API_KEY: 'test-key' } as unknown as Env,
 		);
 
 		// One model call for both emails.
@@ -549,13 +538,11 @@ describe('email-ai-normalizer identity graph integration', () => {
 		getSqlClientMock.mockReturnValue(sql);
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(aiModelResponse()));
 
-		const aiSend = vi.fn().mockResolvedValue(undefined);
 		const result = await runNormalizeRawEmailsJob(
 			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
 			{
 				OPENCODE_GO_API_KEY: 'test-key',
 				AI_NORMALIZER_MASK_NUMBERS: 'false',
-				AI_CLASSIFICATION_QUEUE: { send: aiSend },
 			} as unknown as Env,
 		);
 
@@ -566,6 +553,225 @@ describe('email-ai-normalizer identity graph integration', () => {
 		expect(transactionValues[8]).toBe('NEEDS_REVIEW');
 		expect(transactionValues[9]).toBe('AI');
 		expect(result.needs_review_transaction_count).toBe(1);
-		expect(aiSend).toHaveBeenCalledTimes(1);
+	});
+
+	// Masking order for the template fixtures: N1=amount, N2=account last4,
+	// N3/N4/N5=date parts, N6=UPI ref, N7=helpline.
+	const TEMPLATE_SOURCE_TEXT =
+		'Dear Customer, Rs.123.45 has been debited from your account **9876 on 05-07-26 to VPA zepto@ybl. UPI Ref No 5544332211. Not you? Call 18002586161.';
+	const TEMPLATE_VARIANT_TEXT =
+		'Dear Customer, Rs.999.00 has been debited from your account **9876 on 06-07-26 to VPA swiggy@icici. UPI Ref No 9988776655. Not you? Call 18002586161.';
+	const TEMPLATE_ID = '00000000-0000-4000-8000-0000000000c1';
+	const HDFC_FROM = 'alerts@hdfcbank.net';
+
+	function templateSourceEmailRow(text: string): Record<string, unknown> {
+		return {
+			id: RAW_EMAIL_ID,
+			user_id: USER_ID,
+			internal_date: '2026-07-01T10:00:00.000Z',
+			clean_text: text,
+			from_address: HDFC_FROM,
+			status: 'PENDING_EXTRACTION',
+		};
+	}
+
+	it('learns a self-verified template from a masked single-transaction answer', async () => {
+		let templateInsertValues: unknown[] = [];
+
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('insert into public.email_templates')) {
+				templateInsertValues = values;
+				return [{ id: TEMPLATE_ID }];
+			}
+			if (query.includes('delete from public.email_templates')) {
+				return [];
+			}
+			if (query.includes('from public.email_templates')) {
+				return [];
+			}
+			if (query.includes('from public.raw_emails as re')) {
+				return [templateSourceEmailRow(TEMPLATE_SOURCE_TEXT)];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) {
+				return [];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+			}
+			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_merchant_rules as umr')) {
+				return [];
+			}
+			if (query.includes('from public.global_merchant_aliases as gma')) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
+			if (query.includes('insert into public.financial_events')) {
+				return [{ id: FE_ID }];
+			}
+			if (query.includes('insert into public.transactions')) {
+				return [{ id: TXN_ID, status: values[8] }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						choices: [
+							{
+								message: {
+									content: JSON.stringify({
+										transactions: [
+											{
+												direction: 'debit',
+												amount_token: 'N1',
+												date_text: '<N3>-<N4>-<N5>',
+												payment_method: 'upi',
+												counterparty_raw: 'zepto@ybl',
+												instrument_token: 'N2',
+												category_id: null,
+												sub_category_id: null,
+												confidence: 0.9,
+											},
+										],
+									}),
+								},
+							},
+						],
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				),
+			),
+		);
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{ OPENCODE_GO_API_KEY: 'test-key' } as unknown as Env,
+		);
+
+		expect(result.processed_raw_email_count).toBe(1);
+		expect(result.template_learned_count).toBe(1);
+
+		expect(templateInsertValues[0]).toBe(HDFC_FROM);
+		const skeleton = templateInsertValues[2] as string;
+		expect(skeleton).toContain('has been debited from your account');
+		expect(skeleton).toContain('{{M}}');
+		expect(skeleton).not.toContain('zepto');
+
+		const slotMap = JSON.parse(templateInsertValues[3] as string) as Record<string, unknown>;
+		expect(slotMap.kind).toBe('EXTRACT');
+		expect(slotMap.amount_ordinal).toBe(1);
+		expect(slotMap.instrument_ordinal).toBe(2);
+		expect(slotMap.date_pattern).toBe('{{3}}-{{4}}-{{5}}');
+	});
+
+	it('resolves a template hit locally without calling the model', async () => {
+		const masked = maskNumericTokens(TEMPLATE_SOURCE_TEXT);
+		const induced = induceExtractTemplate({
+			masked_text: masked.masked,
+			tokens: masked.tokens,
+			amount_token: 'N1',
+			date_text: '<N3>-<N4>-<N5>',
+			instrument_token: 'N2',
+			counterparty_raw_masked: 'zepto@ybl',
+			direction: 'debit',
+			payment_method: 'upi',
+			confidence: 0.9,
+		});
+		expect(induced.ok).toBe(true);
+		if (!induced.ok) return;
+
+		let financialEventValues: unknown[] = [];
+		let transactionValues: unknown[] = [];
+		let hitTemplateId: unknown = null;
+
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('set hit_count = et.hit_count + 1')) {
+				hitTemplateId = values[0];
+				return [];
+			}
+			if (query.includes('from public.email_templates')) {
+				return [
+					{
+						id: TEMPLATE_ID,
+						from_address: HDFC_FROM,
+						skeleton: induced.skeleton,
+						slot_map: induced.slot_map,
+						hit_count: 3,
+						failure_count: 0,
+					},
+				];
+			}
+			if (query.includes('from public.raw_emails as re')) {
+				return [templateSourceEmailRow(TEMPLATE_VARIANT_TEXT)];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) {
+				return [];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+			}
+			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_merchant_rules as umr')) {
+				return [];
+			}
+			if (query.includes('from public.global_merchant_aliases as gma')) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
+			if (query.includes('insert into public.financial_events')) {
+				financialEventValues = values;
+				return [{ id: FE_ID }];
+			}
+			if (query.includes('insert into public.transactions')) {
+				transactionValues = values;
+				return [{ id: TXN_ID, status: values[8] }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const fetchMock = vi.fn().mockRejectedValue(new Error('model must not be called'));
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{ OPENCODE_GO_API_KEY: 'test-key' } as unknown as Env,
+		);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(result.template_matched_count).toBe(1);
+		expect(result.template_learned_count).toBe(0);
+		expect(result.processed_raw_email_count).toBe(1);
+		expect(hitTemplateId).toBe(TEMPLATE_ID);
+
+		// Amount/merchant/date/last4 come from the variant email's own tokens.
+		expect(financialEventValues[4]).toBe(99_900);
+		expect(financialEventValues[7]).toBe('9876');
+		expect(financialEventValues[8]).toBe('swiggy@icici');
+		// 06-07-26 (DD-MM-YY) midnight IST.
+		expect(financialEventValues[5]).toBe('2026-07-05T18:30:00.000Z');
+
+		expect(transactionValues[8]).toBe('NEEDS_REVIEW');
+		expect(transactionValues[9]).toBe('AI');
+		expect(transactionValues[10]).toBe(0.9);
 	});
 });

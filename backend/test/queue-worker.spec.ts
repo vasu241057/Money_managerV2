@@ -4,7 +4,6 @@ const {
 	runEmailSyncDispatchJobMock,
 	runEmailSyncUserJobMock,
 	runNormalizeRawEmailsJobMock,
-	runAiClassificationJobMock,
 } = vi.hoisted(() => ({
 	runEmailSyncDispatchJobMock: vi.fn().mockResolvedValue({
 		page_count: 0,
@@ -34,15 +33,8 @@ const {
 		skipped_raw_email_count: 0,
 		created_transaction_count: 1,
 		needs_review_transaction_count: 0,
-		ai_enqueued_count: 0,
-	}),
-	runAiClassificationJobMock: vi.fn().mockResolvedValue({
-		transaction_id: '00000000-0000-4000-8000-00000000000a',
-		outcome: 'UPDATED_NEEDS_REVIEW',
-		transaction_status: 'NEEDS_REVIEW',
-		confidence_score: 0.66,
-		action: 'KEEP_REVIEW',
-		reason: 'Needs human confirmation',
+		template_matched_count: 0,
+		template_learned_count: 0,
 	}),
 }));
 
@@ -54,12 +46,8 @@ vi.mock('../src/workers/email-sync-fetcher', () => ({
 	runEmailSyncUserJob: runEmailSyncUserJobMock,
 }));
 
-vi.mock('../src/workers/email-normalizer', () => ({
+vi.mock('../src/workers/email-ai-normalizer', () => ({
 	runNormalizeRawEmailsJob: runNormalizeRawEmailsJobMock,
-}));
-
-vi.mock('../src/workers/ai-classifier', () => ({
-	runAiClassificationJob: runAiClassificationJobMock,
 }));
 
 import { QUEUE_NAMES } from '../src/lib/infra';
@@ -200,32 +188,6 @@ describe('queue.worker', () => {
 		expect(harness.ack).toHaveBeenCalledTimes(1);
 		expect(harness.retry).not.toHaveBeenCalled();
 		expect(runNormalizeRawEmailsJobMock).toHaveBeenCalledTimes(1);
-	});
-
-	it('acks valid AI_CLASSIFICATION messages', async () => {
-		const harness = createMessage(
-			{
-				job_type: 'AI_CLASSIFICATION',
-				transaction_id: '00000000-0000-4000-8000-00000000000a',
-				requested_at: new Date().toISOString(),
-			},
-			1,
-		);
-
-		await handleQueue(
-			{
-				queue: QUEUE_NAMES.AI_CLASSIFICATION,
-				messages: [harness.message],
-				ackAll: vi.fn(),
-				retryAll: vi.fn(),
-			} as unknown as MessageBatch<unknown>,
-			{} as Env,
-			{} as ExecutionContext,
-		);
-
-		expect(harness.ack).toHaveBeenCalledTimes(1);
-		expect(harness.retry).not.toHaveBeenCalled();
-		expect(runAiClassificationJobMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('acks poison messages instead of retrying forever', async () => {

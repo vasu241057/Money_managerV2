@@ -1,6 +1,6 @@
 # Money Manager — Context Transfer
 
-> Last updated: July 7, 2026
+> Last updated: July 10, 2026
 
 ---
 
@@ -10,7 +10,7 @@ Money Manager is a **personal finance management app** that automatically import
 
 **Stack:** React 19 (Vite) + Cloudflare Workers (Express) + Supabase PostgreSQL + Clerk Auth + Google OAuth/Gmail API + OpenCode Go AI
 
-**Design constraints that drive everything:** privacy (the user's mailbox must not leak to third parties) and AI cost. Personal email bodies are never downloaded from Gmail (sender gate, §6), digits never reach the AI provider (placeholder masking, §7), and per-item AI calls are replaced by daily batch jobs wherever possible (§8).
+**Design constraints that drive everything:** privacy (the user's mailbox must not leak to third parties) and AI cost. Personal email bodies are never downloaded from Gmail (sender gate, §6), digits never reach the AI provider (placeholder masking, §7), every AI extraction teaches a local template so a format only ever costs one model call (self-learning templates, §7), and per-item AI calls are replaced by daily batch jobs wherever possible (§8).
 
 ---
 
@@ -35,9 +35,9 @@ money-manager/
 | **Supabase** | PostgreSQL database | PgBouncer at port 6543. Project: `sfucyhewgqyawrsfuyfa`, region: ap-southeast-1 |
 | **Cloudflare Workers** | Backend API + queue workers | Wrangler 4.69.0, Express 5 inside worker |
 | **Clerk** | Authentication | JWT-based. JWKS: `big-mosquito-76.clerk.accounts.dev` |
-| **Cloudflare Queues** | Async job processing | 2 queues: `money-manager-email-sync`, `money-manager-ai-classification` |
+| **Cloudflare Queues** | Async job processing | 1 queue: `money-manager-email-sync` (DLQ: `money-manager-email-sync-dlq`) |
 | **Google OAuth** | Gmail access | Client ID: `611255820334-d25utocn5qima99l4o8hhe2346c732ee.apps...` |
-| **OpenCode Go** | AI model access | `https://opencode.ai/zen/go/v1/chat/completions`. Email extraction, review triage, daily sender/merchant classification |
+| **OpenCode Go** | AI model access | `https://opencode.ai/zen/go/v1/chat/completions`. Email extraction + daily sender/merchant classification |
 
 Cron triggers (wrangler.jsonc): `*/10 * * * *` (email sync dispatch) and `30 21 * * *` (= 03:00 IST — daily sender classification + merchant mapping).
 
@@ -104,8 +104,7 @@ All routes under `/api/*`, authenticated via Clerk JWT (`Authorization: Bearer <
 ### Internal
 | Method | Route | Purpose |
 |--------|-------|---------|
-| POST | `/internal/ai/requires` | AI webhook for async classification (secret-guarded via `AI_REQUIRES_WEBHOOK_SECRET` header) |
-| POST | `/internal/requeue/pending` | Re-enqueue PENDING_EXTRACTION emails (same secret guard; `?limit=`, default 1000) |
+| POST | `/internal/requeue/pending` | Re-enqueue PENDING_EXTRACTION emails (secret-guarded: `AI_REQUIRES_WEBHOOK_SECRET` via `x-ai-webhook-secret` header; `?limit=`, default 1000, max 10,000) |
 
 ---
 
@@ -137,23 +136,66 @@ messages.list (IDs only; first sync capped to EMAIL_SYNC_INITIAL_LOOKBACK_DAYS, 
 
 Matching is deliberately permissive: a lookalike (`hdfc@gmail.com`) passes the gate, costs one body fetch, and is rejected downstream. A `sender_rules` load failure throws a transient error (retry) — there is **no inline fallback**; the DB is exhaustive.
 
-### Phase 3: Normalize (`email-normalizer.ts` orchestrator)
+### Phase 3: Normalize (`email-ai-normalizer.ts` — the single engine)
 - Receives up to 250 raw email IDs per job
-- Routes by `NORMALIZATION_ENGINE`: **hybrid is the default** (deterministic first; unrecognized/failed rows stay PENDING_EXTRACTION via `deferTerminalStatuses` and are retried by the AI engine)
+- **Single path: template match → else AI (masked) → learn.** Learned templates for the sender are tried first and resolve locally with zero AI cost; misses go to the model, and each successful single-transaction answer is induced back into a template (§7)
 - Creates `financial_events` (immutable facts) + `transactions` (mutable projection)
-- Enqueues `AI_CLASSIFICATION` jobs for NEEDS_REVIEW transactions
+- NEEDS_REVIEW transactions wait for human review (the per-transaction AI triage worker was retired July 9 — the daily merchant mapper + human review supersede it)
 
 ---
 
-## 7. Normalization Engine System
+## 7. Normalization Engine (template → AI → learn)
 
-### Engines
+The deterministic/heuristic engine was scrapped July 10 in favor of one
+self-learning path in `email-ai-normalizer.ts`:
 
-| Engine | File | How it works |
-|--------|------|--------------|
-| **Deterministic** | `email-deterministic-normalizer.ts` | Regex/heuristic extraction: amounts, direction cues, cashback suppression, reversal reconciliation, identity graph |
-| **AI** | `email-ai-normalizer.ts` | Masked, batched model calls via OpenCode Go with tier fallback (see below) |
-| **Hybrid** (default) | `email-normalizer.ts` | Deterministic first; only what it can't extract goes to AI |
+```
+pending email
+   → try sender's learned templates (most-hit first)   [zero AI cost]
+       ├─ EXTRACT hit → resolve amount/date/last4/merchant locally → persist
+       ├─ IGNORE hit  → mark IGNORED (recurring OTP/notification formats)
+       └─ miss        → masked, batched AI call → persist
+                          → induce a template from the answer → self-verify → save
+```
+
+### Self-learning templates (`lib/email-templates.ts` + `email_templates` table)
+
+A template is the masked email generalized into a **skeleton** keyed by the
+exact sender address. Marker language: `{{N}}` = number the AI referenced
+(amount/date part/instrument; captured positionally), `{{n}}` = anonymous
+number beside a referenced one, `{{W}}` = whole word containing unreferenced
+numbers (refs, balances, phone numbers — wildcarded so varying digit runs
+can't shift slot ordinals), `{{M}}` = the merchant span (wildcarded only when
+it occurs exactly once at word boundaries; otherwise the AI's normalized name
+is stored as a FIXED merchant). Static bank boilerplate stays literal — that
+is what anchors the match. Whitespace is collapsed identically at learn and
+match time.
+
+Safeguards:
+- **Self-verification:** before saving, the induced template is replayed
+  against the very email it came from and must reproduce the AI's exact
+  amount, timestamp, last4, and merchant. A template can never be worse than
+  the answer that taught it.
+- **IGNORE learning is guarded:** only from a well-formed empty answer AND
+  only when the email contains no monetary language (₹/Rs/INR/debit/credit…).
+- **Multi-transaction emails are never learned** (AI-only); a single-txn
+  template can't mis-match them because matching is full-text anchored.
+- **3-strikes disable:** a structural match that yields invalid values
+  (`matched_invalid`) increments a failure counter; 3 failures → DISABLED.
+  The email falls through to the AI path either way.
+- **Per-sender cap 40** with least-recently-useful eviction; concurrent
+  learners collapse via unique `(from_address, skeleton_hash)`.
+- **Fail-open:** a template-table outage just means everything goes to AI.
+- Template hits use the **same persist path** as AI answers: identity graph,
+  dedup window, identity-based auto-verify all unchanged. Category on a
+  template hit comes from the identity graph (user rule > alias default >
+  system default) — never stored in the template.
+
+Known trade-offs: month-name dates ("05-Jul-26") lock a template to that
+literal month (an off-month email misses → AI → learns that variant; ≤12,
+self-limiting); alpha-only personal text (e.g. the account holder's name in
+boilerplate) bakes into skeletons — acceptable single-user, revisit before
+multi-tenant.
 
 ### AI path privacy: indexed-placeholder masking (`lib/masking.ts`, default ON)
 
@@ -170,9 +212,9 @@ Pending emails are grouped per user and sent up to `AI_NORMALIZER_BATCH_SIZE` (d
 
 `AI_NORMALIZER_TIERS` (default `deepseek-v4-flash,deepseek-v4-pro,qwen3.7-plus`). HTTP 429 triggers **immediate** tier cooldown + rotation (`RateLimitedModelError`); other failures rotate after `AI_NORMALIZER_TIER_ROTATE_FAILURES`. Max `AI_NORMALIZER_MAX_RETRIES` total attempts.
 
-### Identity graph (shared by both engines)
+### Identity graph (`lib/identity.ts`, shared by template + AI paths and review)
 
-Search keys are canonical uppercase-alphanumeric (`toSearchKey`), identical across the deterministic engine, the AI engine, and the review service — so `user_merchant_rules` and `global_merchant_aliases` written anywhere resolve everywhere. Category precedence in the AI path: user rule > AI's per-email pick (validated against the user's real category IDs; hallucinated IDs fall back to Miscellaneous) > global-alias default > system default.
+Search keys are canonical uppercase-alphanumeric (`toSearchKey`), identical across the template path, the AI path, and the review service — so `user_merchant_rules` and `global_merchant_aliases` written anywhere resolve everywhere. Category precedence in the AI path: user rule > AI's per-email pick (validated against the user's real category IDs; hallucinated IDs fall back to Miscellaneous) > global-alias default > system default.
 
 ### Auto-verify: identity-based, NOT confidence-based
 
@@ -180,7 +222,7 @@ A transaction auto-verifies only on identity signals — a `user_merchant_rules`
 
 ### Cross-email dedup (`lib/txn-dedup.ts`)
 
-One payment often produces two alerts (bank + payment app). At persist time in both engines: if another raw email already produced an ACTIVE event with the same user + amount + direction within ±`TXN_DEDUP_WINDOW_MINUTES` (default 10), the new transaction is forced to NEEDS_REVIEW — even a user-rule hit doesn't override it.
+One payment often produces two alerts (bank + payment app). At persist time (template and AI hits alike): if another raw email already produced an ACTIVE event with the same user + amount + direction within ±`TXN_DEDUP_WINDOW_MINUTES` (default 10), the new transaction is forced to NEEDS_REVIEW — even a user-rule hit doesn't override it.
 
 ---
 
@@ -224,7 +266,7 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `OPENCODE_GO_API_KEY` | — | Required for all AI paths; missing key = skip with error log |
-| `OPENCODE_GO_MODEL` | `deepseek-v4-flash` | Review-triage classifier + daily jobs model |
+| `OPENCODE_GO_MODEL` | `deepseek-v4-flash` | Daily jobs model (sender classifier + merchant mapper) |
 
 ### Sender gate & sync
 | Variable | Default | Purpose |
@@ -236,7 +278,7 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 ### Normalization engine
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `NORMALIZATION_ENGINE` | `hybrid` | ai / deterministic / hybrid |
+| `EMAIL_TEMPLATES` | on | `off` disables template matching + learning (debug/rollback only — everything goes to AI) |
 | `AI_NORMALIZER_TIERS` | `deepseek-v4-flash,deepseek-v4-pro,qwen3.7-plus` | Comma-separated model chain |
 | `AI_NORMALIZER_TIER_ROTATE_FAILURES` | `3` | Fails before rotating tier |
 | `AI_NORMALIZER_TIER_COOLDOWN_MS` | `300000` | Cooldown on drained tier (5 min) |
@@ -249,13 +291,12 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 | `AI_NORMALIZER_BATCH_SIZE` | `4` | Emails per model call in masked mode (max 10; 1 disables) |
 | `AI_NORMALIZER_AUTO_VERIFY_CONFIDENCE` | `0.85` | Legacy; auto-verify is identity-based now |
 
-### Dedup & review triage
+### Dedup & safety switches
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `TXN_DEDUP_WINDOW_MINUTES` | `10` | Cross-email duplicate window (0 disables) |
-| `AI_AUTO_VERIFY_MIN_CONFIDENCE` | `0.92` | Review-triage classifier threshold |
-| `AI_QUEUE_DELAY_SECONDS` | `30` | Delay before AI_CLASSIFICATION jobs |
 | `NORMALIZATION_KILL_SWITCH` | — | `true` skips all normalization |
+| `AI_REQUIRES_WEBHOOK_SECRET` | — | Secret guarding the internal requeue endpoint |
 
 ---
 
@@ -270,7 +311,7 @@ npm run dev:backend
 curl "http://localhost:8787/cdn-cgi/handler/scheduled"
 
 npm run test            # frontend tests
-npm run test:backend    # backend tests (vitest; 200 tests, all green as of Jul 7 2026)
+npm run test:backend    # backend tests (vitest; 159 tests, all green as of Jul 10 2026)
 cd backend && npm run typecheck
 ```
 
@@ -285,12 +326,9 @@ cd backend && npm run typecheck
 | `backend/src/workers/scheduled.worker.ts` | Cron router: email-sync dispatch + daily sender/merchant jobs |
 | `backend/src/workers/email-sync-dispatcher.ts` | Scan users, create EMAIL_SYNC_USER jobs |
 | `backend/src/workers/email-sync-fetcher.ts` | Two-phase Gmail fetch, sender gate, raw email persistence, `runSenderBackfillJob` |
-| `backend/src/workers/email-normalizer.ts` | **Orchestrator** — routes to engine by NORMALIZATION_ENGINE |
-| `backend/src/workers/email-ai-normalizer.ts` | AI extraction: masking, batching, tier fallback, identity graph, persistence |
-| `backend/src/workers/email-deterministic-normalizer.ts` | Heuristic extraction engine; exports shared identity-graph + search-key helpers |
+| `backend/src/workers/email-ai-normalizer.ts` | **The normalization engine**: template match → masked/batched AI → template learning; tier fallback, identity graph, persistence |
 | `backend/src/workers/sender-classifier.ts` | Daily AI sender classification → sender_rules + backfill enqueue |
 | `backend/src/workers/merchant-mapper.ts` | Daily AI merchant mapping → global_merchants/aliases + relink |
-| `backend/src/workers/ai-classifier.ts` | Review-triage classifier for NEEDS_REVIEW transactions |
 | `backend/src/workers/queue.worker.ts` | Queue message router + batch metrics |
 | `backend/src/workers/queue.messages.ts` | Job validation + builders |
 | `backend/src/workers/queue.errors.ts` | Poison/Transient error types |
@@ -300,6 +338,8 @@ cd backend && npm run typecheck
 |------|---------|
 | `backend/src/lib/sender-gate.ts` | Sender allowlist matching + sender_rules loading |
 | `backend/src/lib/masking.ts` | `<N#>` placeholder masking + local date/token resolution |
+| `backend/src/lib/email-templates.ts` | Self-learning templates: skeleton induction, matching, self-verification, persistence |
+| `backend/src/lib/identity.ts` | Shared identity graph: search keys, VPA/aggregator detection, rule/alias lookups, paise parser |
 | `backend/src/lib/txn-dedup.ts` | Cross-email duplicate probe |
 | `backend/src/lib/ai.ts` | AI config resolvers (normalizer tiers, engine, masking, batching) |
 | `backend/src/lib/config.ts` | AppConfig from env vars |
@@ -320,12 +360,13 @@ cd backend && npm run typecheck
 | `20260705100000_sender_rules.sql` | sender_rules table |
 | `20260707090000_seed_sender_rules.sql` | **Load-bearing seed** — without it the allowlist is empty and everything is gated |
 | `20260707120000_daily_job_indexes.sql` | Indexes for sender-classifier / backfill / merchant-mapper scans |
+| `20260710090000_email_templates.sql` | Self-learning template store (sender-keyed skeletons + slot maps) |
 
 ---
 
 ## 12. Known Gaps & TODOs
 
-1. **Phase E — templates from real data (next major item, deliberately deferred).** After a few weeks of gate-filtered bank mail accumulates, derive per-sender templates from OBSERVED formats in `raw_emails` (cluster bodies per `from_address`), slot them ahead of the heuristics, and demote heuristics to a cross-check signal (template+AI agreement becomes a new auto-verify signal). Do **not** seed templates from `docs/EXHAUSTIVE_INDIAN_BANKING_ALGO.md` — it is untrusted AI-generated brainstorming, kept only as inspiration.
+1. **Phase E superseded (July 10):** templates are now learned automatically from AI answers (§7) instead of being derived offline from accumulated mail. Remaining template follow-ups: consider a `<MON>` month wildcard for month-name dates; template-vs-AI agreement as an additional auto-verify signal; PII scrub of skeletons before any multi-tenant launch. Do **not** seed templates from `docs/EXHAUSTIVE_INDIAN_BANKING_ALGO.md` — it is untrusted AI-generated brainstorming, kept only as inspiration.
 
 2. **Old data isn't retroactively cleaned.** Emails ingested before the sender gate still have bodies in `raw_emails.clean_text`. Conservative purge: `update public.raw_emails set clean_text = '' where status in ('IGNORED','UNRECOGNIZED') and clean_text <> '';`
 
@@ -333,23 +374,23 @@ cd backend && npm run typecheck
 
 4. **No per-request training opt-out** — the dead `AI_NORMALIZER_NO_TRAINING` plumbing was removed (it was never sent). Data retention/training opt-out must be configured at the OpenCode Go account level; verify before commercial launch.
 
-5. **Review-triage classifier auto-verifies on model confidence** (`action==='VERIFY' && confidence >= AI_AUTO_VERIFY_MIN_CONFIDENCE`) — inconsistent with the identity-based auto-verify philosophy in the normalizer. Its input is now digit-masked, but consider retiring the worker entirely: the daily merchant mapper + human review supersede it.
+5. **Manual cron trigger in local dev** — Cloudflare Workers don't auto-trigger cron in `wrangler dev`. Run: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"`
 
-6. **Manual cron trigger in local dev** — Cloudflare Workers don't auto-trigger cron in `wrangler dev`. Run: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"`
+6. **Google OAuth tokens invalidate after password change** — connection goes AUTH_REVOKED and must be re-authorized.
 
-7. **Google OAuth tokens invalidate after password change** — connection goes AUTH_REVOKED and must be re-authorized.
-
-8. **No rate limit dashboard** — queue monitoring logs exist but no dashboard (see `docs/OPERATIONS.md`).
+7. **No rate limit dashboard** — queue monitoring logs exist but no dashboard (see `docs/OPERATIONS.md`).
 
 ---
 
-## 13. Change Log (July 4–7, 2026 overhaul)
+## 13. Change Log (July 4–10, 2026 overhaul)
 
 1. **Correctness:** hybrid engine no-op fixed (deferred terminal statuses); 429 → immediate tier rotation; AI category IDs validated against the user's real categories.
 2. **Privacy/cost:** sender gate with metadata-first two-phase fetch (personal bodies never downloaded); `sender_rules` DB-exhaustive allowlist; content logging removed; `<N#>` placeholder masking (no digits reach the provider); masked-mode batching (default 4 emails/call).
 3. **Learning loop:** canonical search keys unified across engines + review service; identity graph (user rules + global aliases) wired into the AI path; daily sender-classification and merchant-mapping AI jobs with backfill/relink self-healing.
 4. **Robustness:** identity-based auto-verify (confidence is triage-only); cross-email dedup window; 90-day first-sync cap; per-email failure isolation in batches.
-5. **Tests:** suite went from 118/176 green to **200/200** (revived the dead normalizer suites, fixed OpenRouter-era drift in ai-classifier spec, implemented the real json-body middleware).
+5. **Tests:** suite went from 118/176 green to all-green (revived the dead normalizer suites, implemented the real json-body middleware); 185/185 after the triage removal.
+6. **Triage worker retired (July 9):** the per-transaction review-triage classifier (`ai-classifier.ts`), its `money-manager-ai-classification` queue, the `/internal/ai/requires` webhook route, and the `AI_AUTO_VERIFY_MIN_CONFIDENCE`/`AI_QUEUE_DELAY_SECONDS` env vars were all removed. NEEDS_REVIEW now resolves via human review + the daily merchant mapper. The webhook secret guard survives only to protect `/internal/requeue/pending`.
+7. **Deterministic engine scrapped, self-learning templates added (July 10):** the heuristic engine and the hybrid orchestrator were deleted; identity helpers moved to `lib/identity.ts`. New `lib/email-templates.ts` + `email_templates` table: every masked AI answer is induced into a sender-keyed skeleton (self-verified against its source email before saving); matching runs before any model call, so each email format costs at most one AI call ever. IGNORE templates gate recurring OTP/notification mail. `NORMALIZATION_ENGINE` env replaced by `EMAIL_TEMPLATES` (on/off). Suite: 159 tests green.
 
 ---
 
@@ -365,13 +406,14 @@ cd backend && npm run typecheck
 7. Admitted mail: full body fetched, sanitized, persisted PENDING_EXTRACTION
    Gated mail: metadata-only row, IGNORED, body never downloaded
 8. Fetcher enqueues NORMALIZE_RAW_EMAILS
-9. Hybrid normalizer: deterministic engine extracts; leftovers go to AI
-   (masked, batched); financial_events + transactions created
+9. Engine tries the sender's learned templates first (local, zero AI cost);
+   misses go to the model (masked, batched) and each single-transaction
+   answer teaches a self-verified template for next time;
+   financial_events + transactions created
 10. Auto-verify on user-rule/alias hits; everything else NEEDS_REVIEW
     (cross-email duplicates always NEEDS_REVIEW)
-11. NEEDS_REVIEW → AI_CLASSIFICATION queue → triage worker
-12. User reviews; apply_rule teaches user_merchant_rules (both engines)
-13. 03:00 IST: sender classifier widens the allowlist (+ backfills missed mail);
+11. User reviews; apply_rule teaches user_merchant_rules (both engines)
+12. 03:00 IST: sender classifier widens the allowlist (+ backfills missed mail);
     merchant mapper names unknown counterparties (+ relinks recent transactions)
-14. User sees transactions in dashboard
+13. User sees transactions in dashboard
 ```

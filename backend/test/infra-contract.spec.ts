@@ -35,8 +35,6 @@ describe('infra contract', () => {
 		const consumerQueues = new Set((config.queues?.consumers ?? []).map((consumer) => consumer.queue));
 
 		expect(producerQueues.has(QUEUE_NAMES.EMAIL_SYNC)).toBe(true);
-		expect(producerQueues.has(QUEUE_NAMES.AI_CLASSIFICATION)).toBe(true);
 		expect(consumerQueues.has(QUEUE_NAMES.EMAIL_SYNC)).toBe(true);
-		expect(consumerQueues.has(QUEUE_NAMES.AI_CLASSIFICATION)).toBe(true);
 	});
 });

@@ -1,3 +1,11 @@
+// The single normalization engine: template match → else AI → learn.
+//
+// Every pending email is first tried against the sender's learned templates
+// (lib/email-templates.ts) — a hit is resolved locally with zero AI cost.
+// Misses go to the model in masked, batched form, and each successful
+// single-transaction answer is induced back into a template, so the next
+// email of that format matches without a model call.
+
 import type {
 	AiNormalizationResponse,
 	AiNormalizedTransactionItem,
@@ -19,8 +27,24 @@ import {
 	parseAmountTokenToPaise,
 	resolveIdentityForSearchKeys,
 	toSearchKey,
-} from './email-deterministic-normalizer';
-import type { IdentityGraphLookup } from './email-deterministic-normalizer';
+} from '../lib/identity';
+import type { IdentityGraphLookup } from '../lib/identity';
+import {
+	applyTemplate,
+	induceExtractTemplate,
+	induceIgnoreTemplate,
+	loadTemplatesForSenders,
+	recordTemplateFailure,
+	recordTemplateHit,
+	saveTemplate,
+	selfVerifyTemplate,
+} from '../lib/email-templates';
+import type {
+	EmailTemplate,
+	SelfVerifyExpectation,
+	TemplateApplyResult,
+	TemplateInductionResult,
+} from '../lib/email-templates';
 import {
 	maskNumericTokens,
 	resolveMaskedDateText,
@@ -29,16 +53,15 @@ import {
 } from '../lib/masking';
 import { hasLikelyDuplicateEvent, resolveDedupWindowMinutes } from '../lib/txn-dedup';
 import {
+	resolveEmailTemplatesEnabled,
 	resolveNormalizerTierConfig,
 	resolveOpenCodeGoApiKey,
-	resolveAiQueueDelaySeconds,
 } from '../lib/ai';
 import { getAppConfig } from '../lib/config';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
-import { toIsoDateTime, toRequiredString } from '../lib/db/serialization';
+import { toIsoDateTime, toNullableString, toRequiredString } from '../lib/db/serialization';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
-import { buildAiClassificationJob } from './queue.messages';
 
 const OPENCODE_GO_CHAT_URL = 'https://opencode.ai/zen/go/v1/chat/completions';
 
@@ -216,6 +239,7 @@ interface RawEmailRecord {
 	user_id: UUID;
 	internal_date_iso: string;
 	clean_text: string;
+	from_address: string | null;
 	status: RawEmailStatus;
 }
 
@@ -224,6 +248,7 @@ interface RawEmailFetchRowRaw {
 	user_id: unknown;
 	internal_date: unknown;
 	clean_text: unknown;
+	from_address?: unknown;
 	status: unknown;
 }
 
@@ -250,7 +275,8 @@ export interface NormalizeRawEmailsResult {
 	persisted_financial_event_count: number;
 	created_transaction_count: number;
 	needs_review_transaction_count: number;
-	ai_enqueued_count: number;
+	template_matched_count: number;
+	template_learned_count: number;
 	failed_raw_email_ids: UUID[];
 	unrecognized_raw_email_ids: UUID[];
 }
@@ -402,6 +428,10 @@ function mapRawEmailRow(row: RawEmailFetchRowRaw): RawEmailRecord {
 		user_id: toRequiredString(row.user_id, 'raw_emails.user_id') as UUID,
 		internal_date_iso: toIsoDateTime(row.internal_date, 'raw_emails.internal_date'),
 		clean_text: toRequiredString(row.clean_text, 'raw_emails.clean_text'),
+		from_address:
+			row.from_address === undefined
+				? null
+				: toNullableString(row.from_address, 'raw_emails.from_address'),
 		status: toRequiredString(row.status, 'raw_emails.status') as RawEmailStatus,
 	};
 }
@@ -411,7 +441,7 @@ async function loadRawEmailsByIds(
 	rawEmailIds: UUID[],
 ): Promise<RawEmailRecord[]> {
 	const rows = await sql<RawEmailFetchRowRaw[]>`
-		select re.id, re.user_id, re.internal_date, re.clean_text, re.status
+		select re.id, re.user_id, re.internal_date, re.clean_text, re.from_address, re.status
 		from public.raw_emails as re
 		where re.id = any(${rawEmailIds}::uuid[])
 		order by re.internal_date asc
@@ -487,7 +517,8 @@ function createEmptyResult(requestedCount: number): NormalizeRawEmailsResult {
 		persisted_financial_event_count: 0,
 		created_transaction_count: 0,
 		needs_review_transaction_count: 0,
-		ai_enqueued_count: 0,
+		template_matched_count: 0,
+		template_learned_count: 0,
 		failed_raw_email_ids: [],
 		unrecognized_raw_email_ids: [],
 	};
@@ -1078,32 +1109,6 @@ async function markRawEmailIgnored(
 	`;
 }
 
-async function enqueueAiClassificationJobs(
-	queue: Queue,
-	transactionIds: UUID[],
-	delaySeconds: number,
-): Promise<number> {
-	const deduped = dedupeUuidPreserveOrder(transactionIds);
-	let enqueued = 0;
-
-	for (const id of deduped) {
-		try {
-			await queue.send(buildAiClassificationJob(id), {
-				contentType: 'json',
-				delaySeconds,
-			});
-			enqueued++;
-		} catch (error) {
-			console.warn('Failed to enqueue AI_CLASSIFICATION from AI normalizer', {
-				transactionId: id,
-				error: error instanceof Error ? error.message : 'Unknown',
-			});
-		}
-	}
-
-	return enqueued;
-}
-
 export async function runNormalizeRawEmailsJob(
 	job: NormalizeRawEmailsJobPayload,
 	env: Env,
@@ -1129,11 +1134,11 @@ export async function runNormalizeRawEmailsJob(
 		return result;
 	}
 
+	// A missing key only disables the AI leg; template matches still resolve
+	// locally and unmatched emails stay PENDING_EXTRACTION for a later run.
 	const apiKey = resolveOpenCodeGoApiKey(env);
 	if (!apiKey) {
-		result.skipped_raw_email_count = job.raw_email_ids.length;
 		console.error('AI normalizer: OPENCODE_GO_API_KEY is not set');
-		return result;
 	}
 
 	const config = getAppConfig(env);
@@ -1147,8 +1152,6 @@ export async function runNormalizeRawEmailsJob(
 	for (const row of rawEmailRows) {
 		rawEmailById.set(row.id, row);
 	}
-
-	const allNeedsReviewIds: UUID[] = [];
 
 	const userContextCache = new Map<UUID, UserNormalizationContext>();
 	const getUserContext = async (userId: UUID): Promise<UserNormalizationContext> => {
@@ -1236,7 +1239,6 @@ export async function runNormalizeRawEmailsJob(
 		result.persisted_financial_event_count += persistence.transactionCount;
 		result.created_transaction_count += persistence.transactionCount;
 		result.needs_review_transaction_count += persistence.needsReviewIds.length;
-		allNeedsReviewIds.push(...persistence.needsReviewIds);
 		result.processed_raw_email_count++;
 
 		console.info('AI_NORMALIZER_EMAIL_PROCESSED', {
@@ -1253,7 +1255,113 @@ export async function runNormalizeRawEmailsJob(
 		result.failed_raw_email_ids.push(rawEmail.id);
 	};
 
+	const templatesEnabled = resolveEmailTemplatesEnabled(env);
+
+	// Turns one masked AI answer into a stored template. Only single-
+	// transaction answers are learnable (multi-transaction emails stay
+	// AI-only), and only templates that replay the AI's exact answer against
+	// the source email survive self-verification. Learning failures are
+	// logged and swallowed: the extraction is already persisted, and a
+	// missed lesson just means the next email of this format pays for one
+	// more AI call.
+	const maybeLearnTemplate = async (
+		rawEmail: RawEmailRecord,
+		response: AiNormalizationResponse,
+		validated: AiNormalizedTransactionItem[],
+		maskedText: string,
+		tokens: Map<string, string>,
+	): Promise<void> => {
+		if (!templatesEnabled || !rawEmail.from_address) return;
+
+		try {
+			const rawTransactions = Array.isArray(response.transactions)
+				? response.transactions
+				: null;
+			let induced: TemplateInductionResult;
+			let expectation: SelfVerifyExpectation | null = null;
+
+			if (rawTransactions && rawTransactions.length === 0 && validated.length === 0) {
+				// A well-formed "no transactions" answer can teach an IGNORE
+				// template (recurring OTP/notification formats stop costing AI).
+				induced = induceIgnoreTemplate(rawEmail.clean_text, maskedText);
+			} else if (rawTransactions && rawTransactions.length === 1 && validated.length === 1) {
+				const rawRecord = rawTransactions[0] as unknown as Record<string, unknown>;
+				const item = validated[0] as AiNormalizedTransactionItem;
+				induced = induceExtractTemplate({
+					masked_text: maskedText,
+					tokens,
+					amount_token:
+						typeof rawRecord.amount_token === 'string' ? rawRecord.amount_token : null,
+					date_text: typeof rawRecord.date_text === 'string' ? rawRecord.date_text : null,
+					instrument_token:
+						typeof rawRecord.instrument_token === 'string'
+							? rawRecord.instrument_token
+							: null,
+					counterparty_raw_masked:
+						typeof rawRecord.counterparty_raw === 'string'
+							? rawRecord.counterparty_raw
+							: null,
+					direction: item.direction,
+					payment_method: item.payment_method,
+					confidence: item.confidence,
+				});
+				expectation = {
+					amount_in_paise: item.amount_in_paise,
+					txn_timestamp: item.txn_timestamp,
+					instrument_last4: item.instrument_last4,
+					counterparty_raw: item.counterparty_raw,
+				};
+			} else {
+				return;
+			}
+
+			if (!induced.ok) {
+				console.info('AI_NORMALIZER_TEMPLATE_NOT_LEARNED', {
+					rawEmailId: rawEmail.id,
+					reason: induced.reason,
+				});
+				return;
+			}
+
+			const verified = selfVerifyTemplate(
+				induced.skeleton,
+				induced.slot_map,
+				rawEmail.clean_text,
+				rawEmail.internal_date_iso,
+				expectation,
+			);
+			if (!verified) {
+				console.warn('AI_NORMALIZER_TEMPLATE_SELF_VERIFY_FAILED', {
+					rawEmailId: rawEmail.id,
+					kind: induced.slot_map.kind,
+				});
+				return;
+			}
+
+			const saved = await saveTemplate(sql, {
+				from_address: rawEmail.from_address,
+				skeleton: induced.skeleton,
+				slot_map: induced.slot_map,
+				learned_from_raw_email_id: rawEmail.id,
+			});
+			if (saved) {
+				result.template_learned_count++;
+				console.info('AI_NORMALIZER_TEMPLATE_LEARNED', {
+					rawEmailId: rawEmail.id,
+					fromAddress: rawEmail.from_address,
+					kind: induced.slot_map.kind,
+				});
+			}
+		} catch (error) {
+			console.warn('AI_NORMALIZER_TEMPLATE_LEARN_ERROR', {
+				rawEmailId: rawEmail.id,
+				message: error instanceof Error ? error.message : 'unknown',
+			});
+		}
+	};
+
 	const processSingleEmail = async (rawEmail: RawEmailRecord): Promise<void> => {
+		if (!apiKey) return;
 		const ctx = await getUserContext(rawEmail.user_id);
 
 		// Masked mode (default): the model only ever sees <N#> placeholders in
@@ -1293,6 +1401,11 @@ export async function runNormalizeRawEmailsJob(
 				Array.isArray(aiResponse.transactions) ? aiResponse.transactions.length : 0;
 
 			await finishEmail(rawEmail, ctx, validated, emailStartMs);
+
+			// Learning needs the model's token references, so masked mode only.
+			if (masked) {
+				await maybeLearnTemplate(rawEmail, aiResponse, validated, masked.masked, masked.tokens);
+			}
 		} catch (error) {
 			if (error instanceof TransientMessageError) {
 				throw error;
@@ -1305,11 +1418,13 @@ export async function runNormalizeRawEmailsJob(
 	// Placeholder ids are globally unique across the batch, so a token
 	// reference can never resolve against the wrong email.
 	const processMaskedBatch = async (batch: RawEmailRecord[]): Promise<void> => {
+		if (!apiKey) return;
 		const firstEmail = batch[0] as RawEmailRecord;
 		const ctx = await getUserContext(firstEmail.user_id);
 		const batchStartMs = Date.now();
 
 		const sections: string[] = [];
+		const maskedTexts: string[] = [];
 		const tokens = new Map<string, string>();
 		let nextIndex = 1;
 		for (let position = 0; position < batch.length; position++) {
@@ -1319,6 +1434,7 @@ export async function runNormalizeRawEmailsJob(
 			for (const [id, value] of masked.tokens) {
 				tokens.set(id, value);
 			}
+			maskedTexts.push(masked.masked);
 			sections.push(`=== EMAIL ${position + 1} ===\n${masked.masked}`);
 		}
 
@@ -1375,6 +1491,13 @@ export async function runNormalizeRawEmailsJob(
 					: 0;
 
 				await finishEmail(rawEmail, ctx, validated, batchStartMs);
+				await maybeLearnTemplate(
+					rawEmail,
+					emailResponse,
+					validated,
+					maskedTexts[position] ?? '',
+					tokens,
+				);
 			} catch (error) {
 				if (error instanceof TransientMessageError) {
 					throw error;
@@ -1397,10 +1520,127 @@ export async function runNormalizeRawEmailsJob(
 		eligibleByUser.set(rawEmail.user_id, list);
 	}
 
+	// Template pass: learned formats are resolved locally before anything is
+	// sent to a model. A load failure fails open to the AI path — templates
+	// are a cost optimization, never a correctness gate.
+	let templatesBySender = new Map<string, EmailTemplate[]>();
+	if (templatesEnabled) {
+		const senders = Array.from(
+			new Set(
+				Array.from(eligibleByUser.values())
+					.flat()
+					.map(rawEmail => rawEmail.from_address)
+					.filter((address): address is string => typeof address === 'string'),
+			),
+		);
+		try {
+			templatesBySender = await loadTemplatesForSenders(sql, senders);
+		} catch (error) {
+			console.warn('AI_NORMALIZER_TEMPLATE_LOAD_FAILED', {
+				message: error instanceof Error ? error.message : 'unknown',
+			});
+		}
+	}
+
+	// Tries the sender's templates (most-hit first); returns true when the
+	// email was fully handled locally. Structural misses cost nothing; a
+	// match with garbage values penalizes that template and falls through.
+	const applyTemplatesToEmail = async (rawEmail: RawEmailRecord): Promise<boolean> => {
+		const templates = rawEmail.from_address
+			? templatesBySender.get(rawEmail.from_address)
+			: undefined;
+		if (!templates || templates.length === 0) return false;
+
+		const emailStartMs = Date.now();
+		for (const template of templates) {
+			let applied: TemplateApplyResult;
+			try {
+				applied = applyTemplate(template, rawEmail.clean_text, rawEmail.internal_date_iso);
+			} catch (error) {
+				applied = {
+					outcome: 'matched_invalid',
+					reason: error instanceof Error ? error.message : 'apply threw',
+				};
+			}
+
+			if (applied.outcome === 'no_match') continue;
+
+			if (applied.outcome === 'matched_invalid') {
+				console.warn('AI_NORMALIZER_TEMPLATE_MATCH_INVALID', {
+					rawEmailId: rawEmail.id,
+					templateId: template.id,
+					reason: applied.reason,
+				});
+				try {
+					await recordTemplateFailure(sql, template.id);
+				} catch (error) {
+					console.warn('AI_NORMALIZER_TEMPLATE_FAILURE_RECORD_ERROR', {
+						templateId: template.id,
+						message: error instanceof Error ? error.message : 'unknown',
+					});
+				}
+				continue;
+			}
+
+			if (applied.outcome === 'ignore') {
+				await markRawEmailIgnored(sql, rawEmail);
+				result.ignored_raw_email_count++;
+				result.template_matched_count++;
+			} else {
+				const ctx = await getUserContext(rawEmail.user_id);
+				const item: AiNormalizedTransactionItem = {
+					direction: applied.extraction.direction,
+					amount_in_paise: applied.extraction.amount_in_paise,
+					txn_timestamp: applied.extraction.txn_timestamp,
+					payment_method: applied.extraction.payment_method,
+					counterparty_raw: applied.extraction.counterparty_raw,
+					instrument_last4: applied.extraction.instrument_last4,
+					category_guess: null,
+					category_id: null,
+					sub_category_id: null,
+					account_id: null,
+					confidence: applied.extraction.confidence,
+				};
+				result.extracted_fact_count++;
+				await finishEmail(rawEmail, ctx, [item], emailStartMs);
+				result.template_matched_count++;
+			}
+
+			console.info('AI_NORMALIZER_TEMPLATE_MATCHED', {
+				rawEmailId: rawEmail.id,
+				templateId: template.id,
+				outcome: applied.outcome,
+			});
+			try {
+				await recordTemplateHit(sql, template.id);
+			} catch (error) {
+				console.warn('AI_NORMALIZER_TEMPLATE_HIT_RECORD_ERROR', {
+					templateId: template.id,
+					message: error instanceof Error ? error.message : 'unknown',
+				});
+			}
+			return true;
+		}
+		return false;
+	};
+
 	const batchSize = normConfig.maskNumbers ? normConfig.batchSize : 1;
 	for (const emails of eligibleByUser.values()) {
-		for (let start = 0; start < emails.length; start += batchSize) {
-			const batch = emails.slice(start, start + batchSize);
+		const aiPending: RawEmailRecord[] = [];
+		for (const rawEmail of emails) {
+			const handledByTemplate = await applyTemplatesToEmail(rawEmail);
+			if (!handledByTemplate) {
+				aiPending.push(rawEmail);
+			}
+		}
+
+		if (!apiKey) {
+			result.skipped_raw_email_count += aiPending.length;
+			continue;
+		}
+
+		for (let start = 0; start < aiPending.length; start += batchSize) {
+			const batch = aiPending.slice(start, start + batchSize);
 			if (batch.length === 1) {
 				await processSingleEmail(batch[0] as RawEmailRecord);
 			} else {
@@ -1408,12 +1648,6 @@ export async function runNormalizeRawEmailsJob(
 			}
 		}
 	}
-
-	result.ai_enqueued_count = await enqueueAiClassificationJobs(
-		env.AI_CLASSIFICATION_QUEUE,
-		allNeedsReviewIds,
-		resolveAiQueueDelaySeconds(env),
-	);
 
 	return result;
 }

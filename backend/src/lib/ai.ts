@@ -1,11 +1,6 @@
-import type { NormalizationEngine, NormalizerTierConfig } from '../../../shared/types';
+import type { NormalizerTierConfig } from '../../../shared/types';
 
-const DEFAULT_AI_QUEUE_DELAY_SECONDS = 30;
-const MAX_AI_QUEUE_DELAY_SECONDS = 12 * 60 * 60;
 const DEFAULT_OPENCODE_MODEL = 'deepseek-v4-flash';
-const DEFAULT_AI_AUTO_VERIFY_MIN_CONFIDENCE = 0.92;
-const MIN_AI_AUTO_VERIFY_MIN_CONFIDENCE = 0.5;
-const MAX_AI_AUTO_VERIFY_MIN_CONFIDENCE = 1;
 
 const DEFAULT_NORMALIZER_MODEL_TIERS = [
 	'deepseek-v4-flash',
@@ -44,26 +39,14 @@ export function resolveAiWebhookSecret(env: Env): string | null {
 	return normalizeText(env.AI_REQUIRES_WEBHOOK_SECRET);
 }
 
-export function resolveAiQueueDelaySeconds(env: Env): number {
-	const raw = normalizeText(env.AI_QUEUE_DELAY_SECONDS);
-	if (!raw) {
-		return DEFAULT_AI_QUEUE_DELAY_SECONDS;
-	}
-
-	const parsed = Number.parseInt(raw, 10);
-	if (!Number.isFinite(parsed) || parsed < 0) {
-		return DEFAULT_AI_QUEUE_DELAY_SECONDS;
-	}
-
-	return Math.min(parsed, MAX_AI_QUEUE_DELAY_SECONDS);
-}
-
-export function resolveNormalizationEngine(env: Env): NormalizationEngine {
-	const raw = normalizeText(env.NORMALIZATION_ENGINE);
-	if (raw === 'deterministic') return 'deterministic';
-	if (raw === 'ai') return 'ai';
-	// Default: deterministic first, AI fallback for what it can't extract.
-	return 'hybrid';
+// Template matching + learning is on by default; EMAIL_TEMPLATES=off forces
+// every email through the AI path (debug/rollback escape hatch only —
+// templates never see a provider, so there is no privacy reason to disable).
+export function resolveEmailTemplatesEnabled(env: Env): boolean {
+	const raw = normalizeText(
+		(env as unknown as Record<string, string | undefined>).EMAIL_TEMPLATES,
+	)?.toLowerCase();
+	return raw !== 'off' && raw !== 'false' && raw !== '0';
 }
 
 function parseCsvList(value: string | undefined, fallback: string[]): string[] {
@@ -166,24 +149,3 @@ export function resolveNormalizerTierConfig(env: Env): NormalizerTierConfig {
 	};
 }
 
-export function resolveAiAutoVerifyMinConfidence(env: Env): number {
-	const raw = normalizeText(env.AI_AUTO_VERIFY_MIN_CONFIDENCE);
-	if (!raw) {
-		return DEFAULT_AI_AUTO_VERIFY_MIN_CONFIDENCE;
-	}
-
-	const parsed = Number.parseFloat(raw);
-	if (!Number.isFinite(parsed)) {
-		return DEFAULT_AI_AUTO_VERIFY_MIN_CONFIDENCE;
-	}
-
-	if (parsed < MIN_AI_AUTO_VERIFY_MIN_CONFIDENCE) {
-		return MIN_AI_AUTO_VERIFY_MIN_CONFIDENCE;
-	}
-
-	if (parsed > MAX_AI_AUTO_VERIFY_MIN_CONFIDENCE) {
-		return MAX_AI_AUTO_VERIFY_MIN_CONFIDENCE;
-	}
-
-	return parsed;
-}
