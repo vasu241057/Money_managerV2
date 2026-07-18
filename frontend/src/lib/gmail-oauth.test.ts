@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  parseGoogleOAuthCallbackParams,
-  resolveGoogleOAuthCallbackMessage,
-} from './gmail-oauth';
+import { parseGoogleOAuthCallbackParams } from './gmail-oauth';
 
 describe('gmail oauth helpers', () => {
   it('parses callback params when code/state are present', () => {
@@ -21,57 +18,5 @@ describe('gmail oauth helpers', () => {
       oauthError: 'access_denied',
       hasCallbackParams: false,
     });
-  });
-
-  it('resolves message for oauth provider error', () => {
-    expect(
-      resolveGoogleOAuthCallbackMessage({
-        oauthError: 'access_denied',
-        code: null,
-        state: null,
-        callbackError: null,
-        isLoading: false,
-        callbackCompleted: false,
-      }),
-    ).toBe('Google OAuth error: access_denied');
-  });
-
-  it('resolves message for missing callback params', () => {
-    expect(
-      resolveGoogleOAuthCallbackMessage({
-        oauthError: null,
-        code: null,
-        state: 'xyz',
-        callbackError: null,
-        isLoading: false,
-        callbackCompleted: false,
-      }),
-    ).toBe('Missing OAuth callback parameters. Please retry connecting Gmail.');
-  });
-
-  it('resolves message for backend callback failure', () => {
-    expect(
-      resolveGoogleOAuthCallbackMessage({
-        oauthError: null,
-        code: 'abc',
-        state: 'xyz',
-        callbackError: 'Invalid OAuth state',
-        isLoading: false,
-        callbackCompleted: false,
-      }),
-    ).toBe('Invalid OAuth state');
-  });
-
-  it('resolves success message once callback completes', () => {
-    expect(
-      resolveGoogleOAuthCallbackMessage({
-        oauthError: null,
-        code: 'abc',
-        state: 'xyz',
-        callbackError: null,
-        isLoading: false,
-        callbackCompleted: true,
-      }),
-    ).toBe('Gmail is connected successfully.');
   });
 });

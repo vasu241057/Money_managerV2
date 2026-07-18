@@ -387,9 +387,15 @@ export async function ensureLegacyLocalDataMigrated(
     now: overrides?.now ?? DEFAULT_DEPS.now,
   };
 
-  inFlightMigration = runLegacyLocalDataMigration(deps).finally(() => {
-    inFlightMigration = null;
-  });
+  inFlightMigration = runLegacyLocalDataMigration(deps)
+    .catch((error: unknown) => {
+      // Never propagate: a failed migration must not take the app down.
+      // No marker is written on failure, so the next launch retries.
+      console.warn('Legacy local data migration failed; will retry on next launch', error);
+    })
+    .finally(() => {
+      inFlightMigration = null;
+    });
 
   return inFlightMigration;
 }

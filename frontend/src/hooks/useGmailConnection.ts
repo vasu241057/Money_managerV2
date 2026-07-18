@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { GoogleOAuthProcessingStats, OauthConnectionRow } from '../../../shared/types';
 import { apiClient, toErrorMessage } from '../lib/api-client';
-import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 
 interface UseGmailConnectionResult {
   connection: OauthConnectionRow | null;
@@ -32,7 +31,6 @@ function useRemoteGmailConnection(skipStatusQuery = false): UseGmailConnectionRe
     queryKey: GMAIL_CONNECTION_QUERY_KEY,
     enabled: !skipStatusQuery,
     queryFn: async () => {
-      await ensureLegacyLocalDataMigrated();
       const response = await apiClient.getGoogleOAuthConnectionStatus();
       return {
         connection: response.connection,
@@ -43,7 +41,6 @@ function useRemoteGmailConnection(skipStatusQuery = false): UseGmailConnectionRe
 
   const connectMutation = useMutation({
     mutationFn: async () => {
-      await ensureLegacyLocalDataMigrated();
       const response = await apiClient.startGoogleOAuth();
       window.location.assign(response.auth_url);
     },
@@ -51,7 +48,6 @@ function useRemoteGmailConnection(skipStatusQuery = false): UseGmailConnectionRe
 
   const callbackMutation = useMutation({
     mutationFn: async ({ code, state }: { code: string; state: string }) => {
-      await ensureLegacyLocalDataMigrated();
       const response = await apiClient.completeGoogleOAuthCallback({ code, state });
       return response.connection;
     },
@@ -71,7 +67,6 @@ function useRemoteGmailConnection(skipStatusQuery = false): UseGmailConnectionRe
 
   const disconnectMutation = useMutation({
     mutationFn: async () => {
-      await ensureLegacyLocalDataMigrated();
       await apiClient.disconnectGoogleOAuth();
     },
     onSuccess: async () => {

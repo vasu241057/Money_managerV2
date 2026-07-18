@@ -2,7 +2,6 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CategoryRow } from '../../../shared/types';
 import { apiClient, toErrorMessage } from '../lib/api-client';
-import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import type { Category } from '../types/domain';
 
 export interface HiddenCategory {
@@ -96,7 +95,6 @@ function useRemoteCategories(): UseCategoriesResult {
   const categoriesQuery = useQuery({
     queryKey: CATEGORIES_QUERY_KEY,
     queryFn: async () => {
-      await ensureLegacyLocalDataMigrated();
       // Hidden rows are fetched too (flagged is_hidden) so the Settings
       // restore list works; the visible tree filters them out.
       return apiClient.listCategories(undefined, true);
@@ -105,8 +103,6 @@ function useRemoteCategories(): UseCategoriesResult {
 
   const addCategoryMutation = useMutation({
     mutationFn: async (category: Omit<Category, 'id'>) => {
-      await ensureLegacyLocalDataMigrated();
-
       const rows = categoriesQuery.data ?? [];
       // Find the structural root for this type (Income/Expense/Transfer)
       const root = rows.find(row => row.parent_id === null && row.type === category.type);
@@ -148,8 +144,6 @@ function useRemoteCategories(): UseCategoriesResult {
 
   const deleteCategoryMutation = useMutation({
     mutationFn: async (categoryId: string): Promise<{ hidden: boolean }> => {
-      await ensureLegacyLocalDataMigrated();
-
       const rows = categoriesQuery.data ?? [];
       const target = rows.find(row => row.id === categoryId);
 
@@ -175,7 +169,6 @@ function useRemoteCategories(): UseCategoriesResult {
 
   const restoreCategoryMutation = useMutation({
     mutationFn: async (categoryId: string) => {
-      await ensureLegacyLocalDataMigrated();
       await apiClient.restoreCategory(categoryId);
     },
     onSuccess: async () => {
@@ -186,7 +179,6 @@ function useRemoteCategories(): UseCategoriesResult {
 
   const renameCategoryMutation = useMutation({
     mutationFn: async ({ categoryId, name }: { categoryId: string; name: string }) => {
-      await ensureLegacyLocalDataMigrated();
       await apiClient.updateCategory(categoryId, { name });
     },
     onSuccess: async () => {
@@ -203,8 +195,6 @@ function useRemoteCategories(): UseCategoriesResult {
       categoryId: string;
       subCategoryName: string;
     }) => {
-      await ensureLegacyLocalDataMigrated();
-
       const rows = categoriesQuery.data ?? [];
       const parent = rows.find(row => row.id === categoryId);
       if (!parent) {
@@ -231,8 +221,6 @@ function useRemoteCategories(): UseCategoriesResult {
       categoryId: string;
       subCategoryName: string;
     }) => {
-      await ensureLegacyLocalDataMigrated();
-
       const rows = categoriesQuery.data ?? [];
       const child = rows.find(
         row => row.parent_id === categoryId && row.name === subCategoryName && !row.is_system,

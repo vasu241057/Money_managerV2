@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateUserCreditCardRequest, UpdateUserCreditCardRequest, UserCreditCardRow } from '../../../shared/types';
 import { apiClient, toErrorMessage } from '../lib/api-client';
-import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 
 interface UseCreditCardsResult {
   creditCards: UserCreditCardRow[];
@@ -20,14 +19,12 @@ function useRemoteCreditCards(): UseCreditCardsResult {
   const creditCardsQuery = useQuery({
     queryKey: CREDIT_CARDS_QUERY_KEY,
     queryFn: async () => {
-      await ensureLegacyLocalDataMigrated();
       return apiClient.listCreditCards();
     },
   });
 
   const addCreditCardMutation = useMutation({
     mutationFn: async (payload: CreateUserCreditCardRequest) => {
-      await ensureLegacyLocalDataMigrated();
       const result = await apiClient.createCreditCard(payload);
       return { relinkedTransactionCount: result.relinkedTransactionCount };
     },
@@ -39,7 +36,6 @@ function useRemoteCreditCards(): UseCreditCardsResult {
 
   const updateCreditCardMutation = useMutation({
     mutationFn: async ({ id, payload }: { id: string; payload: UpdateUserCreditCardRequest }) => {
-      await ensureLegacyLocalDataMigrated();
       const result = await apiClient.updateCreditCard(id, payload);
       return { relinkedTransactionCount: result.relinkedTransactionCount };
     },
@@ -51,7 +47,6 @@ function useRemoteCreditCards(): UseCreditCardsResult {
 
   const deleteCreditCardMutation = useMutation({
     mutationFn: async (creditCardId: string) => {
-      await ensureLegacyLocalDataMigrated();
       return apiClient.deleteCreditCard(creditCardId);
     },
     onSuccess: async () => {

@@ -65,4 +65,30 @@
     to false (PATCH 400s correctly); card create + relink are not atomic;
     no end-to-end test that a `credit_card` extraction persists its card link.
 18. **Docs drift** — CONTEXT.md §5 says PUT for accounts/categories/
-    transactions; actual routes are PATCH.
+    transactions; actual routes are PATCH. (Fixed July 18 for accounts +
+    transactions.)
+
+## Frontend decisions of record (July 2026 audit)
+
+19. **Client-side filtering/aggregation accepted at current scale** — the FE
+    fetches all transactions (100/page loop) and filters, groups, and sums in
+    the browser; the backend's list filters (`from`/`to`/`status`/`type`/
+    `account_id`/`category_id`/`credit_card_id`) go unused. Wire them when the
+    dataset grows past a few thousand rows.
+20. **No initial balance, by decision** — account balances are derived purely
+    from transactions (income − expense per account); the FE neither asks for
+    nor displays `initial_balance_in_paise`. The column and API support remain
+    (the legacy-localStorage migration still writes it); drop them only if the
+    migration is retired.
+21. **Transfers are balance-neutral** — a transaction has a single
+    `account_id`, so a transfer cannot debit one account and credit another;
+    both accounts simply don't move. Proper transfer pairs need schema support
+    (from/to account) if per-account balances ever must be exact.
+22. **Unattributed transactions and account math** — transactions with no
+    account count in the Home hero (global income − expense) but in no
+    per-account balance, so the hero can differ from the accounts screen's
+    net. Accepted; revisit only if it confuses.
+23. **Transfer categories unmanageable in Settings, by design** — the
+    Settings category manager offers expense/income tabs only; the transfer
+    taxonomy is deliberately minimal (Self Transfer / Other Transfer, both
+    system rows).

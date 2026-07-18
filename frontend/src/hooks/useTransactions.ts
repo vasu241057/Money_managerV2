@@ -8,7 +8,6 @@ import type {
   TransactionFeedItem,
 } from '../../../shared/types';
 import { apiClient, toErrorMessage } from '../lib/api-client';
-import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import { paiseToRupees, rupeesToPaise } from '../lib/money';
 import type { Transaction } from '../types/domain';
 import {
@@ -110,8 +109,6 @@ function mapFeedItemToUiTransaction(
 }
 
 async function listAllTransactions(): Promise<TransactionFeedItem[]> {
-  await ensureLegacyLocalDataMigrated();
-
   const limit = 100;
   let page = 1;
   const allItems: TransactionFeedItem[] = [];
@@ -136,7 +133,6 @@ function useRemoteTransactions(): UseTransactionsResult {
   const accountsQuery = useQuery({
     queryKey: ACCOUNTS_QUERY_KEY,
     queryFn: async () => {
-      await ensureLegacyLocalDataMigrated();
       return apiClient.listAccounts();
     },
   });
@@ -144,7 +140,6 @@ function useRemoteTransactions(): UseTransactionsResult {
   const categoriesQuery = useQuery({
     queryKey: CATEGORIES_QUERY_KEY,
     queryFn: async () => {
-      await ensureLegacyLocalDataMigrated();
       return apiClient.listCategories();
     },
   });
@@ -187,8 +182,6 @@ function useRemoteTransactions(): UseTransactionsResult {
 
   const upsertTransactionMutation = useMutation({
     mutationFn: async (transactionInput: Omit<Transaction, 'id'> | Transaction) => {
-      await ensureLegacyLocalDataMigrated();
-
       const accountIdToPersist = normalizeOptionalId(transactionInput.accountId);
 
       if ('id' in transactionInput && transactionInput.id) {
@@ -263,7 +256,6 @@ function useRemoteTransactions(): UseTransactionsResult {
 
   const deleteTransactionMutation = useMutation({
     mutationFn: async (transactionId: string) => {
-      await ensureLegacyLocalDataMigrated();
       return apiClient.deleteTransaction(transactionId);
     },
     onSuccess: async () => {
@@ -279,7 +271,6 @@ function useRemoteTransactions(): UseTransactionsResult {
       transactionId: string;
       payload: ReviewTransactionRequest;
     }) => {
-      await ensureLegacyLocalDataMigrated();
       const reviewed = await apiClient.reviewTransaction(transactionId, payload);
       return mapFeedItemToUiTransaction(reviewed.transaction, accountsById, categoriesById);
     },

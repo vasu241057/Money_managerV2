@@ -11,6 +11,8 @@ import { AnalyticsScreen } from './components/screens/AnalyticsScreen';
 import { SettingsHub } from './components/screens/SettingsHub';
 import { AccountsCardsManager } from './components/screens/AccountsCardsManager';
 import { parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
+import { ensureLegacyLocalDataMigrated } from './lib/legacy-local-migration';
+import { queryClient } from './lib/query-client';
 import { useGmailConnectionForOAuthCallback } from './hooks/useGmailConnection';
 import { useTransactions } from './hooks/useTransactions';
 import type { Transaction } from './hooks/useTransactions';
@@ -28,6 +30,13 @@ function LedgerApp() {
 	const [settingsSubscreen, setSettingsSubscreen] = useState<SettingsSubscreen>('main');
 
 	const { reviewInbox } = useTransactions();
+
+	useEffect(() => {
+		// One-time legacy localStorage migration. Runs detached: it never
+		// blocks or fails queries (errors are swallowed inside and retried
+		// next launch); a refetch afterwards picks up anything it migrated.
+		void ensureLegacyLocalDataMigrated().then(() => queryClient.invalidateQueries());
+	}, []);
 
 	const openEditor = (mode: 'add' | 'edit') => {
 		setEditorMode(mode);

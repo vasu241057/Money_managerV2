@@ -5,15 +5,6 @@ interface GoogleOAuthCallbackParams {
   hasCallbackParams: boolean;
 }
 
-interface GoogleOAuthCallbackMessageInput {
-  oauthError: string | null;
-  code: string | null;
-  state: string | null;
-  callbackError: string | null;
-  isLoading: boolean;
-  callbackCompleted: boolean;
-}
-
 export function parseGoogleOAuthCallbackParams(search: string): GoogleOAuthCallbackParams {
   const params = new URLSearchParams(search);
   const code = params.get('code');
@@ -26,26 +17,4 @@ export function parseGoogleOAuthCallbackParams(search: string): GoogleOAuthCallb
     oauthError,
     hasCallbackParams: !oauthError && Boolean(code) && Boolean(state),
   };
-}
-
-export function resolveGoogleOAuthCallbackMessage(
-  input: GoogleOAuthCallbackMessageInput,
-): string {
-  if (input.oauthError) {
-    return `Google OAuth error: ${input.oauthError}`;
-  }
-
-  if (!input.code || !input.state) {
-    return 'Missing OAuth callback parameters. Please retry connecting Gmail.';
-  }
-
-  if (input.callbackError) {
-    return input.callbackError;
-  }
-
-  if (!input.isLoading && input.callbackCompleted) {
-    return 'Gmail is connected successfully.';
-  }
-
-  return 'Completing Gmail connection...';
 }

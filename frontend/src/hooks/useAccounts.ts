@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, toErrorMessage } from '../lib/api-client';
-import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import type { Account } from '../types/domain';
 
 interface UseAccountsResult {
@@ -20,15 +19,12 @@ function useRemoteAccounts(): UseAccountsResult {
   const accountsQuery = useQuery({
     queryKey: ACCOUNTS_QUERY_KEY,
     queryFn: async () => {
-      await ensureLegacyLocalDataMigrated();
       return apiClient.listAccounts();
     },
   });
 
   const addAccountMutation = useMutation({
     mutationFn: async (account: Omit<Account, 'id'>) => {
-      await ensureLegacyLocalDataMigrated();
-
       return apiClient.createAccount({
           name: account.name,
           type: account.type,
@@ -42,8 +38,6 @@ function useRemoteAccounts(): UseAccountsResult {
 
   const updateAccountMutation = useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<Omit<Account, 'id'>> }) => {
-      await ensureLegacyLocalDataMigrated();
-
       return apiClient.updateAccount(id, {
           name: updates.name,
           type: updates.type,
@@ -57,7 +51,6 @@ function useRemoteAccounts(): UseAccountsResult {
 
   const deleteAccountMutation = useMutation({
     mutationFn: async (accountId: string) => {
-      await ensureLegacyLocalDataMigrated();
       return apiClient.deleteAccount(accountId);
     },
     onSuccess: async () => {
