@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AccountRow,
   CategoryRow,
+  PaymentMethod,
   ReviewTransactionRequest,
   TransactionFeedItem,
 } from '../../../shared/types';
@@ -52,7 +53,13 @@ function mapFeedItemToUiTransaction(
     const matchedCategory = categoriesById.get(transaction.category_id);
     if (matchedCategory?.parent_id) {
       const parent = categoriesById.get(matchedCategory.parent_id);
-      if (parent) {
+      // If parent is a root (parent_id === null), the matched category IS the parent
+      // (e.g., "Food" under "Expense" root) — show it directly, not the root name
+      if (parent && parent.parent_id === null) {
+        categoryName = matchedCategory.name;
+        categoryId = matchedCategory.id;
+      } else if (parent) {
+        // Normal 3-level: parent → sub (e.g., Food → Groceries)
         categoryName = parent.name;
         categoryId = parent.id;
         subCategory = matchedCategory.name;
@@ -89,7 +96,13 @@ function mapFeedItemToUiTransaction(
     persistedCategoryId: transaction.category_id,
     merchantId: transaction.merchant_id,
     merchantName: item.merchant?.canonical_name ?? null,
+    merchantType: item.merchant?.type ?? null,
     searchKey: item.financial_event.search_key,
+    counterpartyRaw: item.financial_event.counterparty_raw,
+    paymentMethod: item.financial_event.payment_method,
+    instrumentLast4: item.credit_card?.last4 ?? item.financial_event.instrument_id ?? null,
+    creditCardId: item.credit_card?.id ?? null,
+    creditCardLabel: item.credit_card?.card_label ?? null,
     status: transaction.status,
     classificationSource: transaction.classification_source,
     aiConfidenceScore: transaction.ai_confidence_score,
@@ -184,10 +197,10 @@ function useRemoteTransactions(): UseTransactionsResult {
           throw new Error('Transaction not found. Refresh and try again.');
         }
 
-        const categoryIdToPersist = resolvePersistedCategoryId(transactionInput, {
-          current: existing,
-          categoriesById,
-        });
+        // The editor manages parent + sub selection explicitly now, so the
+        // nested-path restore options are no longer wanted: a cleared sub
+        // must stay cleared.
+        const categoryIdToPersist = resolvePersistedCategoryId(transactionInput);
 
         if (areImmutableFieldsChanged(existing, transactionInput)) {
           if (!existing.isManual) {
@@ -200,7 +213,11 @@ function useRemoteTransactions(): UseTransactionsResult {
             txn_date: transactionInput.date.toISOString(),
             account_id: accountIdToPersist,
             category_id: categoryIdToPersist,
+            merchant_id: transactionInput.merchantId ?? null,
             user_note: normalizeOptionalText(transactionInput.description),
+            payment_method: (transactionInput.paymentMethod ?? undefined) as PaymentMethod | undefined,
+            instrument_id: transactionInput.instrumentLast4 ?? null,
+            counterparty_raw: transactionInput.counterpartyRaw ?? null,
           });
 
           try {

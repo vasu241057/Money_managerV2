@@ -9,7 +9,6 @@ const DEFAULT_NORMALIZER_MODEL_TIERS = [
 ];
 const DEFAULT_NORMALIZER_ROTATE_FAILURES = 3;
 const DEFAULT_NORMALIZER_COOLDOWN_MS = 300_000;
-const DEFAULT_NORMALIZER_MAX_RETRIES = 6;
 const DEFAULT_NORMALIZER_TIMEOUT_MS = 45_000;
 const DEFAULT_NORMALIZER_TEMPERATURE = 0;
 const DEFAULT_NORMALIZER_MAX_TOKENS = 0;
@@ -89,21 +88,25 @@ function parseEnvBoolean(value: string | undefined, fallback: boolean): boolean 
 }
 
 export function resolveNormalizerTierConfig(env: Env): NormalizerTierConfig {
+	const models = parseCsvList(env.AI_NORMALIZER_TIERS, DEFAULT_NORMALIZER_MODEL_TIERS);
+	const rotateFailures = parseEnvInteger(
+		env.AI_NORMALIZER_TIER_ROTATE_FAILURES,
+		DEFAULT_NORMALIZER_ROTATE_FAILURES,
+		1,
+	);
 	return {
-		models: parseCsvList(env.AI_NORMALIZER_TIERS, DEFAULT_NORMALIZER_MODEL_TIERS),
-		rotateFailures: parseEnvInteger(
-			env.AI_NORMALIZER_TIER_ROTATE_FAILURES,
-			DEFAULT_NORMALIZER_ROTATE_FAILURES,
-			1,
-		),
+		models,
+		rotateFailures,
 		cooldownMs: parseEnvInteger(
 			env.AI_NORMALIZER_TIER_COOLDOWN_MS,
 			DEFAULT_NORMALIZER_COOLDOWN_MS,
 			1000,
 		),
+		// The default retry budget covers the FULL tier chain — otherwise the
+		// last tier can never be reached (rotate=3 × 3 tiers needs 9, not 6).
 		maxRetries: parseEnvInteger(
 			env.AI_NORMALIZER_MAX_RETRIES,
-			DEFAULT_NORMALIZER_MAX_RETRIES,
+			rotateFailures * models.length,
 			1,
 		),
 		timeoutMs: parseEnvInteger(

@@ -29,6 +29,7 @@ interface CategoryRowRaw {
 	icon: unknown;
 	is_system: unknown;
 	created_at: unknown;
+	is_hidden?: unknown;
 }
 
 interface ParentCategoryRow {
@@ -59,6 +60,7 @@ function mapCategoryRow(row: CategoryRowRaw): CategoryRow {
 		icon: toNullableString(row.icon, 'categories.icon'),
 		is_system: toBoolean(row.is_system, 'categories.is_system'),
 		created_at: toIsoDateTime(row.created_at, 'categories.created_at'),
+		is_hidden: row.is_hidden === true,
 	};
 }
 
@@ -178,6 +180,7 @@ export async function listCategories(
 	sql: SqlClient,
 	userId: string,
 	type?: CategoryRow['type'],
+	includeHidden = false,
 ): Promise<CategoryRow[]> {
 	const hasTypeFilter = Boolean(type);
 	const rows = await sql<CategoryRowRaw[]>`
@@ -189,10 +192,15 @@ export async function listCategories(
 			c.type,
 			c.icon,
 			c.is_system,
-			c.created_at
+			c.created_at,
+			(uhc.category_id is not null) as is_hidden
 		from public.categories as c
+		left join public.user_hidden_categories as uhc
+			on uhc.category_id = c.id
+			and uhc.user_id = ${userId}
 		where (c.user_id = ${userId} or c.is_system = true)
 			and (not ${hasTypeFilter} or c.type = ${type ?? null})
+			and (${includeHidden} or uhc.category_id is null)
 		order by c.is_system desc, c.name asc, c.id asc
 	`;
 
@@ -300,20 +308,86 @@ export async function updateCategory(
 	return mapCategoryRow(rows[0]);
 }
 
+// The engine's per-type fallback categories can never be hidden: extractions
+// with no better category land there, and a "deleted" category silently
+// receiving transactions would be far more confusing than seeing it.
+const UNHIDEABLE_SYSTEM_CATEGORIES = new Set([
+	'Miscellaneous:expense',
+	'Other Income:income',
+	'Other Transfer:transfer',
+]);
+
+// DELETE semantics depend on ownership: a user-owned category is really
+// deleted; a system category is shared by all users, so "delete" writes a
+// per-user hide row instead (the row plus its direct system children vanish
+// from this user's list and AI prompt, and nothing breaks for anyone else).
 export async function deleteCategory(
 	sql: SqlClient,
 	userId: string,
 	categoryId: string,
-): Promise<void> {
-	const rows = await sql<{ id: string }[]>`
-		delete from public.categories as c
+): Promise<{ hidden: boolean }> {
+	const targetRows = await sql<Array<{ id: string; name: unknown; type: unknown; is_system: unknown }>>`
+		select c.id, c.name, c.type, c.is_system
+		from public.categories as c
 		where c.id = ${categoryId}
-			and c.user_id = ${userId}
-			and c.is_system = false
-		returning c.id
+			and (c.user_id = ${userId} or c.is_system = true)
+		limit 1
+	`;
+	const target = targetRows[0];
+	if (!target) {
+		throw notFound('CATEGORY_NOT_FOUND', 'Category not found');
+	}
+
+	if (target.is_system !== true) {
+		const rows = await sql<{ id: string }[]>`
+			delete from public.categories as c
+			where c.id = ${categoryId}
+				and c.user_id = ${userId}
+				and c.is_system = false
+			returning c.id
+		`;
+		if (rows.length === 0) {
+			throw notFound('CATEGORY_NOT_FOUND', 'Category not found');
+		}
+		return { hidden: false };
+	}
+
+	const name = toRequiredString(target.name, 'categories.name');
+	const categoryType = toRequiredString(target.type, 'categories.type');
+	if (UNHIDEABLE_SYSTEM_CATEGORIES.has(`${name}:${categoryType}`)) {
+		throw badRequest(
+			'CATEGORY_NOT_HIDEABLE',
+			'This category is the fallback for uncategorized transactions and cannot be removed',
+		);
+	}
+
+	await sql`
+		insert into public.user_hidden_categories (user_id, category_id)
+		select ${userId}, c.id
+		from public.categories as c
+		where c.is_system = true
+			and (c.id = ${categoryId} or c.parent_id = ${categoryId})
+		on conflict (user_id, category_id) do nothing
+	`;
+	return { hidden: true };
+}
+
+// Undoes a hide (the category and its direct system children reappear).
+export async function restoreCategory(
+	sql: SqlClient,
+	userId: string,
+	categoryId: string,
+): Promise<void> {
+	const rows = await sql<Array<{ category_id: string }>>`
+		delete from public.user_hidden_categories as uhc
+		using public.categories as c
+		where uhc.user_id = ${userId}
+			and c.id = uhc.category_id
+			and (c.id = ${categoryId} or c.parent_id = ${categoryId})
+		returning uhc.category_id
 	`;
 
 	if (rows.length === 0) {
-		throw notFound('CATEGORY_NOT_FOUND', 'Category not found');
+		throw notFound('CATEGORY_NOT_HIDDEN', 'Category is not hidden');
 	}
 }

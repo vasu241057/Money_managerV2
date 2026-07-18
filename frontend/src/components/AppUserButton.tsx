@@ -13,7 +13,6 @@ interface AppUserButtonProps {
 
 export function AppUserButton({
   gmailConnected,
-  requiresReconnect,
   statusLabel,
   connectLabel,
   onConnectGmail,

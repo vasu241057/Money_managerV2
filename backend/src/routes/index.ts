@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { requireAuthenticatedUser } from '../lib/auth';
 import { createAccountsRouter } from './accounts';
 import { createCategoriesRouter } from './categories';
+import { createCreditCardsRouter } from './credit-cards';
 import { createHealthRouter } from './health';
 import { createInternalRequeueRouter } from './internal-requeue';
 import { createMerchantsRouter } from './merchants';
@@ -18,6 +19,7 @@ export function createRoutes(): Router {
 	router.use('/internal/requeue', createInternalRequeueRouter());
 	router.use('/accounts', requireAuthenticatedUser, createAccountsRouter());
 	router.use('/categories', requireAuthenticatedUser, createCategoriesRouter());
+	router.use('/credit-cards', requireAuthenticatedUser, createCreditCardsRouter());
 	router.use('/merchants', requireAuthenticatedUser, createMerchantsRouter());
 	router.use('/transactions', requireAuthenticatedUser, createTransactionsRouter());
 	router.use('/oauth', requireAuthenticatedUser, createOAuthRouter());

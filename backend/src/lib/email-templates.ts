@@ -17,6 +17,10 @@
 //   {{W}}  word wildcard — a whole word containing unreferenced numbers
 //          (balances, reference ids, phone numbers, footer dates)
 //   {{M}}  merchant wildcard — captured; the variable merchant/VPA span
+//   {{MON}} month slot — captured; the date's month word, so month-name
+//          formats ("May 18, 2026") aren't locked to the learn-time month
+//   {{mon}} anonymous month wildcard — a month word beside wildcarded
+//          numbers (due dates, footer dates); matched, not captured
 //
 // Static text (bank boilerplate) stays literal, which is what anchors the
 // match. Emails are whitespace-collapsed before both induction and
@@ -35,13 +39,24 @@ const MIN_STATIC_CHARS_EXTRACT = 40;
 const MIN_STATIC_CHARS_IGNORE = 60;
 // Longer emails (digests, statements) are not template material.
 const MAX_SKELETON_LENGTH = 20_000;
-// Mirrors the AI validators' sanity cap (₹10,00,000).
-const MAX_AMOUNT_IN_PAISE = 1_000_000_00;
 
 const M_SENTINEL = '\u0000M\u0000';
 const TOKEN_REF_GLOBAL_REGEX = /<(N\d+)>/g;
-const MARKER_SPLIT_REGEX = /(\{\{[NnWM]\}\})/;
-const MARKER_STRIP_REGEX = /\{\{(?:[NnWM]|\d+)\}\}/g;
+// Non-global twin for .test() (a /g regex is stateful across .test calls).
+const TOKEN_REF_TEST_REGEX = /<N\d+>/;
+const MARKER_SPLIT_REGEX = /(\{\{(?:MON|mon|[NnWM])\}\})/;
+const MARKER_STRIP_REGEX = /\{\{(?:MON|mon|[NnWM]|\d+)\}\}/g;
+// Month words near date slots are wildcarded so month-name formats don't
+// lock a template to the month it was learned in. Exact-name alternation
+// (not prefix matching), so e.g. merchant text "MAYUR" stays literal.
+const MONTH_NAMES_PATTERN =
+	'january|february|march|april|may|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec';
+const MONTH_WORD_GLOBAL_REGEX = new RegExp(
+	`(?<![A-Za-z])(?:${MONTH_NAMES_PATTERN})(?![A-Za-z])`,
+	'gi',
+);
+const MONTH_WORD_REGEX = new RegExp(`(?<![A-Za-z])(?:${MONTH_NAMES_PATTERN})(?![A-Za-z])`, 'i');
+const MONTH_EXACT_REGEX = new RegExp(`^(?:${MONTH_NAMES_PATTERN})$`, 'i');
 // Strong monetary markers: an email containing these must never be learned
 // as an IGNORE template — a false ignore would silently drop transactions.
 const MONETARY_MARKER_REGEX =
@@ -118,14 +133,14 @@ function normalizeTokenRef(ref: string | null | undefined): string | null {
 
 export interface CompiledSkeleton {
 	regex: RegExp;
-	// Capture-group kinds in group order: 'N' captures a token id, 'M'
-	// captures the merchant span.
-	capture_kinds: Array<'N' | 'M'>;
+	// Capture-group kinds in group order: 'N' captures a token id, 'MON'
+	// captures a month word, 'M' captures the merchant span.
+	capture_kinds: Array<'N' | 'M' | 'MON'>;
 }
 
 export function compileSkeleton(skeleton: string): CompiledSkeleton {
 	const parts = skeleton.split(MARKER_SPLIT_REGEX);
-	const captureKinds: Array<'N' | 'M'> = [];
+	const captureKinds: Array<'N' | 'M' | 'MON'> = [];
 	let pattern = '^';
 	for (const part of parts) {
 		switch (part) {
@@ -144,6 +159,16 @@ export function compileSkeleton(skeleton: string): CompiledSkeleton {
 			case '{{M}}':
 				pattern += '(.+?)';
 				captureKinds.push('M');
+				break;
+			// Month slots compile to a generic word; apply validates the
+			// captured word against the real month list (no_match otherwise),
+			// keeping the compiled regex simple and case-proof.
+			case '{{MON}}':
+				pattern += '([A-Za-z]{3,9})';
+				captureKinds.push('MON');
+				break;
+			case '{{mon}}':
+				pattern += '[A-Za-z]{3,9}';
 				break;
 			default:
 				pattern += escapeRegExp(part);
@@ -237,25 +262,107 @@ function resolveMerchantSpan(
 	};
 }
 
+interface SkeletonMonthContext {
+	date_ref_ids: ReadonlySet<string>;
+	want_month: boolean;
+}
+
 interface SkeletonBuildOutput {
 	skeleton: string;
 	ordinal_by_token_id: Map<string, number>;
+	// Ordinal of the single captured {{MON}} slot, when one was created.
+	month_ordinal: number | null;
 }
 
-function buildSkeleton(text: string, referencedIds: ReadonlySet<string>): SkeletonBuildOutput {
+function buildSkeleton(
+	text: string,
+	referencedIds: ReadonlySet<string>,
+	monthContext?: SkeletonMonthContext,
+): SkeletonBuildOutput {
 	const ordinalByTokenId = new Map<string, number>();
 	let ordinal = 0;
+	let monthOrdinal: number | null = null;
 
 	const words = text.split(' ');
-	const skeletonWords = words.map(word => {
+	const refIdsByWord = words.map(word =>
+		[...word.matchAll(TOKEN_REF_GLOBAL_REGEX)].map(match => match[1] ?? ''),
+	);
+	const hasDateRefAt = (index: number): boolean =>
+		(refIdsByWord[index] ?? []).some(id => monthContext?.date_ref_ids.has(id) ?? false);
+	const hasNumberAt = (index: number): boolean => (refIdsByWord[index]?.length ?? 0) > 0;
+
+	// Rewrites one word's token refs (and, in date contexts, month names)
+	// into markers strictly left to right, so slot ordinals always mirror
+	// capture-group order in the compiled skeleton.
+	const renderWord = (word: string, monthAction: 'capture' | 'anon' | 'none'): string => {
+		interface Segment {
+			start: number;
+			end: number;
+			kind: 'ref' | 'month';
+			id: string;
+		}
+		const segments: Segment[] = [];
+		for (const refMatch of word.matchAll(TOKEN_REF_GLOBAL_REGEX)) {
+			const start = refMatch.index ?? -1;
+			if (start < 0) continue;
+			segments.push({
+				start,
+				end: start + refMatch[0].length,
+				kind: 'ref',
+				id: refMatch[1] ?? '',
+			});
+		}
+		if (monthAction !== 'none') {
+			for (const monthMatch of word.matchAll(MONTH_WORD_GLOBAL_REGEX)) {
+				const start = monthMatch.index ?? -1;
+				if (start < 0) continue;
+				segments.push({ start, end: start + monthMatch[0].length, kind: 'month', id: '' });
+			}
+		}
+		segments.sort((a, b) => a.start - b.start);
+
+		let built = '';
+		let cursor = 0;
+		for (const segment of segments) {
+			if (segment.start < cursor) continue;
+			built += word.slice(cursor, segment.start);
+			if (segment.kind === 'ref') {
+				if (referencedIds.has(segment.id)) {
+					ordinal += 1;
+					ordinalByTokenId.set(segment.id, ordinal);
+					built += '{{N}}';
+				} else {
+					built += '{{n}}';
+				}
+			} else if (monthAction === 'capture' && monthOrdinal === null) {
+				ordinal += 1;
+				monthOrdinal = ordinal;
+				built += '{{MON}}';
+			} else {
+				built += '{{mon}}';
+			}
+			cursor = segment.end;
+		}
+		return built + word.slice(cursor);
+	};
+
+	const skeletonWords = words.map((word, index) => {
+		const refIds = refIdsByWord[index] ?? [];
 		const hasSentinel = word.includes(M_SENTINEL);
-		const refIds = [...word.matchAll(TOKEN_REF_GLOBAL_REGEX)].map(match => match[1] ?? '');
+		const hasReferenced = refIds.some(id => referencedIds.has(id));
+
+		const nearDateRef =
+			hasDateRefAt(index) || hasDateRefAt(index - 1) || hasDateRefAt(index + 1);
+		const nearNumber = refIds.length > 0 || hasNumberAt(index - 1) || hasNumberAt(index + 1);
+		// A month word only becomes a slot when it rides next to numbers —
+		// prose like "you may contact us" has none nearby and stays literal.
+		const monthAction: 'capture' | 'anon' | 'none' =
+			monthContext?.want_month && nearDateRef ? 'capture' : nearNumber ? 'anon' : 'none';
 
 		if (refIds.length === 0 && !hasSentinel) {
-			return word;
+			return monthAction === 'none' ? word : renderWord(word, monthAction);
 		}
 
-		const hasReferenced = refIds.some(id => referencedIds.has(id));
 		if (!hasReferenced && !hasSentinel) {
 			// Unreferenced numbers (refs, balances, phone numbers) vary in
 			// token count between emails, so the whole word becomes a
@@ -263,21 +370,18 @@ function buildSkeleton(text: string, referencedIds: ReadonlySet<string>): Skelet
 			return '{{W}}';
 		}
 
-		let built = word.replace(TOKEN_REF_GLOBAL_REGEX, (whole, id: string) => {
-			if (referencedIds.has(id)) {
-				ordinal += 1;
-				ordinalByTokenId.set(id, ordinal);
-				return '{{N}}';
-			}
-			return '{{n}}';
-		});
+		let built = renderWord(word, monthAction);
 		if (hasSentinel) {
 			built = built.split(M_SENTINEL).join('{{M}}');
 		}
 		return built;
 	});
 
-	return { skeleton: skeletonWords.join(' '), ordinal_by_token_id: ordinalByTokenId };
+	return {
+		skeleton: skeletonWords.join(' '),
+		ordinal_by_token_id: ordinalByTokenId,
+		month_ordinal: monthOrdinal,
+	};
 }
 
 function countStaticChars(skeleton: string): number {
@@ -324,10 +428,27 @@ export function induceExtractTemplate(
 		referencedIds,
 	);
 
-	const { skeleton, ordinal_by_token_id: ordinalByTokenId } = buildSkeleton(
-		spannedText,
-		referencedIds,
-	);
+	// A FIXED merchant whose name still carries token refs would bake this
+	// email's digits into every future match (e.g. "POS 4521 KIRANA STORE"
+	// replayed on the 4522 email), silently going stale. Digits are only safe
+	// in a WILDCARD merchant, where they resolve per-email; otherwise the
+	// format stays AI-only.
+	if (
+		merchant.kind === 'FIXED' &&
+		input.counterparty_raw_masked !== null &&
+		TOKEN_REF_TEST_REGEX.test(input.counterparty_raw_masked)
+	) {
+		return { ok: false, reason: 'merchant name has volatile digits' };
+	}
+
+	const {
+		skeleton,
+		ordinal_by_token_id: ordinalByTokenId,
+		month_ordinal: monthOrdinal,
+	} = buildSkeleton(spannedText, referencedIds, {
+		date_ref_ids: new Set(dateRefIds),
+		want_month: dateText !== null && MONTH_WORD_REGEX.test(dateText),
+	});
 
 	if (skeleton.length > MAX_SKELETON_LENGTH) {
 		return { ok: false, reason: 'email too long to template' };
@@ -353,6 +474,20 @@ export function induceExtractTemplate(
 			return `{{${dateOrdinal}}}`;
 		});
 		if (!allDateOrdinalsFound) datePattern = null;
+		if (datePattern !== null && monthOrdinal !== null) {
+			datePattern = datePattern.replace(MONTH_WORD_REGEX, `{{${monthOrdinal}}}`);
+		}
+		// Anything left in the pattern besides slots and separators — a month
+		// word that found no slot in the text, or digits (the model never sees
+		// real ones, so any digit here is fabricated) — would stamp this
+		// email's date parts onto every future match. The internal-date
+		// fallback is safer.
+		if (datePattern !== null) {
+			const residual = datePattern.replace(/\{\{\d+\}\}/g, ' ');
+			if (/\d/.test(residual) || MONTH_WORD_REGEX.test(residual)) {
+				datePattern = null;
+			}
+		}
 	}
 
 	const instrumentOrdinal = instrumentId ? (ordinalByTokenId.get(instrumentId) ?? null) : null;
@@ -428,29 +563,39 @@ export function applyTemplate(
 		return { outcome: 'ignore' };
 	}
 
-	const tokenIdByOrdinal: string[] = [];
+	const valueByOrdinal: Array<string | null> = [];
 	let merchantMaskedSpan: string | null = null;
 	for (let groupIndex = 0; groupIndex < compiled.capture_kinds.length; groupIndex++) {
 		const captured = match[groupIndex + 1] ?? '';
-		if (compiled.capture_kinds[groupIndex] === 'N') {
-			tokenIdByOrdinal.push(captured);
+		const kind = compiled.capture_kinds[groupIndex];
+		if (kind === 'N') {
+			valueByOrdinal.push(captured ? (masked.tokens.get(captured) ?? null) : null);
+		} else if (kind === 'MON') {
+			// {{MON}} compiles to a generic word capture; a non-month word
+			// there means this is structurally a different email.
+			if (!MONTH_EXACT_REGEX.test(captured)) {
+				return { outcome: 'no_match' };
+			}
+			valueByOrdinal.push(captured);
 		} else {
 			merchantMaskedSpan = captured;
 		}
 	}
 
 	const tokenValueAtOrdinal = (ordinal: number | null | undefined): string | null => {
-		if (!ordinal || ordinal < 1 || ordinal > tokenIdByOrdinal.length) return null;
-		const tokenId = tokenIdByOrdinal[ordinal - 1];
-		return tokenId ? (masked.tokens.get(tokenId) ?? null) : null;
+		if (!ordinal || ordinal < 1 || ordinal > valueByOrdinal.length) return null;
+		return valueByOrdinal[ordinal - 1] ?? null;
 	};
 
 	const amountText = tokenValueAtOrdinal(template.slot_map.amount_ordinal);
 	if (!amountText) {
 		return { outcome: 'matched_invalid', reason: 'amount slot missing' };
 	}
+	// No upper cap: a big amount is a valid extraction (forced to
+	// NEEDS_REVIEW downstream), not a template defect — capping here let
+	// three large transactions disable a perfectly good template.
 	const amountInPaise = parseAmountTokenToPaise(amountText);
-	if (!amountInPaise || amountInPaise > MAX_AMOUNT_IN_PAISE) {
+	if (!amountInPaise) {
 		return { outcome: 'matched_invalid', reason: 'amount slot not a valid amount' };
 	}
 
@@ -467,7 +612,7 @@ export function applyTemplate(
 			return value;
 		});
 		if (allDateValuesFound) {
-			txnTimestamp = parseDateTextToIso(rebuiltDate) ?? internalDateIso;
+			txnTimestamp = parseDateTextToIso(rebuiltDate, internalDateIso) ?? internalDateIso;
 		}
 	}
 

@@ -47,6 +47,89 @@ export function detectAggregatorKey(value: string): string | null {
 	return null;
 }
 
+export interface InstrumentAccountCandidate {
+	id: string;
+	type: string;
+	last4: string | null;
+}
+
+export interface InstrumentCardCandidate {
+	id: string;
+	account_id: string;
+	last4: string;
+	issuer_name: string | null;
+}
+
+export interface InstrumentLink {
+	credit_card_id: string | null;
+	account_id: string | null;
+}
+
+// Account types that can plausibly own a transaction of a given payment
+// method. An account-number last4 must never grab a credit-card alert (or
+// vice versa) just because the digits collide.
+const ACCOUNT_TYPES_BY_METHOD: Record<string, readonly string[]> = {
+	credit_card: ['card'],
+	debit_card: ['bank'],
+	netbanking: ['bank'],
+	upi: ['bank'],
+	unknown: ['bank', 'card', 'cash', 'other'],
+};
+
+// Links an extracted instrument to the user's registered cards/accounts.
+// Never guesses: any ambiguity leaves the transaction unlinked for review.
+// Linking is metadata only — it must not feed auto-verify (identity graph
+// signals only).
+export function resolveInstrumentLink(input: {
+	payment_method: string;
+	instrument_last4: string | null;
+	from_address: string | null;
+	accounts: ReadonlyArray<InstrumentAccountCandidate>;
+	credit_cards: ReadonlyArray<InstrumentCardCandidate>;
+}): InstrumentLink {
+	const none: InstrumentLink = { credit_card_id: null, account_id: null };
+	const last4 = input.instrument_last4;
+	if (!last4) {
+		return none;
+	}
+
+	// Credit-card alerts consult the card registry first; the linked card
+	// also pins the backing account (the DB trigger enforces they agree).
+	if (input.payment_method === 'credit_card') {
+		const byLast4 = input.credit_cards.filter(card => card.last4 === last4);
+		if (byLast4.length === 1 && byLast4[0]) {
+			return { credit_card_id: byLast4[0].id, account_id: byLast4[0].account_id };
+		}
+		if (byLast4.length > 1) {
+			// Two cards sharing a last4: only the sender's issuer can break
+			// the tie ("hdfcbank.net" names HDFC). Still ambiguous → unlinked.
+			const senderKey = toSearchKey(input.from_address);
+			const byIssuer = senderKey
+				? byLast4.filter(card => {
+						const issuerKey = toSearchKey(card.issuer_name);
+						return issuerKey !== null && senderKey.includes(issuerKey);
+					})
+				: [];
+			if (byIssuer.length === 1 && byIssuer[0]) {
+				return { credit_card_id: byIssuer[0].id, account_id: byIssuer[0].account_id };
+			}
+			return none;
+		}
+	}
+
+	const allowedTypes = ACCOUNT_TYPES_BY_METHOD[input.payment_method];
+	if (!allowedTypes) {
+		return none;
+	}
+	const accountMatches = input.accounts.filter(
+		account => account.last4 === last4 && allowedTypes.includes(account.type),
+	);
+	if (accountMatches.length === 1 && accountMatches[0]) {
+		return { credit_card_id: null, account_id: accountMatches[0].id };
+	}
+	return none;
+}
+
 // Parses an amount token like '1,67,450.00' (rupees) to integer paise.
 export function parseAmountTokenToPaise(token: string): number | null {
 	const normalized = token.replace(/,/g, '');
@@ -88,6 +171,7 @@ export interface IdentityGraphLookup {
 interface SystemCategoryRowRaw {
 	id: unknown;
 	type: unknown;
+	name?: unknown;
 }
 
 interface UserRuleLookupRowRaw {
@@ -104,16 +188,28 @@ interface GlobalAliasLookupRowRaw {
 	merchant_type: unknown;
 }
 
+// The per-type generic children (never the structural Income/Expense/Transfer
+// roots) — a transaction falling all the way through the category chain gets
+// Miscellaneous/Other rather than a bare root, and a fallback-sourced
+// category never auto-verifies.
+const SYSTEM_DEFAULT_CATEGORY_NAMES: Record<TransactionType, string> = {
+	expense: 'Miscellaneous',
+	income: 'Other Income',
+	transfer: 'Other Transfer',
+};
+
 export async function loadSystemCategoryMap(sql: SqlClient): Promise<SystemCategoryMap> {
 	const rows = await sql<SystemCategoryRowRaw[]>`
 		select
 			c.id,
-			c.type
+			c.type,
+			c.name
 		from public.categories as c
 		where c.user_id is null
 			and c.is_system = true
-			and c.parent_id is null
+			and c.parent_id is not null
 			and c.type in ('income', 'expense', 'transfer')
+			and c.name in ('Miscellaneous', 'Other Income', 'Other Transfer')
 	`;
 
 	const map: SystemCategoryMap = {
@@ -124,11 +220,39 @@ export async function loadSystemCategoryMap(sql: SqlClient): Promise<SystemCateg
 	for (const row of rows) {
 		const type = toRequiredString(row.type, 'categories.type') as TransactionType;
 		const id = toRequiredString(row.id, 'categories.id');
-		if (type === 'income' || type === 'expense' || type === 'transfer') {
+		const name = typeof row.name === 'string' ? row.name : '';
+		if (
+			(type === 'income' || type === 'expense' || type === 'transfer') &&
+			name === SYSTEM_DEFAULT_CATEGORY_NAMES[type]
+		) {
 			map[type] = map[type] ?? id;
 		}
 	}
 	return map;
+}
+
+// System expense subcategories keyed by exact name — the fixed taxonomy the
+// merchant mapper offers the model as a category enum. Model output is
+// validated against this map, so a hallucinated category can never land.
+export async function loadSystemExpenseCategories(
+	sql: SqlClient,
+): Promise<Map<string, UUID>> {
+	const rows = await sql<SystemCategoryRowRaw[]>`
+		select c.id, c.type, c.name
+		from public.categories as c
+		where c.user_id is null
+			and c.is_system = true
+			and c.parent_id is not null
+			and c.type = 'expense'
+	`;
+
+	const byName = new Map<string, UUID>();
+	for (const row of rows) {
+		const name = typeof row.name === 'string' ? row.name.trim() : '';
+		if (name.length === 0) continue;
+		byName.set(name, toRequiredString(row.id, 'categories.id') as UUID);
+	}
+	return byName;
 }
 
 export async function loadUserRulesForLookup(
@@ -212,6 +336,11 @@ export async function loadGlobalAliasesForLookup(
 export interface IdentityResolution {
 	merchant_id: UUID | null;
 	merchant_type: MerchantType | null;
+	// Category by provenance: a rule category is the user's own decision, an
+	// alias category is the global default. Auto-verify needs to know which
+	// (or neither) actually resolved — the merged view hid that.
+	rule_category_id: UUID | null;
+	alias_category_id: UUID | null;
 	category_id: UUID | null;
 	user_rule_hit: boolean;
 	global_alias_hit: boolean;
@@ -224,7 +353,8 @@ export function resolveIdentityForSearchKeys(
 ): IdentityResolution {
 	let merchantId: UUID | null = null;
 	let merchantType: MerchantType | null = null;
-	let categoryId: UUID | null = null;
+	let ruleCategoryId: UUID | null = null;
+	let aliasCategoryId: UUID | null = null;
 	let userRuleHit = false;
 	let globalAliasHit = false;
 
@@ -236,7 +366,7 @@ export function resolveIdentityForSearchKeys(
 		}
 		userRuleHit = true;
 		merchantId = merchantId ?? userRule.merchant_id;
-		categoryId = categoryId ?? userRule.custom_category_id;
+		ruleCategoryId = ruleCategoryId ?? userRule.custom_category_id;
 	}
 
 	for (const key of searchKeys) {
@@ -247,14 +377,16 @@ export function resolveIdentityForSearchKeys(
 		globalAliasHit = true;
 		merchantId = merchantId ?? alias.merchant_id;
 		merchantType = merchantType ?? alias.merchant_type;
-		categoryId = categoryId ?? alias.default_category_id;
+		aliasCategoryId = aliasCategoryId ?? alias.default_category_id;
 		break;
 	}
 
 	return {
 		merchant_id: merchantId,
 		merchant_type: merchantType,
-		category_id: categoryId,
+		rule_category_id: ruleCategoryId,
+		alias_category_id: aliasCategoryId,
+		category_id: ruleCategoryId ?? aliasCategoryId,
 		user_rule_hit: userRuleHit,
 		global_alias_hit: globalAliasHit,
 	};

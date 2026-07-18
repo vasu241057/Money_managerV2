@@ -122,9 +122,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [];
 			}
 			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
-				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
 			}
 			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
 			if (query.includes('from public.user_merchant_rules as umr')) {
@@ -149,9 +152,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 			}
 			if (query.includes('insert into public.transactions')) {
 				transactionValues = values;
-				return [{ id: TXN_ID, status: values[8] }];
+				return [{ id: TXN_ID, status: values[9] }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -178,8 +184,8 @@ describe('email-ai-normalizer identity graph integration', () => {
 		// source, VERIFIED despite confidence 0.5.
 		expect(transactionValues[3]).toBe(RULE_CATEGORY_ID);
 		expect(transactionValues[4]).toBe(RULE_MERCHANT_ID);
-		expect(transactionValues[8]).toBe('VERIFIED');
-		expect(transactionValues[9]).toBe('USER');
+		expect(transactionValues[9]).toBe('VERIFIED');
+		expect(transactionValues[10]).toBe('USER');
 
 		// VERIFIED via user rule → no review needed.
 		expect(result.needs_review_transaction_count).toBe(0);
@@ -206,9 +212,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [];
 			}
 			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
-				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
 			}
 			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
 			if (query.includes('from public.user_merchant_rules as umr')) {
@@ -219,7 +228,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 					{
 						search_key: EXPECTED_SEARCH_KEY,
 						merchant_id: RULE_MERCHANT_ID,
-						default_category_id: null,
+						default_category_id: RULE_CATEGORY_ID,
 						merchant_type: 'MERCHANT',
 					},
 				];
@@ -233,9 +242,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 			}
 			if (query.includes('insert into public.transactions')) {
 				transactionValues = values;
-				return [{ id: TXN_ID, status: values[8] }];
+				return [{ id: TXN_ID, status: values[9] }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -297,10 +309,370 @@ describe('email-ai-normalizer identity graph integration', () => {
 		expect(financialEventValues[5]).toBe('2026-03-02T18:30:00.000Z');
 		expect(financialEventValues[9]).toBe(EXPECTED_SEARCH_KEY);
 
-		// D3: global-alias hit + resolved category → VERIFIED without any
-		// confidence involvement (0.6 would previously stay in review).
+		// D3: global-alias hit + the alias's OWN default category → VERIFIED
+		// without any confidence involvement (0.6 would previously stay in
+		// review). The category is the alias default, not a fallback.
+		expect(transactionValues[3]).toBe(RULE_CATEGORY_ID);
 		expect(transactionValues[4]).toBe(RULE_MERCHANT_ID);
-		expect(transactionValues[8]).toBe('VERIFIED');
+		expect(transactionValues[9]).toBe('VERIFIED');
+	});
+
+	it('persists an over-threshold amount as NEEDS_REVIEW instead of dropping it, even on a rule hit', async () => {
+		let transactionValues: unknown[] = [];
+
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re')) {
+				return [pendingRawEmailRow()];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) {
+				return [];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
+			}
+			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
+				return [];
+			}
+			if (query.includes('from public.user_merchant_rules as umr')) {
+				return [
+					{
+						user_id: USER_ID,
+						search_key: EXPECTED_SEARCH_KEY,
+						merchant_id: RULE_MERCHANT_ID,
+						custom_category_id: RULE_CATEGORY_ID,
+					},
+				];
+			}
+			if (query.includes('from public.global_merchant_aliases as gma')) {
+				return [];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
+			if (query.includes('insert into public.financial_events')) {
+				return [{ id: FE_ID }];
+			}
+			if (query.includes('insert into public.transactions')) {
+				transactionValues = values;
+				return [{ id: TXN_ID, status: values[9] }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		// ₹25,00,000 — over the ₹10L review threshold. Would previously be
+		// silently discarded by the validator cap.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						choices: [
+							{
+								message: {
+									content: JSON.stringify({
+										transactions: [
+											{
+												direction: 'debit',
+												amount_in_paise: 250_000_000,
+												txn_timestamp: '2026-07-01T10:00:00.000Z',
+												payment_method: 'netbanking',
+												counterparty_raw: 'ZEPTO MARKETPLACE PRIVATE LIMITED',
+												instrument_last4: null,
+												category_guess: null,
+												category_id: null,
+												sub_category_id: null,
+												confidence: 0.95,
+											},
+										],
+									}),
+								},
+							},
+						],
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				),
+			),
+		);
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{
+				OPENCODE_GO_API_KEY: 'test-key',
+				AI_NORMALIZER_MASK_NUMBERS: 'false',
+			} as unknown as Env,
+		);
+
+		// The transaction is persisted (never dropped) but the user-rule hit
+		// must NOT auto-verify a suspiciously large amount.
+		expect(result.created_transaction_count).toBe(1);
+		expect(transactionValues[6]).toBe(250_000_000);
+		expect(transactionValues[9]).toBe('NEEDS_REVIEW');
+		expect(result.needs_review_transaction_count).toBe(1);
+	});
+
+	it('does NOT treat an AGGREGATOR alias as an identity signal (merchant control verifies)', async () => {
+		const runWithMerchantType = async (
+			merchantType: string,
+		): Promise<unknown[]> => {
+			let transactionValues: unknown[] = [];
+
+			const sql = createSqlMock((query, values) => {
+				if (query.includes('from public.raw_emails as re')) {
+					return [pendingRawEmailRow()];
+				}
+				if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) {
+					// A real user category the model can genuinely pick.
+					return [{ id: RULE_CATEGORY_ID, name: 'Beauty', type: 'expense', parent_id: null }];
+				}
+				if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+					return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
+				}
+				if (query.includes('from public.accounts as a')) {
+					return [];
+				}
+				if (query.includes('from public.user_credit_cards as ucc')) {
+					return [];
+				}
+				if (query.includes('from public.user_merchant_rules as umr')) {
+					return [];
+				}
+				if (query.includes('from public.global_merchant_aliases as gma')) {
+					return [
+						{
+							search_key: EXPECTED_SEARCH_KEY,
+							merchant_id: RULE_MERCHANT_ID,
+							default_category_id: null,
+							merchant_type: merchantType,
+						},
+					];
+				}
+				if (query.includes('fe.amount_in_paise =')) {
+					return [];
+				}
+				if (query.includes('insert into public.financial_events')) {
+					return [{ id: FE_ID }];
+				}
+				if (query.includes('insert into public.transactions')) {
+					transactionValues = values;
+					return [{ id: TXN_ID, status: values[9] }];
+				}
+				if (query.includes("set status = 'PROCESSED'")) {
+					return [];
+				}
+				if (query.includes('select uhc.category_id')) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+			});
+			getSqlClientMock.mockReturnValue(sql);
+
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue(
+					new Response(
+						JSON.stringify({
+							choices: [
+								{
+									message: {
+										content: JSON.stringify({
+											transactions: [
+												{
+													direction: 'debit',
+													amount_in_paise: 16700,
+													txn_timestamp: '2026-07-01T10:00:00.000Z',
+													payment_method: 'upi',
+													counterparty_raw: 'ZEPTO MARKETPLACE PRIVATE LIMITED',
+													instrument_last4: null,
+													category_guess: null,
+													category_id: RULE_CATEGORY_ID,
+													sub_category_id: null,
+													confidence: 0.9,
+												},
+											],
+										}),
+									},
+								},
+							],
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					),
+				),
+			);
+
+			await runNormalizeRawEmailsJob(
+				{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+				{
+					OPENCODE_GO_API_KEY: 'test-key',
+					AI_NORMALIZER_MASK_NUMBERS: 'false',
+				} as unknown as Env,
+			);
+
+			return transactionValues;
+		};
+
+		// A known aggregator + a real AI category pick: recognizing Razorpay
+		// says nothing about the real merchant — must stay in review.
+		const aggregatorValues = await runWithMerchantType('AGGREGATOR');
+		expect(aggregatorValues[9]).toBe('NEEDS_REVIEW');
+
+		// Control: the identical setup with a plain MERCHANT alias verifies.
+		const merchantValues = await runWithMerchantType('MERCHANT');
+		expect(merchantValues[9]).toBe('VERIFIED');
+	});
+
+	it('degrades a hidden category proposed by the alias default to the fallback + review', async () => {
+		let transactionValues: unknown[] = [];
+
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re')) {
+				return [pendingRawEmailRow()];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) {
+				return [];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
+			}
+			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
+				return [];
+			}
+			// The user has hidden ("deleted") the category the global alias
+			// default points at.
+			if (query.includes('select uhc.category_id')) {
+				return [{ category_id: RULE_CATEGORY_ID }];
+			}
+			if (query.includes('from public.user_merchant_rules as umr')) {
+				return [];
+			}
+			if (query.includes('from public.global_merchant_aliases as gma')) {
+				return [
+					{
+						search_key: EXPECTED_SEARCH_KEY,
+						merchant_id: RULE_MERCHANT_ID,
+						default_category_id: RULE_CATEGORY_ID,
+						merchant_type: 'MERCHANT',
+					},
+				];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
+			if (query.includes('insert into public.financial_events')) {
+				return [{ id: FE_ID }];
+			}
+			if (query.includes('insert into public.transactions')) {
+				transactionValues = values;
+				return [{ id: TXN_ID, status: values[9] }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(aiModelResponse()));
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{
+				OPENCODE_GO_API_KEY: 'test-key',
+				AI_NORMALIZER_MASK_NUMBERS: 'false',
+			} as unknown as Env,
+		);
+
+		expect(result.processed_raw_email_count).toBe(1);
+		// The deleted category never lands: the chain falls through to the
+		// fallback, which never auto-verifies — so the user re-categorizes it
+		// in review. The merchant name link is unaffected.
+		expect(transactionValues[3]).toBe(EXPENSE_CATEGORY_ID);
+		expect(transactionValues[4]).toBe(RULE_MERCHANT_ID);
+		expect(transactionValues[9]).toBe('NEEDS_REVIEW');
+	});
+
+	it('does NOT auto-verify an alias hit whose category is only the system fallback', async () => {
+		let transactionValues: unknown[] = [];
+
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re')) {
+				return [pendingRawEmailRow()];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) {
+				return [];
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
+			}
+			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
+				return [];
+			}
+			if (query.includes('from public.user_merchant_rules as umr')) {
+				return [];
+			}
+			if (query.includes('from public.global_merchant_aliases as gma')) {
+				// Known merchant, but the mapper has not assigned a default
+				// category (or it is an aggregator) — must stay in review.
+				return [
+					{
+						search_key: EXPECTED_SEARCH_KEY,
+						merchant_id: RULE_MERCHANT_ID,
+						default_category_id: null,
+						merchant_type: 'MERCHANT',
+					},
+				];
+			}
+			if (query.includes('fe.amount_in_paise =')) {
+				return [];
+			}
+			if (query.includes('insert into public.financial_events')) {
+				return [{ id: FE_ID }];
+			}
+			if (query.includes('insert into public.transactions')) {
+				transactionValues = values;
+				return [{ id: TXN_ID, status: values[9] }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(aiModelResponse()));
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{
+				OPENCODE_GO_API_KEY: 'test-key',
+				AI_NORMALIZER_MASK_NUMBERS: 'false',
+			} as unknown as Env,
+		);
+
+		expect(result.processed_raw_email_count).toBe(1);
+		// Merchant link still lands, and the fallback category is stamped, but
+		// a fallback-sourced category must never auto-verify: the user still
+		// gets to categorize this merchant in the review inbox.
+		expect(transactionValues[4]).toBe(RULE_MERCHANT_ID);
+		expect(transactionValues[3]).toBe(EXPENSE_CATEGORY_ID);
+		expect(transactionValues[9]).toBe('NEEDS_REVIEW');
+		expect(result.needs_review_transaction_count).toBe(1);
 	});
 
 	it('downgrades to NEEDS_REVIEW when another raw email already produced the same event', async () => {
@@ -318,9 +690,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [];
 			}
 			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
-				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
 			}
 			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
 			if (query.includes('from public.user_merchant_rules as umr')) {
@@ -341,9 +716,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 			}
 			if (query.includes('insert into public.transactions')) {
 				transactionValues = values;
-				return [{ id: TXN_ID, status: values[8] }];
+				return [{ id: TXN_ID, status: values[9] }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -361,7 +739,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 
 		expect(result.processed_raw_email_count).toBe(1);
 		// The user rule would auto-verify, but the duplicate probe wins.
-		expect(transactionValues[8]).toBe('NEEDS_REVIEW');
+		expect(transactionValues[9]).toBe('NEEDS_REVIEW');
 		expect(result.needs_review_transaction_count).toBe(1);
 	});
 
@@ -398,9 +776,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [];
 			}
 			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
-				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
 			}
 			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
 			if (query.includes('from public.user_merchant_rules as umr')) {
@@ -417,13 +798,16 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [{ id: crypto.randomUUID() }];
 			}
 			if (query.includes('insert into public.transactions')) {
-				return [{ id: crypto.randomUUID(), status: values[8] }];
+				return [{ id: crypto.randomUUID(), status: values[9] }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
 				return [];
 			}
 			if (query.includes("set status = 'FAILED'")) {
 				failedIds.push(values[0] as string);
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -512,9 +896,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [];
 			}
 			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
-				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
 			}
 			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
 			if (query.includes('from public.user_merchant_rules as umr')) {
@@ -528,9 +915,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 			}
 			if (query.includes('insert into public.transactions')) {
 				transactionValues = values;
-				return [{ id: TXN_ID, status: values[8] }];
+				return [{ id: TXN_ID, status: values[9] }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -550,8 +940,8 @@ describe('email-ai-normalizer identity graph integration', () => {
 		expect(transactionValues[3]).toBe(EXPENSE_CATEGORY_ID);
 		expect(transactionValues[4]).toBeNull();
 		// Confidence 0.5 < 0.85 with no user rule → stays in review.
-		expect(transactionValues[8]).toBe('NEEDS_REVIEW');
-		expect(transactionValues[9]).toBe('AI');
+		expect(transactionValues[9]).toBe('NEEDS_REVIEW');
+		expect(transactionValues[10]).toBe('AI');
 		expect(result.needs_review_transaction_count).toBe(1);
 	});
 
@@ -596,9 +986,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [];
 			}
 			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
-				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
 			}
 			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
 			if (query.includes('from public.user_merchant_rules as umr')) {
@@ -614,9 +1007,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [{ id: FE_ID }];
 			}
 			if (query.includes('insert into public.transactions')) {
-				return [{ id: TXN_ID, status: values[8] }];
+				return [{ id: TXN_ID, status: values[9] }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -720,9 +1116,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [];
 			}
 			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
-				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense' }];
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
 			}
 			if (query.includes('from public.accounts as a')) {
+				return [];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
 			if (query.includes('from public.user_merchant_rules as umr')) {
@@ -740,9 +1139,12 @@ describe('email-ai-normalizer identity graph integration', () => {
 			}
 			if (query.includes('insert into public.transactions')) {
 				transactionValues = values;
-				return [{ id: TXN_ID, status: values[8] }];
+				return [{ id: TXN_ID, status: values[9] }];
 			}
 			if (query.includes("set status = 'PROCESSED'")) {
+				return [];
+			}
+			if (query.includes('select uhc.category_id')) {
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
@@ -770,8 +1172,8 @@ describe('email-ai-normalizer identity graph integration', () => {
 		// 06-07-26 (DD-MM-YY) midnight IST.
 		expect(financialEventValues[5]).toBe('2026-07-05T18:30:00.000Z');
 
-		expect(transactionValues[8]).toBe('NEEDS_REVIEW');
-		expect(transactionValues[9]).toBe('AI');
-		expect(transactionValues[10]).toBe(0.9);
+		expect(transactionValues[9]).toBe('NEEDS_REVIEW');
+		expect(transactionValues[10]).toBe('AI');
+		expect(transactionValues[11]).toBe(0.9);
 	});
 });

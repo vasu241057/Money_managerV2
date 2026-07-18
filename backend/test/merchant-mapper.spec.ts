@@ -58,6 +58,19 @@ const JOB = {
 } as const;
 
 const MERCHANT_ID = '00000000-0000-4000-8000-0000000000fe';
+const GROCERIES_CATEGORY_ID = '00000000-0000-0000-0000-000000000117';
+const OLD_MERCHANT_ID = '00000000-0000-4000-8000-0000000000f0';
+
+// Handler for the system expense taxonomy the mapper offers the model.
+function expenseCategoriesHandler(query: string): unknown[] | null {
+	if (query.includes('from public.categories as c') && query.includes("c.type = 'expense'")) {
+		return [
+			{ id: GROCERIES_CATEGORY_ID, type: 'expense', name: 'Groceries' },
+			{ id: '00000000-0000-0000-0000-000000000106', type: 'expense', name: 'Shopping' },
+		];
+	}
+	return null;
+}
 
 describe('merchant-mapper worker', () => {
 	beforeEach(() => {
@@ -79,12 +92,16 @@ describe('merchant-mapper worker', () => {
 		expect(result.candidate_count).toBe(0);
 	});
 
-	it('maps unmatched counterparties, creates merchant + alias, and relinks transactions', async () => {
-		const insertedMerchants: Array<{ name: string; type: string }> = [];
+	it('maps counterparties with an AI-picked default category and relinks transactions', async () => {
+		const insertedMerchants: Array<{ name: string; categoryId: unknown; type: string }> = [];
 		const insertedAliases: Array<{ key: string; merchantId: string }> = [];
+		let relinkQuery = '';
 		let relinkKeys: unknown = null;
 
 		const sql = createSqlMock((query, values) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+
 			if (query.includes('from public.financial_events as fe') && query.includes('group by fe.search_key')) {
 				return [
 					{
@@ -93,8 +110,16 @@ describe('merchant-mapper worker', () => {
 					},
 				];
 			}
+			if (query.includes('from public.global_merchants as gm') && query.includes('default_category_id is null')) {
+				// No category backfill backlog in this test.
+				return [];
+			}
 			if (query.includes('insert into public.global_merchants')) {
-				insertedMerchants.push({ name: values[0] as string, type: values[1] as string });
+				insertedMerchants.push({
+					name: values[0] as string,
+					categoryId: values[1],
+					type: values[2] as string,
+				});
 				return [{ id: MERCHANT_ID }];
 			}
 			if (query.includes('insert into public.global_merchant_aliases')) {
@@ -102,6 +127,7 @@ describe('merchant-mapper worker', () => {
 				return [{ search_key: values[0] }];
 			}
 			if (query.includes('update public.transactions as t')) {
+				relinkQuery = query;
 				relinkKeys = values[0];
 				return [{ id: '00000000-0000-4000-8000-00000000000t' }];
 			}
@@ -113,9 +139,14 @@ describe('merchant-mapper worker', () => {
 			'fetch',
 			vi.fn().mockResolvedValue(
 				modelResponse([
-					{ key: 'FSNECOMMERCEVENTURES', canonical_name: 'Nykaa', type: 'MERCHANT' },
+					{
+						key: 'FSNECOMMERCEVENTURES',
+						canonical_name: 'Nykaa',
+						type: 'MERCHANT',
+						category: 'Shopping',
+					},
 					// Injection attempt: unknown key, must be dropped.
-					{ key: 'EVILKEY', canonical_name: 'Evil Corp', type: 'MERCHANT' },
+					{ key: 'EVILKEY', canonical_name: 'Evil Corp', type: 'MERCHANT', category: 'Shopping' },
 				]),
 			),
 		);
@@ -127,17 +158,129 @@ describe('merchant-mapper worker', () => {
 		expect(result.alias_created_count).toBe(1);
 		expect(result.relinked_transaction_count).toBe(1);
 
-		expect(insertedMerchants).toEqual([{ name: 'Nykaa', type: 'MERCHANT' }]);
+		expect(insertedMerchants).toEqual([
+			{
+				name: 'Nykaa',
+				categoryId: '00000000-0000-0000-0000-000000000106',
+				type: 'MERCHANT',
+			},
+		]);
 		expect(insertedAliases).toEqual([
 			{ key: 'FSNECOMMERCEVENTURES', merchantId: MERCHANT_ID },
 		]);
 		expect(relinkKeys).toEqual(['FSNECOMMERCEVENTURES']);
+		// The relink must only fill missing merchant links; it must NOT filter
+		// on classification_source (user-rule-classified rows carry USER yet
+		// still deserve the merchant name).
+		expect(relinkQuery).toContain('merchant_id is null');
+		expect(relinkQuery).not.toContain('classification_source');
+	});
+
+	it('drops hallucinated categories and gives aggregators no category', async () => {
+		const insertedMerchants: Array<{ name: string; categoryId: unknown; type: string }> = [];
+
+		const sql = createSqlMock((query, values) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+
+			if (query.includes('from public.financial_events as fe') && query.includes('group by fe.search_key')) {
+				return [
+					{ search_key: 'SOMESHOP', counterparty_raw: 'Some Shop' },
+					{ search_key: 'RAZORPAYSOMETHING', counterparty_raw: 'RAZORPAY SOMETHING' },
+				];
+			}
+			if (query.includes('from public.global_merchants as gm') && query.includes('default_category_id is null')) {
+				return [];
+			}
+			if (query.includes('insert into public.global_merchants')) {
+				insertedMerchants.push({
+					name: values[0] as string,
+					categoryId: values[1],
+					type: values[2] as string,
+				});
+				return [{ id: MERCHANT_ID }];
+			}
+			if (query.includes('insert into public.global_merchant_aliases')) {
+				return [{ search_key: values[0] }];
+			}
+			if (query.includes('update public.transactions as t')) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				modelResponse([
+					// Category not in the offered enum → dropped to null.
+					{ key: 'SOMESHOP', canonical_name: 'Some Shop', type: 'MERCHANT', category: 'Crypto' },
+					// Aggregators never get a default category, even if the model sends one.
+					{ key: 'RAZORPAYSOMETHING', canonical_name: 'Razorpay', type: 'AGGREGATOR', category: 'Shopping' },
+				]),
+			),
+		);
+
+		const result = await runMerchantMappingJob(JOB, createEnv());
+
+		expect(result.mapped_count).toBe(2);
+		expect(insertedMerchants).toEqual([
+			{ name: 'Some Shop', categoryId: null, type: 'MERCHANT' },
+			{ name: 'Razorpay', categoryId: null, type: 'AGGREGATOR' },
+		]);
+	});
+
+	it('backfills categories for pre-existing merchants without one', async () => {
+		const categoryUpdates: Array<{ merchantId: unknown; categoryId: unknown }> = [];
+
+		const sql = createSqlMock((query, values) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+
+			if (query.includes('from public.financial_events as fe') && query.includes('group by fe.search_key')) {
+				return [];
+			}
+			if (query.includes('from public.global_merchants as gm') && query.includes('default_category_id is null')) {
+				return [{ id: OLD_MERCHANT_ID, canonical_name: 'Zepto' }];
+			}
+			if (query.includes('update public.global_merchants as gm')) {
+				categoryUpdates.push({ categoryId: values[0], merchantId: values[1] });
+				return [{ id: OLD_MERCHANT_ID }];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				modelResponse([
+					{ key: OLD_MERCHANT_ID, canonical_name: 'Zepto', type: 'MERCHANT', category: 'Groceries' },
+				]),
+			),
+		);
+
+		const result = await runMerchantMappingJob(JOB, createEnv());
+
+		expect(result.candidate_count).toBe(0);
+		expect(result.category_backfill_candidate_count).toBe(1);
+		expect(result.category_backfilled_count).toBe(1);
+		expect(categoryUpdates).toEqual([
+			{ categoryId: GROCERIES_CATEGORY_ID, merchantId: OLD_MERCHANT_ID },
+		]);
 	});
 
 	it('returns skipped_reason without writes when the model response is malformed', async () => {
 		const sql = createSqlMock((query) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+
 			if (query.includes('from public.financial_events as fe')) {
 				return [{ search_key: 'SOMEKEY', counterparty_raw: 'Some Merchant' }];
+			}
+			if (query.includes('from public.global_merchants as gm') && query.includes('default_category_id is null')) {
+				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
 		});

@@ -1,10 +1,11 @@
-import type { ClassificationSource, TransactionStatus } from '../../../shared/types';
+import type { ClassificationSource, MerchantType, TransactionStatus } from '../../../shared/types';
 
+// No balance field: account balances are derived from transactions
+// (income − expense per account), never stored or entered.
 export interface Account {
   id: string;
   name: string;
   type: 'cash' | 'bank' | 'card' | 'other';
-  balance?: number;
   instrument_last4?: string | null;
 }
 
@@ -15,6 +16,7 @@ export interface Category {
   type: 'income' | 'expense' | 'transfer';
   subCategories: string[];
   subCategoryIds?: Record<string, string>;
+  subCategorySystem?: Record<string, boolean>;
   isSystem?: boolean;
 }
 
@@ -34,7 +36,13 @@ export interface Transaction {
   persistedCategoryId?: string | null;
   merchantId?: string | null;
   merchantName?: string | null;
+  merchantType?: MerchantType | null;
   searchKey?: string | null;
+  counterpartyRaw?: string | null;
+  paymentMethod?: string | null;
+  instrumentLast4?: string | null;
+  creditCardId?: string | null;
+  creditCardLabel?: string | null;
   status?: TransactionStatus;
   classificationSource?: ClassificationSource;
   aiConfidenceScore?: number | null;

@@ -12,11 +12,26 @@ const OPENCODE_GO_CHAT_URL = 'https://opencode.ai/zen/go/v1/chat/completions';
 const OPENCODE_GO_TIMEOUT_MS = 30_000;
 const MAX_SENDERS_PER_RUN = 200;
 const GATED_SENDER_LOOKBACK_DAYS = 14;
+// AI DENY rules get a second look every 30 days so one bad classification
+// can't silently gate a real bank forever. SEED/USER rules are never
+// re-asked. Capped so re-asks can't crowd out never-classified senders.
+const DENY_REASK_DAYS = 30;
+const MAX_REASK_PER_RUN = 50;
+// Subjects (which we store even for gated mail — bodies are never
+// downloaded) give the model context beyond the bare address. Digits are
+// masked before anything leaves.
+const MAX_SUBJECTS_PER_SENDER = 3;
+const MAX_SUBJECT_LENGTH = 120;
 
 const VALID_SENDER_TYPES = new Set(['BANK', 'FINTECH', 'WALLET', 'OTHER']);
 
 interface GatedSenderRowRaw {
 	from_address: unknown;
+}
+
+interface SenderSubjectRowRaw {
+	from_address: unknown;
+	subject: unknown;
 }
 
 interface SenderRuleRowRaw {
@@ -37,6 +52,7 @@ interface ClassifiedSender {
 
 export interface SenderClassificationResult {
 	candidate_count: number;
+	reask_candidate_count: number;
 	classified_count: number;
 	allow_rule_count: number;
 	deny_rule_count: number;
@@ -48,6 +64,7 @@ export interface SenderClassificationResult {
 function createEmptyResult(): SenderClassificationResult {
 	return {
 		candidate_count: 0,
+		reask_candidate_count: 0,
 		classified_count: 0,
 		allow_rule_count: 0,
 		deny_rule_count: 0,
@@ -57,15 +74,31 @@ function createEmptyResult(): SenderClassificationResult {
 	};
 }
 
-function buildClassificationPrompt(addresses: string[]): Array<{ role: string; content: string }> {
+export interface SenderCandidate {
+	address: string;
+	subjects: string[];
+}
+
+// Digits are stripped before a subject leaves for the model — amounts,
+// OTPs, and reference numbers in subject lines stay local.
+export function maskSubjectForClassifier(subject: string): string {
+	return subject.replace(/\d/g, '#').replace(/\s+/g, ' ').trim().slice(0, MAX_SUBJECT_LENGTH);
+}
+
+function buildClassificationPrompt(
+	candidates: SenderCandidate[],
+): Array<{ role: string; content: string }> {
 	return [
 		{
 			role: 'system',
 			content: [
-				'You classify email sender addresses for an Indian personal finance app.',
-				'For each address, decide if it belongs to a financial institution that',
-				'sends TRANSACTION alerts: a bank, credit card issuer, fintech/neobank,',
-				'wallet, or payment app operating in India.',
+				'You classify email senders for an Indian personal finance app.',
+				'Each input has the sender "address" and a sample of recent "subjects"',
+				'from that sender (digits masked as #). Decide if the sender is a',
+				'financial institution that sends TRANSACTION alerts: a bank, credit',
+				'card issuer, fintech/neobank, wallet, or payment app operating in India.',
+				'Subjects like "A/c ##### debited" or "Payment of Rs.### received" are',
+				'strong transaction signals; pure marketing subjects are not.',
 				'Marketing-only senders, newsletters, e-commerce stores, and personal',
 				'mailboxes are NOT financial. Free-mail addresses (gmail.com, yahoo.com,',
 				'outlook.com, etc.) are NOT financial regardless of the local part.',
@@ -77,7 +110,7 @@ function buildClassificationPrompt(addresses: string[]): Array<{ role: string; c
 		},
 		{
 			role: 'user',
-			content: JSON.stringify({ addresses }),
+			content: JSON.stringify({ senders: candidates }),
 		},
 	];
 }
@@ -85,7 +118,7 @@ function buildClassificationPrompt(addresses: string[]): Array<{ role: string; c
 async function callSenderClassificationModel(
 	env: Env,
 	apiKey: string,
-	addresses: string[],
+	candidates: SenderCandidate[],
 ): Promise<ClassifiedSender[] | null> {
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), OPENCODE_GO_TIMEOUT_MS);
@@ -101,7 +134,7 @@ async function callSenderClassificationModel(
 			body: JSON.stringify({
 				model: resolveOpenCodeGoModel(env),
 				temperature: 0,
-				messages: buildClassificationPrompt(addresses),
+				messages: buildClassificationPrompt(candidates),
 				response_format: { type: 'json_object' },
 			}),
 			signal: controller.signal,
@@ -158,7 +191,7 @@ async function callSenderClassificationModel(
 
 	// Only accept entries whose address is one of the inputs — the model must
 	// not be able to inject arbitrary allowlist patterns.
-	const candidateSet = new Set(addresses);
+	const candidateSet = new Set(candidates.map(candidate => candidate.address));
 	const seen = new Set<string>();
 	const classified: ClassifiedSender[] = [];
 	for (const entry of parsed.senders) {
@@ -222,6 +255,62 @@ async function loadUnruledGatedSenders(sql: SqlClient, env: Env): Promise<string
 	return candidates;
 }
 
+// AI-created DENY rules older than the re-ask window get reconsidered with
+// fresh subject context. Only source 'AI': seed and user decisions are final.
+async function loadDenyReaskAddresses(sql: SqlClient): Promise<string[]> {
+	const rows = await sql<Array<{ pattern: unknown }>>`
+		select sr.pattern
+		from public.sender_rules as sr
+		where sr.source = 'AI'
+			and sr.decision = 'DENY'
+			and sr.updated_at < now() - (${DENY_REASK_DAYS} || ' days')::interval
+		order by sr.updated_at asc
+		limit ${MAX_REASK_PER_RUN}
+	`;
+
+	const addresses: string[] = [];
+	for (const row of rows) {
+		if (typeof row.pattern !== 'string') continue;
+		const address = row.pattern.trim().toLowerCase();
+		if (address.length > 0) addresses.push(address);
+	}
+	return addresses;
+}
+
+// Fetches up to MAX_SUBJECTS_PER_SENDER recent distinct subjects per
+// address, digit-masked. Bodies are never touched — subjects are the only
+// content stored for gated mail.
+async function loadMaskedSubjectsBySender(
+	sql: SqlClient,
+	addresses: string[],
+): Promise<Map<string, string[]>> {
+	const bySender = new Map<string, string[]>();
+	if (addresses.length === 0) {
+		return bySender;
+	}
+
+	const rows = await sql<SenderSubjectRowRaw[]>`
+		select re.from_address, re.subject
+		from public.raw_emails as re
+		where re.from_address = any(${addresses}::text[])
+			and re.subject is not null
+		order by re.internal_date desc
+		limit ${addresses.length * 20}
+	`;
+
+	for (const row of rows) {
+		if (typeof row.from_address !== 'string' || typeof row.subject !== 'string') continue;
+		const address = row.from_address.trim().toLowerCase();
+		const masked = maskSubjectForClassifier(row.subject);
+		if (masked.length === 0) continue;
+		const list = bySender.get(address) ?? [];
+		if (list.length >= MAX_SUBJECTS_PER_SENDER || list.includes(masked)) continue;
+		list.push(masked);
+		bySender.set(address, list);
+	}
+	return bySender;
+}
+
 async function persistSenderRules(
 	sql: SqlClient,
 	classified: ClassifiedSender[],
@@ -233,14 +322,21 @@ async function persistSenderRules(
 	for (const sender of classified) {
 		const decision = sender.financial ? 'ALLOW' : 'DENY';
 		// AI rules are always exact addresses (never tokens/domains) so a
-		// misclassification can't open the gate wider than one sender.
-		const inserted = await sql<{ pattern: string }[]>`
+		// misclassification can't open the gate wider than one sender. A
+		// conflict updates only AI rows (that's the DENY re-ask flipping or
+		// re-confirming; updated_at restarts its 30-day clock) — SEED/USER
+		// rules are never overwritten.
+		const upserted = await sql<{ pattern: string }[]>`
 			insert into public.sender_rules (pattern, decision, sender_type, source)
 			values (${sender.address}, ${decision}, ${sender.sender_type}, 'AI')
-			on conflict (pattern) do nothing
+			on conflict (pattern) do update
+			set decision = excluded.decision,
+				sender_type = excluded.sender_type,
+				updated_at = now()
+			where sender_rules.source = 'AI'
 			returning pattern
 		`;
-		if (inserted.length === 0) {
+		if (upserted.length === 0) {
 			continue;
 		}
 		if (sender.financial) {
@@ -311,11 +407,22 @@ export async function runSenderClassificationJob(
 	const config = getAppConfig(env);
 	const sql = getSqlClient(config);
 
-	const candidates = await loadUnruledGatedSenders(sql, env);
-	result.candidate_count = candidates.length;
-	if (candidates.length === 0) {
+	const newAddresses = await loadUnruledGatedSenders(sql, env);
+	result.candidate_count = newAddresses.length;
+
+	const reaskAddresses = await loadDenyReaskAddresses(sql);
+	result.reask_candidate_count = reaskAddresses.length;
+
+	const allAddresses = [...new Set([...newAddresses, ...reaskAddresses])];
+	if (allAddresses.length === 0) {
 		return result;
 	}
+
+	const subjectsBySender = await loadMaskedSubjectsBySender(sql, allAddresses);
+	const candidates: SenderCandidate[] = allAddresses.map(address => ({
+		address,
+		subjects: subjectsBySender.get(address) ?? [],
+	}));
 
 	const classified = await callSenderClassificationModel(env, apiKey, candidates);
 	if (classified === null) {

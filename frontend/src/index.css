@@ -6,47 +6,52 @@
   --line-height: 1.5;
   --font-weight: 400;
 
-  --color-scheme: dark;
-  
-  /* Premium Dark Theme Palette */
-  --bg-primary: #000000;
-  --bg-secondary: #1c1c1e;
-  --bg-tertiary: #2c2c2e;
-  
-  --text-primary: #ffffff;
-  --text-secondary: #8e8e93;
-  --text-tertiary: #48484a;
+  /* Ledger design tokens (light mode) */
+  --ledger-bg: #FAF8F5;
+  --ledger-fg: #1A1A1A;
+  --ledger-accent: #0D5C4B;
+  --ledger-positive: #2D7A4F;
+  --ledger-negative: #C45336;
+  --ledger-muted: #8B8680;
+  --ledger-rule: rgba(26, 26, 26, 0.08);
+  --ledger-card: #FFFFFF;
+  --ledger-amber: #B8732A;
+  --ledger-amber-bg: #FDF6EC;
 
-  --accent-color: #0a84ff;
-  --accent-gradient: linear-gradient(135deg, #0a84ff 0%, #5e5ce6 100%);
-  
-  --primary-color: #0a84ff;
-  --secondary-color: #5e5ce6;
-  
-  --success-color: #30d158;
-  --danger-color: #ff453a;
-  --warning-color: #ffd60a;
+  background-color: var(--ledger-bg);
+  color: var(--ledger-fg);
+}
 
-  --glass-bg: rgba(28, 28, 30, 0.65);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --glass-blur: blur(20px);
+/* Ledger tokens (dark mode) */
+.dark {
+  --ledger-bg: #141414;
+  --ledger-fg: #F0EDE8;
+  --ledger-accent: #4ECDC4;
+  --ledger-positive: #6BCB77;
+  --ledger-negative: #FF6B6B;
+  --ledger-muted: #8B8680;
+  --ledger-rule: rgba(240, 237, 232, 0.08);
+  --ledger-card: #1E1E1E;
+  --ledger-amber: #D4A24C;
+  --ledger-amber-bg: #2A2418;
+}
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+/* Utility classes */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
 
-  --spacing-xs: 4px;
-  --spacing-sm: 8px;
-  --spacing-md: 16px;
-  --spacing-lg: 24px;
-  --spacing-xl: 32px;
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
 
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.12);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.24);
-  
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 body {
@@ -56,18 +61,18 @@ body {
   min-width: 320px;
   min-height: 100vh;
   font-family: var(--font-family);
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+  background-color: var(--ledger-bg);
+  color: var(--ledger-fg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
   width: 100%;
-  max-width: 480px; /* Mobile constraint */
+  max-width: 480px;
   margin: 0 auto;
   min-height: 100vh;
   position: relative;
-  background-color: var(--bg-primary);
+  background-color: var(--ledger-bg);
   overflow-x: hidden;
 }

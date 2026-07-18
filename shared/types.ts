@@ -132,6 +132,9 @@ export interface CategoryRow {
   icon: string | null;
   is_system: boolean;
   created_at: ISODateTimeString;
+  // Per-user hide of a shared system category ("delete" semantics for the
+  // UI). Only meaningful when is_system; surfaced with include_hidden=true.
+  is_hidden?: boolean;
 }
 
 export interface GlobalMerchantRow {
@@ -362,18 +365,6 @@ export interface UpdateUserCreditCardRequest {
   is_active?: boolean;
 }
 
-export interface ResolveUserCreditCardRequest {
-  user_id: UUID;
-  first4?: string | null;
-  last4: string;
-}
-
-export interface ResolveUserCreditCardResponse {
-  credit_card_id: UUID;
-  account_id: UUID;
-  card_label: string;
-}
-
 export interface UpsertUserMerchantRuleRequest {
   search_key: string;
   merchant_id?: UUID | null;
@@ -598,6 +589,7 @@ export interface AiNormalizedTransactionItem {
   category_id: string | null;
   sub_category_id: string | null;
   account_id: string | null;
+  credit_card_id: string | null;
   confidence: number;
 }
 

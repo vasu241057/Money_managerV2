@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, toErrorMessage } from '../lib/api-client';
 import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
-import { paiseToRupees, rupeesToPaise } from '../lib/money';
 import type { Account } from '../types/domain';
 
 interface UseAccountsResult {
@@ -34,8 +33,6 @@ function useRemoteAccounts(): UseAccountsResult {
           name: account.name,
           type: account.type,
           instrument_last4: account.instrument_last4 || null,
-          initial_balance_in_paise:
-            account.balance === undefined ? undefined : rupeesToPaise(account.balance),
         });
     },
     onSuccess: async () => {
@@ -51,8 +48,6 @@ function useRemoteAccounts(): UseAccountsResult {
           name: updates.name,
           type: updates.type,
           instrument_last4: updates.instrument_last4,
-          initial_balance_in_paise:
-            updates.balance === undefined ? undefined : rupeesToPaise(updates.balance),
         });
     },
     onSuccess: async () => {
@@ -75,7 +70,6 @@ function useRemoteAccounts(): UseAccountsResult {
     id: row.id,
     name: row.name,
     type: row.type,
-    balance: paiseToRupees(row.initial_balance_in_paise),
     instrument_last4: row.instrument_last4,
   }));
 

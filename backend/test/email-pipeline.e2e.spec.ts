@@ -134,7 +134,7 @@ interface PipelineState {
 	now_iso: string;
 	user: UserState;
 	connection: OAuthConnectionState;
-	system_categories: Array<{ id: UUID; type: 'income' | 'expense' | 'transfer' }>;
+	system_categories: Array<{ id: UUID; type: 'income' | 'expense' | 'transfer'; name: string }>;
 	global_aliases: Map<string, GlobalAliasState>;
 	raw_emails_by_id: Map<UUID, RawEmailState>;
 	raw_email_id_by_user_source: Map<string, UUID>;
@@ -200,10 +200,12 @@ function createPipelineState(input: PipelineScenarioInput = {}): PipelineState {
 			created_at: '2026-03-02T00:00:00.000Z',
 			updated_at: '2026-03-02T00:00:00.000Z',
 		},
+		// System generic children (post exhaustive-categories migration): the
+		// per-type defaults the engine falls back to, never bare roots.
 		system_categories: [
-			{ id: buildUuid(101), type: 'income' },
-			{ id: buildUuid(102), type: 'expense' },
-			{ id: buildUuid(103), type: 'transfer' },
+			{ id: buildUuid(101), type: 'income', name: 'Other Income' },
+			{ id: buildUuid(102), type: 'expense', name: 'Miscellaneous' },
+			{ id: buildUuid(103), type: 'transfer', name: 'Other Transfer' },
 		],
 		global_aliases: new Map<string, GlobalAliasState>(),
 		raw_emails_by_id: new Map<UUID, RawEmailState>(),
@@ -530,10 +532,16 @@ function createSqlHarness(state: PipelineState): SqlMock {
 			return state.system_categories.map((row) => ({
 				id: row.id,
 				type: row.type,
+				name: row.name,
+				parent_id: 'root',
 			}));
 		}
 
 		if (query.includes('from public.accounts as a')) {
+			return [];
+		}
+
+		if (query.includes('from public.user_credit_cards as ucc')) {
 			return [];
 		}
 
@@ -657,8 +665,8 @@ function createSqlHarness(state: PipelineState): SqlMock {
 
 		// AI-engine transactions insert layout:
 		// 0 user_id, 1 financial_event_id, 2 account_id, 3 category_id,
-		// 4 merchant_id, 5 amount, 6 type, 7 txn_date, 8 status,
-		// 9 classification_source, 10 ai_confidence_score.
+		// 4 merchant_id, 5 credit_card_id, 6 amount, 7 type, 8 txn_date,
+		// 9 status, 10 classification_source, 11 ai_confidence_score.
 		if (query.includes('insert into public.transactions')) {
 			const userId = values[0] as UUID;
 			const financialEventId = values[1] as UUID;
@@ -676,14 +684,14 @@ function createSqlHarness(state: PipelineState): SqlMock {
 				account_id: (values[2] as UUID | null) ?? null,
 				category_id: (values[3] as UUID | null) ?? null,
 				merchant_id: (values[4] as UUID | null) ?? null,
-				credit_card_id: null,
-				amount_in_paise: Number(values[5]),
-				type: values[6] as TransactionState['type'],
-				txn_date: values[7] as string,
+				credit_card_id: (values[5] as UUID | null) ?? null,
+				amount_in_paise: Number(values[6]),
+				type: values[7] as TransactionState['type'],
+				txn_date: values[8] as string,
 				user_note: null,
-				status: values[8] as TransactionStatus,
-				classification_source: values[9] as TransactionState['classification_source'],
-				ai_confidence_score: typeof values[10] === 'number' ? values[10] : null,
+				status: values[9] as TransactionStatus,
+				classification_source: values[10] as TransactionState['classification_source'],
+				ai_confidence_score: typeof values[11] === 'number' ? values[11] : null,
 				created_at: state.now_iso,
 				updated_at: state.now_iso,
 			};
@@ -729,6 +737,11 @@ function createSqlHarness(state: PipelineState): SqlMock {
 
 		// Cross-email dedup probe: no duplicates in these scenarios.
 		if (query.includes('fe.amount_in_paise =')) {
+			return [];
+		}
+
+		// No hidden categories in these scenarios.
+		if (query.includes('select uhc.category_id')) {
 			return [];
 		}
 

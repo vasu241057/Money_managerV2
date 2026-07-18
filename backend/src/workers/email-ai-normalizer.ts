@@ -26,6 +26,7 @@ import {
 	loadUserRulesForLookup,
 	parseAmountTokenToPaise,
 	resolveIdentityForSearchKeys,
+	resolveInstrumentLink,
 	toSearchKey,
 } from '../lib/identity';
 import type { IdentityGraphLookup } from '../lib/identity';
@@ -76,10 +77,23 @@ const VALID_PAYMENT_METHODS: readonly PaymentMethod[] = [
 
 const VALID_DIRECTIONS = ['debit', 'credit'] as const;
 
+// Above this (₹10,00,000) a transaction is never auto-verified — it is
+// persisted and forced to NEEDS_REVIEW. It is NOT a validity cap: dropping
+// large amounts would silently lose exactly the transactions that matter
+// most.
+const AMOUNT_REVIEW_THRESHOLD_IN_PAISE = 1_000_000_00;
+
 interface UserNormalizationContext {
 	categories: Array<{ id: string; name: string; type: string; sub_categories: Array<{ id: string; name: string }> }>;
 	accounts: Array<{ id: string; name: string; type: string; last4: string | null }>;
+	// Active user_credit_cards; never sent to the model — instrument linking
+	// happens locally at persist time.
+	credit_cards: Array<{ id: string; account_id: string; last4: string; issuer_name: string | null }>;
 	misc_category_id: string | null;
+	// System categories this user has hidden ("deleted"). Any resolved
+	// category — rule, AI pick, or global-alias default — degrades to null
+	// when hidden, so a deleted category never lands on their transactions.
+	hidden_category_ids: Set<string>;
 }
 
 function buildUserContextPrompt(ctx: UserNormalizationContext): string {
@@ -368,7 +382,16 @@ function resolveAiItemsWithIdentityGraph(
 	userId: UUID,
 	items: AiNormalizedTransactionItem[],
 	lookup: IdentityGraphLookup,
+	hiddenCategoryIds: ReadonlySet<string> = new Set<string>(),
 ): ResolvedAiItem[] {
+	// A category the user has hidden ("deleted") resolves as if it didn't
+	// exist for them — regardless of whether a rule, the model, or a global
+	// alias default proposed it. The chain then falls through (usually to the
+	// fallback, which never auto-verifies), so the transaction reaches the
+	// review inbox instead of silently wearing a deleted category.
+	const unlessHidden = (categoryId: string | null): string | null =>
+		categoryId && hiddenCategoryIds.has(categoryId) ? null : categoryId;
+
 	return items.map(item => {
 		const searchKeys = buildCanonicalSearchKeys(item);
 		const identity = resolveIdentityForSearchKeys(userId, searchKeys, lookup);
@@ -379,21 +402,41 @@ function resolveAiItemsWithIdentityGraph(
 			: directionToType(item.direction);
 
 		// Category precedence: user rule > AI's per-email pick (user-context
-		// aware) > global alias default > system default for the type.
-		const aiCategoryId = item.sub_category_id || item.category_id || null;
-		const categoryId =
-			(identity.user_rule_hit ? identity.category_id : null) ??
+		// aware) > global alias default > system generic for the type
+		// (Miscellaneous/Other — never a bare root). A model answer that IS
+		// the system generic ("use Miscellaneous when unsure") means "don't
+		// know" — it ranks and verifies like the fallback, not like a pick.
+		const rawAiCategoryId = item.sub_category_id || item.category_id || null;
+		const aiCategoryId = unlessHidden(
+			rawAiCategoryId === lookup.system_categories[transactionType] ? null : rawAiCategoryId,
+		);
+		const resolvedCategoryId =
+			unlessHidden(identity.rule_category_id) ??
 			aiCategoryId ??
-			identity.category_id ??
-			lookup.system_categories[transactionType];
+			unlessHidden(identity.alias_category_id) ??
+			null;
+		const categoryId = resolvedCategoryId ?? lookup.system_categories[transactionType];
 
-		// Auto-verify comes from identity signals only — a user rule or a
-		// known merchant alias. Model self-reported confidence is stored for
-		// review-inbox triage but never verifies on its own (it is not
-		// calibrated).
+		// Auto-verify needs BOTH an identity signal (user rule or known
+		// merchant alias) AND a genuinely resolved category (rule, AI pick, or
+		// alias default). The system fallback never verifies — otherwise every
+		// mapper-created alias would silently verify junk-categorized
+		// transactions and they would never reach the review inbox. Model
+		// confidence is stored for triage but never verifies on its own.
+		// An AGGREGATOR alias is not an identity signal: recognizing Razorpay
+		// says nothing about the real merchant behind it, so only the user's
+		// own rule may verify such a transaction.
+		const aliasIdentitySignal =
+			identity.global_alias_hit && identity.merchant_type !== 'AGGREGATOR';
 		const identityVerified =
-			(identity.user_rule_hit || identity.global_alias_hit) && categoryId !== null;
-		const status: TransactionStatus = identityVerified ? 'VERIFIED' : 'NEEDS_REVIEW';
+			(identity.user_rule_hit || aliasIdentitySignal) && resolvedCategoryId !== null;
+
+		// Amounts above the plausibility threshold always face a human — a
+		// mispicked token (account number as amount) or a genuinely huge
+		// transfer both deserve review, and neither may be silently trusted.
+		const overAmountThreshold = item.amount_in_paise > AMOUNT_REVIEW_THRESHOLD_IN_PAISE;
+		const status: TransactionStatus =
+			identityVerified && !overAmountThreshold ? 'VERIFIED' : 'NEEDS_REVIEW';
 
 		const classificationSource: ClassificationSource = identity.user_rule_hit
 			? 'USER'
@@ -453,6 +496,8 @@ interface CategoryRowRaw { id: unknown; name: unknown; type: unknown; parent_id:
 
 interface AccountRowRaw { id: unknown; name: unknown; type: unknown; instrument_last4: unknown; }
 
+interface CreditCardRowRaw { id: unknown; account_id: unknown; last4: unknown; issuer_name: unknown; }
+
 async function fetchUserNormalizationContext(
 	sql: SqlClient,
 	userId: UUID,
@@ -462,6 +507,26 @@ async function fetchUserNormalizationContext(
 		from public.categories as c
 		where c.user_id = ${userId} and c.is_system = false
 		order by c.parent_id nulls first, c.name asc
+	`;
+
+	// System subcategories join the prompt as flat top-level picks — roots
+	// (Income/Expense/Transfer) are structural only and never offered, so the
+	// model cannot assign a bare root. This is also what makes a fresh user
+	// (no custom categories yet) classifiable at all. Categories the user has
+	// hidden ("deleted" system rows) are excluded from their prompt.
+	const systemCatRows = await sql<CategoryRowRaw[]>`
+		select c.id, c.name, c.type, c.parent_id
+		from public.categories as c
+		where c.user_id is null
+			and c.is_system = true
+			and c.parent_id is not null
+			and not exists (
+				select 1
+				from public.user_hidden_categories as uhc
+				where uhc.user_id = ${userId}
+					and uhc.category_id = c.id
+			)
+		order by c.type asc, c.name asc
 	`;
 
 	const parents = catRows.filter(r => !r.parent_id);
@@ -479,7 +544,52 @@ async function fetchUserNormalizationContext(
 			})),
 	}));
 
-	const miscCat = categories.find(c => c.name === 'Miscellaneous' && c.type === 'expense');
+	// Rows whose parent is not in the fetched set are parents (their parent
+	// is a structural root, which is excluded); the rest are subcategories.
+	const userCategoryNames = new Set(categories.map(c => `${c.name}:${c.type}`));
+	const systemIds = new Set(
+		systemCatRows.map(row => toRequiredString(row.id, 'categories.id')),
+	);
+	const systemParents = systemCatRows.filter(
+		row => !systemIds.has(String(row.parent_id ?? '')),
+	);
+	const systemSubs = systemCatRows.filter(row => systemIds.has(String(row.parent_id ?? '')));
+	for (const row of systemParents) {
+		const id = toRequiredString(row.id, 'categories.id');
+		const name = toRequiredString(row.name, 'categories.name');
+		const type = toRequiredString(row.type, 'categories.type');
+		// A user category with the same name shadows the system one, so the
+		// prompt never offers confusing duplicates.
+		if (userCategoryNames.has(`${name}:${type}`)) continue;
+		categories.push({
+			id,
+			name,
+			type,
+			sub_categories: systemSubs
+				.filter(sub => String(sub.parent_id ?? '') === id)
+				.map(sub => ({
+					id: toRequiredString(sub.id, 'categories.id'),
+					name: toRequiredString(sub.name, 'categories.name'),
+				})),
+		});
+	}
+
+	const miscCat =
+		categories.find(c => c.name === 'Miscellaneous' && c.type === 'expense') ?? null;
+
+	// Hidden ids are needed at resolve time too: the alias-default path (and
+	// a stale user rule) could otherwise assign a category the user deleted.
+	const hiddenRows = await sql<Array<{ category_id: unknown }>>`
+		select uhc.category_id
+		from public.user_hidden_categories as uhc
+		where uhc.user_id = ${userId}
+	`;
+	const hiddenCategoryIds = new Set<string>();
+	for (const row of hiddenRows) {
+		if (typeof row.category_id === 'string' && row.category_id.length > 0) {
+			hiddenCategoryIds.add(row.category_id);
+		}
+	}
 
 	const acctRows = await sql<AccountRowRaw[]>`
 		select a.id, a.name, a.type, a.instrument_last4
@@ -495,10 +605,27 @@ async function fetchUserNormalizationContext(
 		last4: typeof a.instrument_last4 === 'string' ? a.instrument_last4 || null : null,
 	}));
 
+	const cardRows = await sql<CreditCardRowRaw[]>`
+		select ucc.id, ucc.account_id, ucc.last4, ucc.issuer_name
+		from public.user_credit_cards as ucc
+		where ucc.user_id = ${userId}
+			and ucc.is_active = true
+		order by ucc.created_at asc
+	`;
+
+	const creditCards = cardRows.map(c => ({
+		id: toRequiredString(c.id, 'user_credit_cards.id'),
+		account_id: toRequiredString(c.account_id, 'user_credit_cards.account_id'),
+		last4: toRequiredString(c.last4, 'user_credit_cards.last4'),
+		issuer_name: toNullableString(c.issuer_name, 'user_credit_cards.issuer_name'),
+	}));
+
 	return {
 		categories,
 		accounts,
+		credit_cards: creditCards,
 		misc_category_id: miscCat?.id ?? null,
+		hidden_category_ids: hiddenCategoryIds,
 	};
 }
 
@@ -769,12 +896,15 @@ function buildKnownCategoryIdSet(ctx: UserNormalizationContext): Set<string> {
 function validateCategoryIds(
 	record: Record<string, unknown>,
 	knownCategoryIds: Set<string>,
-	miscCategoryId: string | null,
 ): { categoryId: string | null; subCategoryId: string | null } {
+	// A hallucinated or missing category is NOT rewritten to Miscellaneous
+	// here — that would masquerade as a deliberate model pick and auto-verify
+	// alias hits. It stays null so the identity chain (alias default, then
+	// the non-verifying system fallback) decides.
 	const rawCategoryId =
 		typeof record.category_id === 'string' ? record.category_id || null : null;
 	const categoryId =
-		rawCategoryId && knownCategoryIds.has(rawCategoryId) ? rawCategoryId : miscCategoryId;
+		rawCategoryId && knownCategoryIds.has(rawCategoryId) ? rawCategoryId : null;
 
 	const rawSubCategoryId =
 		typeof record.sub_category_id === 'string' ? record.sub_category_id || null : null;
@@ -809,7 +939,10 @@ function validateMaskedResponse(
 		const amountText = resolveTokenValue(record.amount_token as string | undefined, tokens);
 		if (!amountText) continue;
 		const amountInPaise = parseAmountTokenToPaise(amountText);
-		if (!amountInPaise || amountInPaise > 1_000_000_00) continue;
+		// No upper cap here: a large amount is NEVER dropped (silently losing
+		// the biggest transactions is the worst failure for a money app) —
+		// over-threshold amounts are forced to NEEDS_REVIEW at resolve time.
+		if (!amountInPaise) continue;
 
 		const confidence = Number(record.confidence);
 		if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) continue;
@@ -843,11 +976,7 @@ function validateMaskedResponse(
 			? instrumentText.replace(/\D/g, '').slice(-4) || null
 			: null;
 
-		const { categoryId, subCategoryId } = validateCategoryIds(
-			record,
-			knownCategoryIds,
-			ctx.misc_category_id,
-		);
+		const { categoryId, subCategoryId } = validateCategoryIds(record, knownCategoryIds);
 
 		valid.push({
 			direction,
@@ -860,6 +989,7 @@ function validateMaskedResponse(
 			category_id: categoryId,
 			sub_category_id: subCategoryId,
 			account_id: null,
+			credit_card_id: null,
 			confidence,
 		});
 	}
@@ -887,8 +1017,9 @@ function validateAndCleanResponse(
 		if (!VALID_DIRECTIONS.includes(direction as 'debit' | 'credit')) continue;
 
 		const amountInPaise = Number(item.amount_in_paise);
+		// See the masked validator: over-threshold amounts are kept and forced
+		// to NEEDS_REVIEW at resolve time, never dropped.
 		if (!Number.isSafeInteger(amountInPaise) || amountInPaise <= 0) continue;
-		if (amountInPaise > 1_000_000_00) continue;
 
 		const confidence = Number(item.confidence);
 		if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) continue;
@@ -924,7 +1055,6 @@ function validateAndCleanResponse(
 		const { categoryId, subCategoryId } = validateCategoryIds(
 			item as unknown as Record<string, unknown>,
 			knownCategoryIds,
-			ctx.misc_category_id,
 		);
 
 		valid.push({
@@ -938,6 +1068,7 @@ function validateAndCleanResponse(
 			category_id: categoryId,
 			sub_category_id: subCategoryId,
 			account_id: null,
+			credit_card_id: null,
 			confidence,
 		});
 	}
@@ -1020,6 +1151,9 @@ async function persistAiTransactions(
 			}
 
 			const resolvedAccountId = item.account_id || null;
+			// account_id comes from the same card row as credit_card_id, so the
+			// DB consistency trigger always agrees.
+			const resolvedCreditCardId = item.credit_card_id || null;
 
 			const txnRows = await txSql<TransactionInsertRowRaw[]>`
 				insert into public.transactions (
@@ -1030,7 +1164,7 @@ async function persistAiTransactions(
 				)
 				values (
 					${lockedRow.user_id}, ${feId}, ${resolvedAccountId},
-					${resolved.category_id}, ${resolved.merchant_id}, null,
+					${resolved.category_id}, ${resolved.merchant_id}, ${resolvedCreditCardId},
 					${item.amount_in_paise},
 					${resolved.transaction_type},
 					${item.txn_timestamp}, null,
@@ -1185,13 +1319,19 @@ export async function runNormalizeRawEmailsJob(
 		}
 
 		for (const item of validated) {
-			if (item.instrument_last4) {
-				const matched = ctx.accounts.find(
-					a => a.last4 && (a.last4 === item.instrument_last4),
-				);
-				if (matched) {
-					item.account_id = matched.id;
-				}
+			// Instrument linking (cards first, then type-compatible accounts;
+			// ambiguity never guesses). Metadata only — auto-verify still runs
+			// exclusively on identity-graph signals.
+			const link = resolveInstrumentLink({
+				payment_method: item.payment_method,
+				instrument_last4: item.instrument_last4,
+				from_address: rawEmail.from_address,
+				accounts: ctx.accounts,
+				credit_cards: ctx.credit_cards,
+			});
+			if (link.credit_card_id || link.account_id) {
+				item.credit_card_id = link.credit_card_id;
+				item.account_id = link.account_id;
 			}
 
 			if (!item.account_id && item.payment_method === 'upi') {
@@ -1227,6 +1367,7 @@ export async function runNormalizeRawEmailsJob(
 			rawEmail.user_id,
 			validated,
 			identityLookup,
+			ctx.hidden_category_ids,
 		);
 
 		const persistence = await persistAiTransactions(
@@ -1599,6 +1740,7 @@ export async function runNormalizeRawEmailsJob(
 					category_id: null,
 					sub_category_id: null,
 					account_id: null,
+					credit_card_id: null,
 					confidence: applied.extraction.confidence,
 				};
 				result.extracted_fact_count++;

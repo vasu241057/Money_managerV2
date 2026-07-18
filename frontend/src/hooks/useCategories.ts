@@ -5,10 +5,20 @@ import { apiClient, toErrorMessage } from '../lib/api-client';
 import { ensureLegacyLocalDataMigrated } from '../lib/legacy-local-migration';
 import type { Category } from '../types/domain';
 
+export interface HiddenCategory {
+  id: string;
+  name: string;
+  type: CategoryRow['type'];
+  parentName: string | null;
+}
+
 interface UseCategoriesResult {
   categories: Category[];
+  hiddenCategories: HiddenCategory[];
   addCategory: (category: Omit<Category, 'id'>) => Promise<void>;
-  deleteCategory: (id: string) => Promise<void>;
+  renameCategory: (id: string, name: string) => Promise<void>;
+  deleteCategory: (id: string) => Promise<{ hidden: boolean }>;
+  restoreCategory: (id: string) => Promise<void>;
   addSubCategory: (categoryId: string, subCategoryName: string) => Promise<void>;
   deleteSubCategory: (categoryId: string, subCategoryName: string) => Promise<void>;
   isLoading: boolean;
@@ -17,21 +27,48 @@ interface UseCategoriesResult {
 
 const CATEGORIES_QUERY_KEY = ['categories'] as const;
 
-function mapCategoryRows(rows: CategoryRow[]): Category[] {
+function mapCategoryRows(rows: CategoryRow[]): {
+  categories: Category[];
+  hidden: HiddenCategory[];
+} {
+  const rowsById = new Map(rows.map(row => [row.id, row]));
+
+  const hidden = rows
+    .filter(row => row.is_hidden === true)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(row => {
+      const parent = row.parent_id ? rowsById.get(row.parent_id) : undefined;
+      return {
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        // Only meaningful for hidden subs; a hidden parent's parent is a
+        // structural root, which would just be noise.
+        parentName: parent && parent.parent_id !== null ? parent.name : null,
+      };
+    });
+
+  // The visible tree ignores hidden rows entirely; user-owned children of a
+  // hidden system parent drop out with it (they return on restore).
+  const visibleRows = rows.filter(row => row.is_hidden !== true);
+
+  // Root IDs (parent_id === null): Income, Expense, Transfer — structural, not assignable
+  const rootIds = new Set(
+    visibleRows.filter(row => row.parent_id === null).map(row => row.id),
+  );
+
+  // Children grouped by parent
   const childrenByParent = new Map<string, CategoryRow[]>();
-
-  rows.forEach(row => {
-    if (!row.parent_id) {
-      return;
-    }
-
+  visibleRows.forEach(row => {
+    if (!row.parent_id) return;
     const existing = childrenByParent.get(row.parent_id) ?? [];
     existing.push(row);
     childrenByParent.set(row.parent_id, existing);
   });
 
-  return rows
-    .filter(row => row.parent_id === null)
+  // Parents: parent_id points to a root (not null, parent is a root)
+  const categories = visibleRows
+    .filter(row => row.parent_id !== null && rootIds.has(row.parent_id))
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(parent => {
       const children = (childrenByParent.get(parent.id) ?? []).sort((a, b) =>
@@ -46,8 +83,11 @@ function mapCategoryRows(rows: CategoryRow[]): Category[] {
         isSystem: parent.is_system,
         subCategories: children.map(child => child.name),
         subCategoryIds: Object.fromEntries(children.map(child => [child.name, child.id])),
+        subCategorySystem: Object.fromEntries(children.map(child => [child.name, child.is_system])),
       };
     });
+
+  return { categories, hidden };
 }
 
 function useRemoteCategories(): UseCategoriesResult {
@@ -57,7 +97,9 @@ function useRemoteCategories(): UseCategoriesResult {
     queryKey: CATEGORIES_QUERY_KEY,
     queryFn: async () => {
       await ensureLegacyLocalDataMigrated();
-      return apiClient.listCategories();
+      // Hidden rows are fetched too (flagged is_hidden) so the Settings
+      // restore list works; the visible tree filters them out.
+      return apiClient.listCategories(undefined, true);
     },
   });
 
@@ -65,11 +107,21 @@ function useRemoteCategories(): UseCategoriesResult {
     mutationFn: async (category: Omit<Category, 'id'>) => {
       await ensureLegacyLocalDataMigrated();
 
+      const rows = categoriesQuery.data ?? [];
+      // Find the structural root for this type (Income/Expense/Transfer)
+      const root = rows.find(row => row.parent_id === null && row.type === category.type);
+      if (!root) {
+        // Creating with parent_id null would make an invisible top-level
+        // category the tree mapper treats as a root.
+        throw new Error('Categories are still loading. Try again in a moment.');
+      }
+      const parentId = root.id;
+
       const parent = await apiClient.createCategory({
         name: category.name,
         type: category.type,
         icon: category.icon,
-        parent_id: null,
+        parent_id: parentId,
       });
 
       if (!category.subCategories || category.subCategories.length === 0) {
@@ -95,17 +147,47 @@ function useRemoteCategories(): UseCategoriesResult {
   });
 
   const deleteCategoryMutation = useMutation({
-    mutationFn: async (categoryId: string) => {
+    mutationFn: async (categoryId: string): Promise<{ hidden: boolean }> => {
       await ensureLegacyLocalDataMigrated();
 
       const rows = categoriesQuery.data ?? [];
+      const target = rows.find(row => row.id === categoryId);
+
+      // System rows are hidden per-user server-side (cascading to their
+      // direct system children) — never delete anything around them.
+      if (target?.is_system) {
+        return apiClient.deleteCategory(categoryId);
+      }
+
       const children = rows.filter(row => row.parent_id === categoryId && !row.is_system);
 
       for (const child of children) {
         await apiClient.deleteCategory(child.id);
       }
 
-      await apiClient.deleteCategory(categoryId);
+      return apiClient.deleteCategory(categoryId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    },
+  });
+
+  const restoreCategoryMutation = useMutation({
+    mutationFn: async (categoryId: string) => {
+      await ensureLegacyLocalDataMigrated();
+      await apiClient.restoreCategory(categoryId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    },
+  });
+
+  const renameCategoryMutation = useMutation({
+    mutationFn: async ({ categoryId, name }: { categoryId: string; name: string }) => {
+      await ensureLegacyLocalDataMigrated();
+      await apiClient.updateCategory(categoryId, { name });
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
@@ -168,22 +250,29 @@ function useRemoteCategories(): UseCategoriesResult {
     },
   });
 
-  const categories = useMemo(() => mapCategoryRows(categoriesQuery.data ?? []), [categoriesQuery.data]);
+  const mapped = useMemo(() => mapCategoryRows(categoriesQuery.data ?? []), [categoriesQuery.data]);
 
   const firstError =
     categoriesQuery.error ??
     addCategoryMutation.error ??
+    renameCategoryMutation.error ??
     deleteCategoryMutation.error ??
+    restoreCategoryMutation.error ??
     addSubCategoryMutation.error ??
     deleteSubCategoryMutation.error;
 
   return {
-    categories,
+    categories: mapped.categories,
+    hiddenCategories: mapped.hidden,
     addCategory: async category => {
       await addCategoryMutation.mutateAsync(category);
     },
-    deleteCategory: async id => {
-      await deleteCategoryMutation.mutateAsync(id);
+    renameCategory: async (id, name) => {
+      await renameCategoryMutation.mutateAsync({ categoryId: id, name });
+    },
+    deleteCategory: async id => deleteCategoryMutation.mutateAsync(id),
+    restoreCategory: async id => {
+      await restoreCategoryMutation.mutateAsync(id);
     },
     addSubCategory: async (categoryId, subCategoryName) => {
       await addSubCategoryMutation.mutateAsync({ categoryId, subCategoryName });
@@ -194,7 +283,9 @@ function useRemoteCategories(): UseCategoriesResult {
     isLoading:
       categoriesQuery.isLoading ||
       addCategoryMutation.isPending ||
+      renameCategoryMutation.isPending ||
       deleteCategoryMutation.isPending ||
+      restoreCategoryMutation.isPending ||
       addSubCategoryMutation.isPending ||
       deleteSubCategoryMutation.isPending,
     error: firstError ? toErrorMessage(firstError) : null,

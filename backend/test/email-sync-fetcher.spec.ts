@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../src/lib/config';
 import type { SqlClient } from '../src/lib/db/client';
-import { runEmailSyncUserJob, runSenderBackfillJob } from '../src/workers/email-sync-fetcher';
+import {
+	runEmailSyncUserJob,
+	runSenderBackfillJob,
+	truncateWithoutSplittingSurrogates,
+} from '../src/workers/email-sync-fetcher';
 import { TransientMessageError } from '../src/workers/queue.errors';
 
 const { getAppConfigMock, getSqlClientMock } = vi.hoisted(() => ({
@@ -724,6 +728,57 @@ describe('email-sync-fetcher', () => {
 			});
 		});
 
+		it('skips backfill rows whose original connection is gone instead of using another mailbox', async () => {
+			const orphanRowId = '00000000-0000-4000-8000-00000000000b';
+			const sql = createSqlMock((query) => {
+				if (query.includes('re.source_id, re.oauth_connection_id')) {
+					// Row's connection id is NOT among the eligible connections
+					// (deleted / revoked since the mail was gated).
+					return [
+						{
+							id: orphanRowId,
+							source_id: 'g9',
+							oauth_connection_id: '00000000-0000-4000-8000-00000000dead',
+						},
+					];
+				}
+				if (query.includes("from public.oauth_connections as oc") && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+					// A different, healthy connection exists — it must NOT be used:
+					// Gmail ids are per-mailbox, so it would 404 or fetch the
+					// wrong account's mail.
+					return [buildConnectionRow()];
+				}
+				if (query.includes('from public.sender_rules')) {
+					return [];
+				}
+				throw new Error(`Unexpected query: ${query}`);
+			});
+
+			// Any network call would mean the wrong mailbox was contacted.
+			const fetcher = vi.fn(async () => {
+				throw new Error('No Gmail/token call expected for an orphaned row');
+			});
+			getAppConfigMock.mockReturnValue(appConfig);
+			getSqlClientMock.mockReturnValue(sql);
+
+			const queueSend = vi.fn().mockResolvedValue(undefined);
+			const result = await runSenderBackfillJob(
+				{
+					job_type: 'SENDER_BACKFILL',
+					user_id: '00000000-0000-4000-8000-000000000001',
+					raw_email_ids: [orphanRowId],
+				},
+				createEnv({ EMAIL_SYNC_QUEUE: { send: queueSend } as unknown as Queue }),
+				fetcher,
+			);
+
+			expect(result.refetched_count).toBe(0);
+			expect(result.skipped_count).toBe(1);
+			expect(result.normalize_enqueued).toBe(false);
+			expect(fetcher).not.toHaveBeenCalled();
+			expect(queueSend).not.toHaveBeenCalled();
+		});
+
 		it('marks connection ERROR_PAUSED on non-retryable Gmail permission errors and acks path', async () => {
 			const queries: string[] = [];
 			const sql = createSqlMock((query) => {
@@ -1364,3 +1419,20 @@ describe('email-sync-fetcher', () => {
 			expect(queries.some(query => query.includes("set sync_status = 'ERROR_PAUSED'"))).toBe(false);
 		});
 	});
+
+describe('truncateWithoutSplittingSurrogates', () => {
+	it('never leaves a dangling high surrogate at the cut', () => {
+		// '💰' is a surrogate pair; cutting at length 4 would split it.
+		const value = `abc💰xyz`;
+		const truncated = truncateWithoutSplittingSurrogates(value, 4);
+		expect(truncated).toBe('abc');
+		// A valid cut point is untouched.
+		expect(truncateWithoutSplittingSurrogates(value, 5)).toBe('abc💰');
+		// Well-formedness: no lone surrogates anywhere in the result.
+		expect(truncated.isWellFormed()).toBe(true);
+	});
+
+	it('returns short strings unchanged', () => {
+		expect(truncateWithoutSplittingSurrogates('short', 500)).toBe('short');
+	});
+});

@@ -3,6 +3,7 @@ import type {
   CategoryRow,
   CreateAccountRequest,
   CreateCategoryRequest,
+  CreateUserCreditCardRequest,
   CreateManualTransactionRequest,
   GoogleOAuthCallbackRequest,
   GoogleOAuthConnectionResponse,
@@ -18,9 +19,11 @@ import type {
   UpdateAccountRequest,
   UpdateCategoryRequest,
   UpdateTransactionRequest,
+  UpdateUserCreditCardRequest,
+  UserCreditCardRow,
 } from '../../../shared/types';
 import { getApiBaseUrl } from '../config/data-source';
-import { getAuthToken, getBootstrapEmailHeader } from './auth-token';
+import { getAuthToken } from './auth-token';
 
 interface ApiEnvelope<T> {
   data: T;
@@ -87,11 +90,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
 
-  const bootstrapEmail = getBootstrapEmailHeader();
-  if (bootstrapEmail) {
-    headers.set('x-user-email', bootstrapEmail);
-  }
-
   const hasBody = init.body !== undefined;
   if (hasBody && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
@@ -147,8 +145,46 @@ export const apiClient = {
     });
   },
 
-  async listCategories(type?: CategoryRow['type']): Promise<CategoryRow[]> {
-    const query = type ? buildQueryString({ type }) : '';
+  async listCreditCards(): Promise<UserCreditCardRow[]> {
+    const response = await request<ApiEnvelope<UserCreditCardRow[]>>('/credit-cards');
+    return response.data;
+  },
+
+  async createCreditCard(
+    payload: CreateUserCreditCardRequest,
+  ): Promise<{ card: UserCreditCardRow; relinkedTransactionCount: number }> {
+    const response = await request<{ data: UserCreditCardRow; relinked_transaction_count: number }>(
+      '/credit-cards',
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+    return { card: response.data, relinkedTransactionCount: response.relinked_transaction_count };
+  },
+
+  async updateCreditCard(
+    creditCardId: string,
+    payload: UpdateUserCreditCardRequest,
+  ): Promise<{ card: UserCreditCardRow; relinkedTransactionCount: number }> {
+    const response = await request<{ data: UserCreditCardRow; relinked_transaction_count: number }>(
+      `/credit-cards/${creditCardId}`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+    );
+    return { card: response.data, relinkedTransactionCount: response.relinked_transaction_count };
+  },
+
+  async deleteCreditCard(creditCardId: string): Promise<void> {
+    await request<void>(`/credit-cards/${creditCardId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async listCategories(
+    type?: CategoryRow['type'],
+    includeHidden = false,
+  ): Promise<CategoryRow[]> {
+    const query = buildQueryString({
+      type,
+      include_hidden: includeHidden ? 'true' : undefined,
+    });
     const response = await request<ApiEnvelope<CategoryRow[]>>(`/categories${query}`);
     return response.data;
   },
@@ -169,9 +205,18 @@ export const apiClient = {
     return response.data;
   },
 
-  async deleteCategory(categoryId: string): Promise<void> {
-    await request<void>(`/categories/${categoryId}`, {
+  // hidden: true = a shared system category was hidden for this user
+  // (restorable); false = the user's own category was really deleted.
+  async deleteCategory(categoryId: string): Promise<{ hidden: boolean }> {
+    const response = await request<ApiEnvelope<{ hidden: boolean }>>(`/categories/${categoryId}`, {
       method: 'DELETE',
+    });
+    return response.data;
+  },
+
+  async restoreCategory(categoryId: string): Promise<void> {
+    await request<void>(`/categories/${categoryId}/restore`, {
+      method: 'POST',
     });
   },
 

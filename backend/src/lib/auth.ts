@@ -9,7 +9,6 @@ import { serviceUnavailable, unauthorized } from './http/errors';
 import { parseEmail } from './http/validation';
 
 const AUTHORIZATION_HEADER = 'authorization';
-const USER_EMAIL_HEADER = 'x-user-email';
 const CLERK_SUBJECT_NAMESPACE = '2d0ec934-68a4-4184-adf1-46d5f9d5cc0f';
 const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 const DEFAULT_JWKS_CACHE_SECONDS = 300;
@@ -425,20 +424,12 @@ export const requireAuthenticatedUser: RequestHandler = asyncHandler(async (req,
 	});
 
 	const userId = await deriveUserUuidFromClerkSubject(payload.sub as string);
-	const tokenEmail = extractTokenEmail(payload);
-
-	const userEmailHeader = getHeaderValue(req.header(USER_EMAIL_HEADER) ?? undefined);
-	const userEmailFromHeader = userEmailHeader
-		? parseEmail(userEmailHeader, USER_EMAIL_HEADER)
-		: undefined;
-	if (tokenEmail && userEmailFromHeader && tokenEmail !== userEmailFromHeader) {
-		throw unauthorized(
-			'UNAUTHORIZED',
-			`${USER_EMAIL_HEADER} must match Clerk token email when both are provided`,
-		);
-	}
-
-	const userEmail = tokenEmail ?? userEmailFromHeader;
+	// The email comes ONLY from the verified Clerk token. A client-supplied
+	// header (the old x-user-email path) would let any authenticated caller
+	// write an arbitrary — including someone else's — address into their
+	// users.email row. Tokens without an email claim get the synthetic
+	// fallback address instead.
+	const userEmail = extractTokenEmail(payload);
 
 	const config = getAppConfig(runtimeEnv);
 	if (!config.supabasePoolerUrl) {
@@ -475,11 +466,8 @@ export const requireAuthenticatedUser: RequestHandler = asyncHandler(async (req,
 		);
 	}
 
-	await sql`
-		insert into public.categories (user_id, name, icon, type)
-		values (${userId}, 'Miscellaneous', 'Circle', 'expense')
-		on conflict do nothing
-	`;
+	// No per-user seed categories: the system taxonomy (exhaustive-categories
+	// migration) covers fresh users, including the Miscellaneous fallback.
 
 	req.auth = { userId };
 	next();

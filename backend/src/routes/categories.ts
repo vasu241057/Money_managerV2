@@ -13,6 +13,7 @@ import {
 	listCategories,
 	parseCreateCategoryRequest,
 	parseUpdateCategoryRequest,
+	restoreCategory,
 	updateCategory,
 } from '../services/categories.service';
 
@@ -41,7 +42,8 @@ export function createCategoriesRouter(): Router {
 				categoryType = type;
 			}
 
-			const categories = await listCategories(sql, userId, categoryType);
+			const includeHidden = req.query.include_hidden === 'true';
+			const categories = await listCategories(sql, userId, categoryType, includeHidden);
 			res.status(200).json({ data: categories });
 		}),
 	);
@@ -81,7 +83,22 @@ export function createCategoriesRouter(): Router {
 			const config = getAppConfig(runtimeEnv);
 			const sql = getSqlClient(config);
 
-			await deleteCategory(sql, userId, categoryId);
+			const outcome = await deleteCategory(sql, userId, categoryId);
+			// hidden: true = a shared system category was hidden for this user
+			// (restorable); hidden: false = the user's own category was deleted.
+			res.status(200).json({ data: outcome });
+		}),
+	);
+
+	router.post(
+		'/:categoryId/restore',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			const categoryId = parseUuid(req.params.categoryId, 'categoryId');
+			const config = getAppConfig(runtimeEnv);
+			const sql = getSqlClient(config);
+
+			await restoreCategory(sql, userId, categoryId);
 			res.status(204).send();
 		}),
 	);

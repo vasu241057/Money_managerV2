@@ -866,11 +866,23 @@ function sanitizeText(value: string): string {
 		.replace(/[ \t]{2,}/g, ' ')
 		.trim();
 
-	if (normalized.length <= MAX_CLEAN_TEXT_LENGTH) {
-		return normalized;
-	}
+	return truncateWithoutSplittingSurrogates(normalized, MAX_CLEAN_TEXT_LENGTH);
+}
 
-	return normalized.slice(0, MAX_CLEAN_TEXT_LENGTH);
+// Truncates by UTF-16 length without leaving a dangling high surrogate at
+// the cut. A lone surrogate (an emoji split at the boundary) is invalid
+// UTF-8: Postgres rejects it, the whole page's persist transaction aborts,
+// the cursor never advances, and the connection wedges on one email forever.
+export function truncateWithoutSplittingSurrogates(
+	value: string,
+	maxLength: number,
+): string {
+	if (value.length <= maxLength) {
+		return value;
+	}
+	const truncated = value.slice(0, maxLength);
+	const lastCode = truncated.charCodeAt(truncated.length - 1);
+	return lastCode >= 0xd800 && lastCode <= 0xdbff ? truncated.slice(0, -1) : truncated;
 }
 
 function collectMessageBodyText(
@@ -1359,7 +1371,9 @@ async function processConnection(
 			const senderAllowed =
 				!senderGate.enabled || isAllowedSender(fromHeader, fromAddress, senderGateEntries);
 			const internalDateIso = new Date(internalTimestamp).toISOString();
-			const subject = subjectHeader ? subjectHeader.slice(0, MAX_SUBJECT_LENGTH) : null;
+			const subject = subjectHeader
+				? truncateWithoutSplittingSurrogates(subjectHeader, MAX_SUBJECT_LENGTH)
+				: null;
 
 			if (!senderAllowed) {
 				senderGatedCount += 1;
@@ -1541,14 +1555,19 @@ export async function runSenderBackfillJob(
 		return result;
 	}
 
-	// Prefer each row's original connection; fall back to the first eligible
-	// one (oauth_connection_id is set null when a connection is deleted).
+	// Each row is refetched ONLY through its own original connection: Gmail
+	// message ids are per-mailbox, so another connection would 404 (or worse,
+	// fetch an unrelated user email). Rows whose connection is gone or
+	// currently ineligible are skipped — they stay IGNORED with empty
+	// clean_text, so a later run can still promote them if the connection
+	// comes back.
 	const connectionById = new Map<UUID, OauthConnectionRow>();
 	for (const connection of connections) {
 		connectionById.set(connection.id, connection);
 	}
 	const accessTokenByConnectionId = new Map<UUID, string>();
 	const updatedRawEmailIds: UUID[] = [];
+	let unresolvableConnectionCount = 0;
 
 	for (const row of rows) {
 		const rawEmailId = toRequiredString(row.id, 'raw_emails.id');
@@ -1557,8 +1576,12 @@ export async function runSenderBackfillJob(
 			row.oauth_connection_id,
 			'raw_emails.oauth_connection_id',
 		);
-		const connection =
-			(connectionId ? connectionById.get(connectionId) : undefined) ?? connections[0];
+		const connection = connectionId ? connectionById.get(connectionId) : undefined;
+		if (!connection) {
+			unresolvableConnectionCount += 1;
+			result.skipped_count += 1;
+			continue;
+		}
 
 		let accessToken = accessTokenByConnectionId.get(connection.id);
 		if (!accessToken) {
@@ -1605,6 +1628,15 @@ export async function runSenderBackfillJob(
 	result.skipped_count += rows.length < job.raw_email_ids.length
 		? job.raw_email_ids.length - rows.length
 		: 0;
+
+	if (unresolvableConnectionCount > 0) {
+		// Structural, not benign: these rows cannot be promoted until their
+		// original connection is restored (or the row is re-pointed manually).
+		console.warn('SENDER_BACKFILL_CONNECTION_UNRESOLVABLE', {
+			userId: job.user_id,
+			rowCount: unresolvableConnectionCount,
+		});
+	}
 
 	if (updatedRawEmailIds.length > 0) {
 		await enqueueNormalizeRawEmailsJobs(env.EMAIL_SYNC_QUEUE, updatedRawEmailIds);

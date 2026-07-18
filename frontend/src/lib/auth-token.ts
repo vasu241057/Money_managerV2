@@ -14,7 +14,6 @@ declare global {
   interface Window {
     Clerk?: ClerkLike;
     __MONEY_MANAGER_CLERK_JWT__?: string;
-    __MONEY_MANAGER_USER_EMAIL__?: string;
   }
 }
 
@@ -42,17 +41,4 @@ export function setAuthTokenProvider(provider: AuthTokenProvider): void {
 
 export async function getAuthToken(): Promise<string | null> {
   return authTokenProvider();
-}
-
-export function getBootstrapEmailHeader(): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  const email = window.__MONEY_MANAGER_USER_EMAIL__;
-  if (!email || email.trim() === '') {
-    return null;
-  }
-
-  return email.trim();
 }
