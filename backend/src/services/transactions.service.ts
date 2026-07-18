@@ -335,7 +335,7 @@ function mapTransactionFeedRow(row: TransactionFeedRowRaw): TransactionFeedItem 
 							row.credit_card_card_label,
 							'user_credit_cards.card_label',
 						),
-						first4: toRequiredString(row.credit_card_first4, 'user_credit_cards.first4'),
+						first4: toNullableString(row.credit_card_first4, 'user_credit_cards.first4'),
 						last4: toRequiredString(row.credit_card_last4, 'user_credit_cards.last4'),
 					},
 		category:

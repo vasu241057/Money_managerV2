@@ -5,8 +5,12 @@ import {
 } from '../../../../shared/types';
 import { badRequest } from './errors';
 
+// Any 8-4-4-4-12 hex shape, NOT RFC-version-strict: the system seed rows
+// (categories, merchants) use readable ids like
+// 00000000-0000-0000-0000-000000000148 whose version/variant nibbles are 0.
+// Postgres' uuid type accepts them; the API must too.
 const UUID_REGEX =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LAST4_REGEX = /^[0-9]{4}$/;
 
 export function asRecord(value: unknown, errorMessage = 'Request body must be a JSON object'): Record<string, unknown> {

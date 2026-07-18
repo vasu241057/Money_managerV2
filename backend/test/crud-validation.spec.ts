@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { parseUuid } from '../src/lib/http/validation';
 import {
 	parseCreateAccountRequest,
 	parseUpdateAccountRequest,
@@ -8,6 +9,22 @@ import {
 	parseCreateCategoryRequest,
 	parseUpdateCategoryRequest,
 } from '../src/services/categories.service';
+
+describe('uuid validation', () => {
+	it('accepts system seed ids (version/variant nibbles are 0, not RFC-4122)', () => {
+		// Seed rows use readable ids; a version-strict regex 400s every
+		// hide/restore/review call that carries one.
+		expect(parseUuid('00000000-0000-0000-0000-000000000148', 'categoryId')).toBe(
+			'00000000-0000-0000-0000-000000000148',
+		);
+	});
+
+	it('still rejects non-uuid strings', () => {
+		expect(() => parseUuid('not-a-uuid', 'categoryId')).toThrow(
+			'categoryId must be a valid UUID',
+		);
+	});
+});
 
 describe('accounts/categories payload validation', () => {
 	it('rejects invalid account type', () => {

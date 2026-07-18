@@ -9,22 +9,10 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       proxy: {
-        '/api/accounts': {
-          target: backendTarget,
-          changeOrigin: true,
-          rewrite: path => path.replace(/^\/api/, ''),
-        },
-        '/api/categories': {
-          target: backendTarget,
-          changeOrigin: true,
-          rewrite: path => path.replace(/^\/api/, ''),
-        },
-        '/api/transactions': {
-          target: backendTarget,
-          changeOrigin: true,
-          rewrite: path => path.replace(/^\/api/, ''),
-        },
-        '/api/oauth': {
+        // Single catch-all: every /api/* path goes to the backend. Never
+        // enumerate routes here — a missing entry makes Vite serve
+        // index.html for that API call ("<!doctype is not valid JSON").
+        '/api': {
           target: backendTarget,
           changeOrigin: true,
           rewrite: path => path.replace(/^\/api/, ''),

@@ -297,7 +297,7 @@ export function TransactionEditor({
 							No {type} categories available
 						</p>
 					) : (
-						<div className="flex gap-2 overflow-x-auto pb-2 -mb-2 no-scrollbar px-1">
+						<div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-2 overflow-x-auto pb-2 -mb-2 no-scrollbar px-1">
 							{categoriesForType.map((cat) => (
 								<button
 									key={cat.id}
@@ -307,7 +307,7 @@ export function TransactionEditor({
 											setSelectedSubId('');
 										}
 									}}
-									className="shrink-0 rounded-full px-4 py-2 text-xs font-medium transition-colors"
+									className="rounded-full px-4 py-2 text-xs font-medium transition-colors whitespace-nowrap"
 									style={
 										selectedParentId === cat.id
 											? { background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }
@@ -365,12 +365,12 @@ export function TransactionEditor({
 							No accounts available
 						</p>
 					) : (
-						<div className="flex gap-2 overflow-x-auto pb-2 -mb-2 no-scrollbar px-1">
+						<div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-2 overflow-x-auto pb-2 -mb-2 no-scrollbar px-1">
 							{accounts.map((acc) => (
 								<button
 									key={acc.id}
 									onClick={() => setSelectedAccountId(selectedAccountId === acc.id ? '' : acc.id)}
-									className="shrink-0 rounded-full px-4 py-2 text-xs font-medium transition-colors"
+									className="rounded-full px-4 py-2 text-xs font-medium transition-colors whitespace-nowrap"
 									style={
 										selectedAccountId === acc.id
 											? { background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }
@@ -402,44 +402,50 @@ export function TransactionEditor({
 					/>
 				</div>
 
-				{submitError && (
-					<p className="text-xs mb-4" style={{ color: 'var(--ledger-negative)' }}>{submitError}</p>
-				)}
-
-				{/* ACTION BUTTONS */}
-				<div className="flex flex-col gap-3 mt-4">
+				{mode === 'edit' && editingTransaction && !isBankDetected && (
 					<button
-						onClick={() => { void handleSave(); }}
-						disabled={!canSave || txLoading}
+						onClick={() => { void handleDelete(); }}
+						disabled={txLoading}
 						className="w-full h-14 rounded-[10px] text-sm font-bold active:scale-[0.98] transition-all flex items-center justify-center gap-2"
 						style={{
-							background: 'var(--ledger-accent)',
-							color: 'var(--ledger-bg)',
-							boxShadow: '0 8px 24px -8px var(--ledger-accent)',
-							opacity: (!canSave || txLoading) ? 0.5 : 1,
+							background: 'var(--ledger-card)',
+							color: 'var(--ledger-negative)',
+							border: '1px solid rgba(196, 83, 54, 0.3)',
 						}}
 					>
-						{txLoading && <Loader2 size={16} className="animate-spin" />}
-						{saveLabel}
+						<Trash2 size={16} />
+						Delete Transaction
 					</button>
-
-					{mode === 'edit' && editingTransaction && !isBankDetected && (
-						<button
-							onClick={() => { void handleDelete(); }}
-							disabled={txLoading}
-							className="w-full h-14 rounded-[10px] text-sm font-bold active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-							style={{
-								background: 'var(--ledger-card)',
-								color: 'var(--ledger-negative)',
-								border: '1px solid rgba(196, 83, 54, 0.3)',
-							}}
-						>
-							<Trash2 size={16} />
-							Delete Transaction
-						</button>
-					)}
-				</div>
+				)}
 			</main>
+
+			{/* Pinned action bar: the form scrolls underneath, save stays put. */}
+			<div
+				className="shrink-0 px-5 pt-3 pb-4 z-20"
+				style={{
+					background: 'var(--ledger-bg)',
+					borderTop: '1px solid var(--ledger-rule)',
+					boxShadow: '0 -12px 24px -12px rgba(0, 0, 0, 0.12)',
+				}}
+			>
+				{submitError && (
+					<p className="text-xs mb-2" style={{ color: 'var(--ledger-negative)' }}>{submitError}</p>
+				)}
+				<button
+					onClick={() => { void handleSave(); }}
+					disabled={!canSave || txLoading}
+					className="w-full h-14 rounded-[10px] text-sm font-bold active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+					style={{
+						background: 'var(--ledger-accent)',
+						color: 'var(--ledger-bg)',
+						boxShadow: '0 8px 24px -8px var(--ledger-accent)',
+						opacity: (!canSave || txLoading) ? 0.5 : 1,
+					}}
+				>
+					{txLoading && <Loader2 size={16} className="animate-spin" />}
+					{saveLabel}
+				</button>
+			</div>
 		</div>
 	);
 }

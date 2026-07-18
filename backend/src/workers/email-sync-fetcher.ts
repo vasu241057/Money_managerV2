@@ -1646,6 +1646,444 @@ export async function runSenderBackfillJob(
 	return result;
 }
 
+// ── Internal ops: sender-metadata backfill + sync probe ─────────
+// Dev/ops tooling behind /internal/* (secret-guarded). Neither touches the
+// sync watermark; both are safe to run repeatedly.
+
+export interface SenderMetadataBackfillResult {
+	scanned_count: number;
+	updated_count: number;
+	skipped_count: number;
+	/** Rows still missing from_address after this run (0 = done). */
+	remaining_count: number;
+	skip_reasons: {
+		no_connection_id: number;
+		connection_missing: number;
+		token_refresh_failed: number;
+		message_gone: number;
+		update_no_match: number;
+	};
+}
+
+interface MetadataBackfillRowRaw {
+	id: unknown;
+	user_id: unknown;
+	source_id: unknown;
+	oauth_connection_id: unknown;
+}
+
+// One-time repair for rows ingested before from_address/subject were stored
+// (pre-July-2026): re-fetches HEADERS ONLY by stored Gmail id, via each
+// row's own connection. With sender addresses present, the backlog becomes
+// template-learnable — the whole point of running this before a drain.
+export async function runSenderMetadataBackfill(
+	limit: number,
+	env: Env,
+	fetcher: FetchLike = fetch,
+): Promise<SenderMetadataBackfillResult> {
+	const config = getAppConfig(env);
+	const sql = getSqlClient(config);
+	const result: SenderMetadataBackfillResult = {
+		scanned_count: 0,
+		updated_count: 0,
+		skipped_count: 0,
+		remaining_count: 0,
+		skip_reasons: {
+			no_connection_id: 0,
+			connection_missing: 0,
+			token_refresh_failed: 0,
+			message_gone: 0,
+			update_no_match: 0,
+		},
+	};
+
+	const rows = await sql<MetadataBackfillRowRaw[]>`
+		select re.id, re.user_id, re.source_id, re.oauth_connection_id
+		from public.raw_emails as re
+		where re.from_address is null
+		order by re.created_at asc
+		limit ${limit}
+	`;
+	result.scanned_count = rows.length;
+
+	const googleConfig = getGoogleRefreshConfig(env);
+	const connectionById = new Map<UUID, OauthConnectionRow>();
+	const accessTokenByConnectionId = new Map<UUID, string>();
+
+	for (const row of rows) {
+		const rawEmailId = toRequiredString(row.id, 'raw_emails.id') as UUID;
+		const userId = toRequiredString(row.user_id, 'raw_emails.user_id') as UUID;
+		const sourceId = toRequiredString(row.source_id, 'raw_emails.source_id');
+		const connectionId = toNullableString(
+			row.oauth_connection_id,
+			'raw_emails.oauth_connection_id',
+		) as UUID | null;
+		if (!connectionId) {
+			result.skipped_count += 1;
+			result.skip_reasons.no_connection_id += 1;
+			continue;
+		}
+
+		let connection = connectionById.get(connectionId);
+		if (!connection) {
+			const loaded = await loadConnectionById(sql, connectionId, userId);
+			if (!loaded) {
+				result.skipped_count += 1;
+				result.skip_reasons.connection_missing += 1;
+				continue;
+			}
+			connection = loaded;
+			connectionById.set(connectionId, connection);
+		}
+
+		let accessToken = accessTokenByConnectionId.get(connectionId);
+		if (!accessToken) {
+			const refreshOutcome = await refreshAccessTokenWithOcc(
+				sql,
+				connection,
+				googleConfig,
+				fetcher,
+			);
+			if (refreshOutcome.revoked || refreshOutcome.inactive) {
+				result.skipped_count += 1;
+				result.skip_reasons.token_refresh_failed += 1;
+				continue;
+			}
+			accessToken = refreshOutcome.accessToken;
+			accessTokenByConnectionId.set(connectionId, accessToken);
+		}
+
+		const getResult = await gmailGetMessage(accessToken, sourceId, fetcher, 'metadata');
+		if (getResult.revoked || getResult.paused || !getResult.message) {
+			// Deleted messages 404 forever: mark the sender as unknown-but-tried
+			// so the row stops being re-scanned every run.
+			await sql`
+				update public.raw_emails as re
+				set from_address = ''
+				where re.id = ${rawEmailId} and re.from_address is null
+			`;
+			result.skipped_count += 1;
+			result.skip_reasons.message_gone += 1;
+			continue;
+		}
+
+		const fromHeader = extractMessageHeader(getResult.message, 'From');
+		const subjectHeader = extractMessageHeader(getResult.message, 'Subject');
+		const fromAddress = parseFromAddress(fromHeader) ?? '';
+		const subject = subjectHeader
+			? truncateWithoutSplittingSurrogates(subjectHeader, MAX_SUBJECT_LENGTH)
+			: null;
+
+		const updated = await sql<{ id: UUID }[]>`
+			update public.raw_emails as re
+			set
+				from_address = ${fromAddress},
+				subject = coalesce(re.subject, ${subject})
+			where re.id = ${rawEmailId}
+				and re.from_address is null
+			returning re.id
+		`;
+		if (updated.length > 0) {
+			result.updated_count += 1;
+		} else {
+			result.skipped_count += 1;
+			result.skip_reasons.update_no_match += 1;
+		}
+	}
+
+	const remainingRows = await sql<{ remaining: unknown }[]>`
+		select count(*)::int as remaining
+		from public.raw_emails as re
+		where re.from_address is null
+	`;
+	result.remaining_count = Number(remainingRows[0]?.remaining ?? 0);
+
+	return result;
+}
+
+export interface RetroSenderGateResult {
+	gate_enabled: boolean;
+	dry_run: boolean;
+	scanned_count: number;
+	/** Senders that pass the gate — these stay PENDING and are worth AI. */
+	allowed_count: number;
+	/** Senders that fail the gate — flipped IGNORED + body purged (unless dry run). */
+	gated_count: number;
+	/** Rows with no usable sender (deleted messages) — left PENDING untouched. */
+	unknown_sender_count: number;
+	remaining_pending_count: number;
+}
+
+// One-time retro-application of the sender gate to rows ingested before the
+// gate existed (full bodies, no gating). Requires the metadata backfill to
+// have run first. Denied rows enter the same shape as live-gated mail
+// (IGNORED, clean_text='') so the sender-classifier backfill can still
+// promote them later if their sender turns out to be a bank. Slightly
+// stricter than the live gate: only the parsed address is stored, so brand
+// tokens can't match display names.
+export async function runRetroactiveSenderGate(
+	limit: number,
+	dryRun: boolean,
+	env: Env,
+): Promise<RetroSenderGateResult> {
+	const config = getAppConfig(env);
+	const sql = getSqlClient(config);
+
+	const senderGate = resolveSenderGateConfig(env);
+	let senderGateEntries: readonly string[] = senderGate.entries;
+	if (senderGate.enabled) {
+		const dbEntries = await loadSenderRuleEntries(sql);
+		senderGateEntries = [...senderGate.entries, ...dbEntries];
+	}
+
+	const result: RetroSenderGateResult = {
+		gate_enabled: senderGate.enabled,
+		dry_run: dryRun,
+		scanned_count: 0,
+		allowed_count: 0,
+		gated_count: 0,
+		unknown_sender_count: 0,
+		remaining_pending_count: 0,
+	};
+
+	const rows = await sql<Array<{ id: unknown; from_address: unknown }>>`
+		select re.id, re.from_address
+		from public.raw_emails as re
+		where re.status = 'PENDING_EXTRACTION'
+		order by re.created_at asc
+		limit ${limit}
+	`;
+	result.scanned_count = rows.length;
+
+	const deniedIds: UUID[] = [];
+	for (const row of rows) {
+		const id = toRequiredString(row.id, 'raw_emails.id') as UUID;
+		const fromAddress = toNullableString(row.from_address, 'raw_emails.from_address');
+		if (!fromAddress) {
+			result.unknown_sender_count += 1;
+			continue;
+		}
+		const allowed =
+			!senderGate.enabled || isAllowedSender(fromAddress, fromAddress, senderGateEntries);
+		if (allowed) {
+			result.allowed_count += 1;
+		} else {
+			result.gated_count += 1;
+			deniedIds.push(id);
+		}
+	}
+
+	if (!dryRun && deniedIds.length > 0) {
+		await sql`
+			update public.raw_emails as re
+			set status = 'IGNORED', clean_text = ''
+			where re.id = any(${deniedIds}::uuid[])
+				and re.status = 'PENDING_EXTRACTION'
+		`;
+	}
+
+	const remainingRows = await sql<{ remaining: unknown }[]>`
+		select count(*)::int as remaining
+		from public.raw_emails as re
+		where re.status = 'PENDING_EXTRACTION'
+	`;
+	result.remaining_pending_count = Number(remainingRows[0]?.remaining ?? 0);
+
+	return result;
+}
+
+export interface SyncProbeMessageReport {
+	source_id: string;
+	internal_date: string | null;
+	from_address: string | null;
+	subject: string | null;
+	verdict: 'allowed' | 'gated' | 'already_known' | 'skipped';
+}
+
+export interface SyncProbeResult {
+	user_id: UUID | null;
+	connection_email: string | null;
+	listed_count: number;
+	enqueued_pending_count: number;
+	reports: SyncProbeMessageReport[];
+}
+
+// Fetches ONLY the newest `limit` Gmail messages through the normal
+// metadata-first + sender-gate flow, logging and returning each message's
+// metadata + gate verdict. Persists exactly like the real fetcher but NEVER
+// advances last_sync_timestamp, so the full historical sync stays intact.
+export async function runEmailSyncProbe(
+	limit: number,
+	env: Env,
+	fetcher: FetchLike = fetch,
+): Promise<SyncProbeResult> {
+	const config = getAppConfig(env);
+	const sql = getSqlClient(config);
+	const result: SyncProbeResult = {
+		user_id: null,
+		connection_email: null,
+		listed_count: 0,
+		enqueued_pending_count: 0,
+		reports: [],
+	};
+
+	const connectionRows = await sql<OAuthConnectionFetchRowRaw[]>`
+		select
+			oc.id,
+			oc.user_id,
+			oc.provider,
+			oc.email_address,
+			oc.access_token,
+			oc.refresh_token,
+			oc.last_sync_timestamp,
+			oc.sync_status,
+			oc.created_at,
+			oc.updated_at
+		from public.oauth_connections as oc
+		where oc.provider = ${GOOGLE_OAUTH_PROVIDER}
+			and oc.sync_status in ('ACTIVE', 'ERROR_PAUSED')
+		order by oc.updated_at desc
+		limit 1
+	`;
+	if (connectionRows.length === 0) {
+		return result;
+	}
+	const connection = mapOauthConnectionRow(connectionRows[0]);
+	result.user_id = connection.user_id;
+	result.connection_email = connection.email_address;
+
+	const googleConfig = getGoogleRefreshConfig(env);
+	const refreshOutcome = await refreshAccessTokenWithOcc(sql, connection, googleConfig, fetcher);
+	if (refreshOutcome.revoked || refreshOutcome.inactive) {
+		return result;
+	}
+	const accessToken = refreshOutcome.accessToken;
+
+	const senderGate = resolveSenderGateConfig(env);
+	let senderGateEntries: readonly string[] = senderGate.entries;
+	if (senderGate.enabled) {
+		const dbEntries = await loadSenderRuleEntries(sql);
+		senderGateEntries = [...senderGate.entries, ...dbEntries];
+	}
+
+	// No search filter, no pagination: Gmail lists newest-first, one page.
+	const listResult = await gmailListMessages(accessToken, 0, null, false, fetcher);
+	if (listResult.revoked || listResult.paused) {
+		return result;
+	}
+	const messageIds = listResult.messageIds.slice(0, limit);
+	result.listed_count = messageIds.length;
+
+	const existingBySourceId = await listExistingRawEmailStatuses(
+		sql,
+		connection.user_id,
+		messageIds,
+	);
+
+	const recordsToPersist: RawEmailUpsertRecord[] = [];
+	for (const messageId of messageIds) {
+		if (existingBySourceId.has(messageId)) {
+			result.reports.push({
+				source_id: messageId,
+				internal_date: null,
+				from_address: null,
+				subject: null,
+				verdict: 'already_known',
+			});
+			continue;
+		}
+
+		const metaResult = await gmailGetMessage(accessToken, messageId, fetcher, 'metadata');
+		if (metaResult.revoked || metaResult.paused || !metaResult.message) {
+			result.reports.push({
+				source_id: messageId,
+				internal_date: null,
+				from_address: null,
+				subject: null,
+				verdict: 'skipped',
+			});
+			continue;
+		}
+		const metaMessage = metaResult.message;
+		const internalTimestamp = parseMessageInternalTimestamp(metaMessage.internalDate);
+		if (internalTimestamp === null) {
+			result.reports.push({
+				source_id: messageId,
+				internal_date: null,
+				from_address: null,
+				subject: null,
+				verdict: 'skipped',
+			});
+			continue;
+		}
+
+		const fromHeader = extractMessageHeader(metaMessage, 'From');
+		const subjectHeader = extractMessageHeader(metaMessage, 'Subject');
+		const fromAddress = parseFromAddress(fromHeader);
+		const subject = subjectHeader
+			? truncateWithoutSplittingSurrogates(subjectHeader, MAX_SUBJECT_LENGTH)
+			: null;
+		const internalDateIso = new Date(internalTimestamp).toISOString();
+		const senderAllowed =
+			!senderGate.enabled || isAllowedSender(fromHeader, fromAddress, senderGateEntries);
+
+		const report: SyncProbeMessageReport = {
+			source_id: messageId,
+			internal_date: internalDateIso,
+			from_address: fromAddress,
+			subject,
+			verdict: senderAllowed ? 'allowed' : 'gated',
+		};
+		result.reports.push(report);
+		// Content-bearing log; the probe is dev/ops-only by design.
+		console.info('SYNC_PROBE_MESSAGE', report);
+
+		if (!senderAllowed) {
+			recordsToPersist.push({
+				source_id: messageId,
+				internal_date_iso: internalDateIso,
+				clean_text: '',
+				from_address: fromAddress,
+				subject,
+				status: 'IGNORED',
+			});
+			continue;
+		}
+
+		const fullResult = await gmailGetMessage(accessToken, messageId, fetcher, 'full');
+		if (fullResult.revoked || fullResult.paused || !fullResult.message) {
+			report.verdict = 'skipped';
+			continue;
+		}
+		recordsToPersist.push({
+			source_id: messageId,
+			internal_date_iso: internalDateIso,
+			clean_text: buildSanitizedEmailText(fullResult.message),
+			from_address: fromAddress,
+			subject,
+			status: 'PENDING_EXTRACTION',
+		});
+	}
+
+	if (recordsToPersist.length > 0) {
+		// advanceCursor: false — the probe must never move the watermark.
+		const insertedIds = await persistRawEmailsAndCursor(
+			sql,
+			connection.id,
+			connection.user_id,
+			recordsToPersist,
+			0,
+			false,
+		);
+		if (insertedIds.length > 0) {
+			await enqueueNormalizeRawEmailsJobs(env.EMAIL_SYNC_QUEUE, insertedIds);
+			result.enqueued_pending_count = insertedIds.length;
+		}
+	}
+
+	return result;
+}
+
 export async function runEmailSyncUserJob(
 	job: EmailSyncUserJobPayload,
 	env: Env,

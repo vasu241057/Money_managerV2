@@ -1,5 +1,5 @@
 import type { MerchantMappingJobPayload, MerchantType, UUID } from '../../../shared/types';
-import { resolveOpenCodeGoApiKey, resolveOpenCodeGoModel } from '../lib/ai';
+import { resolveAiProviderConfig } from '../lib/ai';
 import { getAppConfig } from '../lib/config';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
@@ -7,8 +7,7 @@ import { toRequiredString } from '../lib/db/serialization';
 import { loadSystemExpenseCategories } from '../lib/identity';
 import { TransientMessageError } from './queue.errors';
 
-const OPENCODE_GO_CHAT_URL = 'https://opencode.ai/zen/go/v1/chat/completions';
-const OPENCODE_GO_TIMEOUT_MS = 30_000;
+const AI_CHAT_TIMEOUT_MS = 30_000;
 const MAX_MERCHANTS_PER_RUN = 200;
 const MAX_CATEGORY_BACKFILL_PER_RUN = 100;
 const UNMAPPED_LOOKBACK_DAYS = 14;
@@ -117,18 +116,19 @@ async function callMerchantMappingModel(
 	categoriesByName: Map<string, UUID>,
 ): Promise<MerchantMapping[] | null> {
 	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), OPENCODE_GO_TIMEOUT_MS);
+	const providerConfig = resolveAiProviderConfig(env);
+	const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_TIMEOUT_MS);
 
 	let response: Response;
 	try {
-		response = await fetch(OPENCODE_GO_CHAT_URL, {
+		response = await fetch(providerConfig.chatUrl, {
 			method: 'POST',
 			headers: {
 				Authorization: `Bearer ${apiKey}`,
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify({
-				model: resolveOpenCodeGoModel(env),
+				model: providerConfig.dailyModel,
 				temperature: 0,
 				messages: buildMappingPrompt(candidates, [...categoriesByName.keys()]),
 				response_format: { type: 'json_object' },
@@ -385,9 +385,10 @@ export async function runMerchantMappingJob(
 ): Promise<MerchantMappingResult> {
 	const result = createEmptyResult();
 
-	const apiKey = resolveOpenCodeGoApiKey(env);
+	const providerConfig = resolveAiProviderConfig(env);
+	const apiKey = providerConfig.apiKey;
 	if (!apiKey) {
-		result.skipped_reason = 'OPENCODE_GO_API_KEY not set';
+		result.skipped_reason = `${providerConfig.apiKeyEnvVar} not set`;
 		return result;
 	}
 

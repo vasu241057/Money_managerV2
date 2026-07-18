@@ -40,7 +40,7 @@ function mapUserCreditCardRow(row: UserCreditCardRowRaw): UserCreditCardRow {
 			row.network,
 			'user_credit_cards.network',
 		) as UserCreditCardRow['network'],
-		first4: toRequiredString(row.first4, 'user_credit_cards.first4'),
+		first4: toNullableString(row.first4, 'user_credit_cards.first4'),
 		last4: toRequiredString(row.last4, 'user_credit_cards.last4'),
 		is_active: row.is_active === true,
 		created_at: toIsoDateTime(row.created_at, 'user_credit_cards.created_at'),
@@ -83,11 +83,14 @@ export function parseCreateUserCreditCardRequest(payload: unknown): CreateUserCr
 	const body = asRecord(payload);
 
 	return {
-		account_id: parseUuid(body.account_id, 'account_id'),
+		account_id:
+			body.account_id === undefined || body.account_id === null
+				? null
+				: parseUuid(body.account_id, 'account_id'),
 		card_label: parseRequiredString(body.card_label, 'card_label'),
 		issuer_name: parseIssuerName(body.issuer_name, 'issuer_name'),
 		network: parseNetwork(body.network, 'network'),
-		first4: parseRequired4Digits(body.first4, 'first4'),
+		first4: parseLast4(body.first4, 'first4') ?? null,
 		last4: parseRequired4Digits(body.last4, 'last4'),
 		is_active: body.is_active === undefined ? true : body.is_active === true,
 	};
@@ -110,7 +113,7 @@ export function parseUpdateUserCreditCardRequest(payload: unknown): UpdateUserCr
 		updateRequest.network = parseNetwork(body.network, 'network');
 	}
 	if (body.first4 !== undefined) {
-		updateRequest.first4 = parseRequired4Digits(body.first4, 'first4');
+		updateRequest.first4 = parseLast4(body.first4, 'first4') ?? null;
 	}
 	if (body.last4 !== undefined) {
 		updateRequest.last4 = parseRequired4Digits(body.last4, 'last4');
@@ -151,6 +154,46 @@ async function assertCardBackingAccount(
 			'A credit card must be backed by an account of type card',
 		);
 	}
+}
+
+// A card registered without an explicit backing account gets its own
+// ledger bucket. An unregistered card-type account with the same last4 is
+// adopted first — a manually created bucket whose transaction history must
+// stay attached; two such buckets are ambiguous, so a fresh account is
+// created rather than guessing.
+async function resolveBackingAccountId(
+	sql: SqlClient,
+	userId: string,
+	input: CreateUserCreditCardRequest,
+): Promise<string> {
+	const candidates = await sql<{ id: unknown }[]>`
+		select a.id
+		from public.accounts as a
+		where a.user_id = ${userId}
+			and a.type = 'card'
+			and a.instrument_last4 = ${input.last4}
+			and not exists (
+				select 1
+				from public.user_credit_cards as ucc
+				where ucc.account_id = a.id
+			)
+	`;
+	if (candidates.length === 1 && candidates[0]) {
+		return toRequiredString(candidates[0].id, 'accounts.id');
+	}
+
+	const created = await sql<{ id: unknown }[]>`
+		insert into public.accounts (
+			user_id, name, type, instrument_last4, initial_balance_in_paise
+		)
+		values (${userId}, ${input.card_label}, 'card', ${input.last4}, 0)
+		returning id
+	`;
+	const row = created[0];
+	if (!row) {
+		throw badRequest('ACCOUNT_CREATE_FAILED', 'Failed to create backing account for card');
+	}
+	return toRequiredString(row.id, 'accounts.id');
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -239,7 +282,13 @@ export async function createUserCreditCard(
 	userId: string,
 	input: CreateUserCreditCardRequest,
 ): Promise<{ card: UserCreditCardRow; relinked_transaction_count: number }> {
-	await assertCardBackingAccount(sql, userId, input.account_id);
+	let backingAccountId: string;
+	if (input.account_id) {
+		await assertCardBackingAccount(sql, userId, input.account_id);
+		backingAccountId = input.account_id;
+	} else {
+		backingAccountId = await resolveBackingAccountId(sql, userId, input);
+	}
 
 	let rows: UserCreditCardRowRaw[];
 	try {
@@ -249,9 +298,9 @@ export async function createUserCreditCard(
 				first4, last4, is_active
 			)
 			values (
-				${userId}, ${input.account_id}, ${input.card_label},
+				${userId}, ${backingAccountId}, ${input.card_label},
 				${input.issuer_name ?? null}, ${input.network ?? null},
-				${input.first4}, ${input.last4}, ${input.is_active ?? true}
+				${input.first4 ?? null}, ${input.last4}, ${input.is_active ?? true}
 			)
 			returning
 				id, user_id, account_id, card_label, issuer_name,

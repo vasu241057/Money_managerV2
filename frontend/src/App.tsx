@@ -92,7 +92,14 @@ function LedgerApp() {
 				/>
 			)}
 
-			{activeScreen === 'analytics' && <AnalyticsScreen />}
+			{activeScreen === 'analytics' && (
+				<AnalyticsScreen
+					onEditTransaction={(t) => {
+						setEditingTransaction(t);
+						openEditor('edit');
+					}}
+				/>
+			)}
 
 			{activeScreen === 'settings' && settingsSubscreen === 'main' && (
 				<SettingsHub

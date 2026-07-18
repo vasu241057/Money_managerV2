@@ -1,6 +1,6 @@
 import type { SenderBackfillJobPayload, SenderClassificationJobPayload, UUID } from '../../../shared/types';
 import { SENDER_BACKFILL_MAX_IDS } from '../../../shared/types';
-import { resolveOpenCodeGoApiKey, resolveOpenCodeGoModel } from '../lib/ai';
+import { resolveAiProviderConfig } from '../lib/ai';
 import { getAppConfig } from '../lib/config';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
@@ -8,8 +8,7 @@ import { toRequiredString } from '../lib/db/serialization';
 import { isAllowedSender, resolveSenderGateConfig } from '../lib/sender-gate';
 import { TransientMessageError } from './queue.errors';
 
-const OPENCODE_GO_CHAT_URL = 'https://opencode.ai/zen/go/v1/chat/completions';
-const OPENCODE_GO_TIMEOUT_MS = 30_000;
+const AI_CHAT_TIMEOUT_MS = 30_000;
 const MAX_SENDERS_PER_RUN = 200;
 const GATED_SENDER_LOOKBACK_DAYS = 14;
 // AI DENY rules get a second look every 30 days so one bad classification
@@ -121,18 +120,19 @@ async function callSenderClassificationModel(
 	candidates: SenderCandidate[],
 ): Promise<ClassifiedSender[] | null> {
 	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), OPENCODE_GO_TIMEOUT_MS);
+	const providerConfig = resolveAiProviderConfig(env);
+	const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_TIMEOUT_MS);
 
 	let response: Response;
 	try {
-		response = await fetch(OPENCODE_GO_CHAT_URL, {
+		response = await fetch(providerConfig.chatUrl, {
 			method: 'POST',
 			headers: {
 				Authorization: `Bearer ${apiKey}`,
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify({
-				model: resolveOpenCodeGoModel(env),
+				model: providerConfig.dailyModel,
 				temperature: 0,
 				messages: buildClassificationPrompt(candidates),
 				response_format: { type: 'json_object' },
@@ -398,9 +398,10 @@ export async function runSenderClassificationJob(
 ): Promise<SenderClassificationResult> {
 	const result = createEmptyResult();
 
-	const apiKey = resolveOpenCodeGoApiKey(env);
+	const providerConfig = resolveAiProviderConfig(env);
+	const apiKey = providerConfig.apiKey;
 	if (!apiKey) {
-		result.skipped_reason = 'OPENCODE_GO_API_KEY not set';
+		result.skipped_reason = `${providerConfig.apiKeyEnvVar} not set`;
 		return result;
 	}
 

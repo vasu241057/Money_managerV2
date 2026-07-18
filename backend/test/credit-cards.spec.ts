@@ -85,6 +85,14 @@ describe('credit card request parsing', () => {
 	it('rejects an empty update payload', () => {
 		expect(() => parseUpdateUserCreditCardRequest({})).toThrowError(/At least one/);
 	});
+
+	it('accepts an omitted account_id as null', () => {
+		const parsed = parseCreateUserCreditCardRequest({
+			card_label: 'HDFC Regalia',
+			last4: '9876',
+		});
+		expect(parsed.account_id).toBeNull();
+	});
 });
 
 describe('createUserCreditCard', () => {
@@ -149,6 +157,72 @@ describe('createUserCreditCard', () => {
 		expect(relinkUpdate).toContain('credit_card_id is null');
 		expect(relinkUpdate).toContain('account_id is null');
 		expect(relinkUpdate).toContain("payment_method = 'credit_card'");
+	});
+
+	it('adopts the sole unregistered same-last4 card account when account_id is omitted', async () => {
+		const queries: string[] = [];
+		const insertedValues: unknown[][] = [];
+		const sql = createSqlMock([
+			// adopt lookup: one unclaimed card account with this last4
+			query => {
+				queries.push(query);
+				return [{ id: ACCOUNT_ID }];
+			},
+			(query, values) => {
+				queries.push(query);
+				insertedValues.push(values);
+				return [CARD_ROW];
+			},
+			// relink: card lookup, ambiguity count, update
+			() => [{ id: CARD_ID, account_id: ACCOUNT_ID, last4: '9876' }],
+			() => [{ count: 1 }],
+			() => [],
+		]);
+
+		const { card } = await createUserCreditCard(sql, USER_ID, {
+			account_id: null,
+			card_label: 'HDFC Regalia',
+			last4: '9876',
+		});
+
+		expect(card.account_id).toBe(ACCOUNT_ID);
+		expect(queries[0]).toContain('not exists');
+		expect(insertedValues[0]).toContain(ACCOUNT_ID);
+	});
+
+	it('creates a fresh backing account when account_id is omitted and no adoptable account exists', async () => {
+		const NEW_ACCOUNT_ID = '44444444-4444-4444-8444-444444444444';
+		const queries: string[] = [];
+		const sql = createSqlMock([
+			// adopt lookup: nothing unclaimed matches
+			query => {
+				queries.push(query);
+				return [];
+			},
+			// backing-account insert
+			(query, values) => {
+				queries.push(query);
+				expect(values).toContain('HDFC Regalia');
+				expect(values).toContain('9876');
+				return [{ id: NEW_ACCOUNT_ID }];
+			},
+			query => {
+				queries.push(query);
+				return [{ ...CARD_ROW, account_id: NEW_ACCOUNT_ID }];
+			},
+			// relink: card lookup, ambiguity count, update
+			() => [{ id: CARD_ID, account_id: NEW_ACCOUNT_ID, last4: '9876' }],
+			() => [{ count: 1 }],
+			() => [],
+		]);
+
+		const { card } = await createUserCreditCard(sql, USER_ID, {
+			card_label: 'HDFC Regalia',
+			last4: '9876',
+		});
+
+		expect(card.account_id).toBe(NEW_ACCOUNT_ID);
+		expect(queries[1]).toContain('insert into public.accounts');
 	});
 });
 

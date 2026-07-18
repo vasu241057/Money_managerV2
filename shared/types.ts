@@ -116,7 +116,8 @@ export interface UserCreditCardRow {
   card_label: string;
   issuer_name: string | null;
   network: CardNetwork | null;
-  first4: string;
+  // Optional: public BIN data, display-only — matching uses last4.
+  first4: string | null;
   last4: string;
   is_active: boolean;
   created_at: ISODateTimeString;
@@ -206,7 +207,7 @@ export interface CreditCardTransactionViewRow {
   card_label: string;
   issuer_name: string | null;
   network: CardNetwork | null;
-  first4: string;
+  first4: string | null;
   last4: string;
 }
 
@@ -346,11 +347,13 @@ export interface UpdateTransactionRequest {
 }
 
 export interface CreateUserCreditCardRequest {
-  account_id: UUID;
+  // Omitted → the backend adopts the unregistered same-last4 card account
+  // if exactly one exists, else creates a fresh backing account.
+  account_id?: UUID | null;
   card_label: string;
   issuer_name?: string | null;
   network?: CardNetwork | null;
-  first4: string;
+  first4?: string | null;
   last4: string;
   is_active?: boolean;
 }
@@ -360,7 +363,7 @@ export interface UpdateUserCreditCardRequest {
   card_label?: string;
   issuer_name?: string | null;
   network?: CardNetwork | null;
-  first4?: string;
+  first4?: string | null;
   last4?: string;
   is_active?: boolean;
 }
@@ -599,7 +602,8 @@ export interface AiNormalizationResponse {
 
 export interface NormalizerTierConfig {
   models: string[];
-  rotateFailures: number;
+  /** Attempts allowed per tier before rotating (index-aligned with models). */
+  tierAttempts: number[];
   cooldownMs: number;
   maxRetries: number;
   timeoutMs: number;

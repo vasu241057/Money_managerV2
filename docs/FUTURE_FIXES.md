@@ -92,3 +92,47 @@
     Settings category manager offers expense/income tabs only; the transfer
     taxonomy is deliberately minimal (Self Transfer / Other Transfer, both
     system rows).
+
+## Admin dashboard (planned, after 1–2 weeks of personal use)
+
+24. **Usage/ops dashboard** — users logged in, total transaction volume,
+    emails processed (per status), AI calls per provider/model, template hit
+    rate, queue health. Backend counters mostly exist (result objects +
+    processing stats); needs an admin-guarded route + screen.
+25. **AI provider switch in the dashboard** — the backend already switches
+    whole-stack via `AI_PROVIDER` (`opencode` | `openrouter`; both keys can
+    be configured simultaneously, so flipping never breaks mid-flight). The
+    dashboard should front this with a toggle + per-provider health/quota
+    display so a lapsed OpenCode subscription is a one-click failover to
+    OpenRouter free models.
+26. **Verify OpenRouter free model ids before first switch** — the `:free`
+    roster churns; the defaults in `lib/ai.ts` (DeepSeek R1 / Nemotron 70B /
+    Llama 3.3 70B) were valid at build time. Check openrouter.ai/models,
+    confirm the picks support `response_format: json_object` and enough
+    context for 4-email masked batches, and update the defaults if needed.
+
+## Screens & analytics wishlist (July 18, from first real-data session)
+
+27. **Month navigation on Home** — the balance hero should default to the
+    current month (income − expense this month), with a way to step back
+    month by month; today it is all-time.
+28. **Month-wise account balances** — Accounts & Cards should offer a
+    per-month view of each account's delta, not just the all-time total.
+29. **Per-card drill-down screen** — tapping a card (or card account) opens
+    its transactions with an infographic breakdown (spend by category,
+    month trend) for that card specifically.
+30. **"Not a transaction" review action** — a reject button in the review
+    queue for wrongly-extracted transactions (promo mistaken for a credit):
+    reverses the financial event (status REVERSED) and optionally teaches
+    from the rejection. Engine rows currently have no user remedy.
+31. **Detected-instruments prompt (July 19, deliberately dropped for now)** —
+    passive "Detected instruments" section in Accounts & Cards: group
+    unattributed transactions by payment method + instrument digits and
+    offer one-tap register ("₹X across N transactions on ····1234 — add
+    it?"). Design agreed with Vasu: stateless over all unattributed rows (no
+    watermark), ≥2-transaction threshold to filter misextracted digits,
+    card-method rows ride the register/auto-bucket flow, unknown-method rows
+    must ask the type. Blockers noted: bank-side relink does not exist (an
+    account-flavoured mirror of `relinkTransactionsForCreditCard` is
+    required, else accepting a bank prompt does nothing for history), and
+    digit-less transactions (a real minority — see Slice) can never prompt.

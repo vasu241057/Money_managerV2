@@ -699,7 +699,12 @@ export function SettingsHub({
 							className="text-[11px] font-medium tnum shrink-0"
 							style={{ color: 'var(--ledger-muted)' }}
 						>
-							{accounts.length} acct{accounts.length !== 1 ? 's' : ''} · {creditCards.length} card{creditCards.length !== 1 ? 's' : ''}
+							{(() => {
+								// Card-type accounts are card backing folios — already
+								// counted as cards, so only non-card accounts count here.
+								const acctCount = accounts.filter((a) => a.type !== 'card').length;
+								return `${acctCount} acct${acctCount !== 1 ? 's' : ''} · ${creditCards.length} card${creditCards.length !== 1 ? 's' : ''}`;
+							})()}
 						</span>
 						<ChevronRight
 							size={16}

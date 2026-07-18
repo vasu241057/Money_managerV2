@@ -5,6 +5,7 @@ import { createAccountsRouter } from './accounts';
 import { createCategoriesRouter } from './categories';
 import { createCreditCardsRouter } from './credit-cards';
 import { createHealthRouter } from './health';
+import { createInternalOpsRouter } from './internal-ops';
 import { createInternalRequeueRouter } from './internal-requeue';
 import { createMerchantsRouter } from './merchants';
 import { createOAuthRouter } from './oauth';
@@ -17,6 +18,7 @@ export function createRoutes(): Router {
 	router.use('/health', createHealthRouter());
 	router.use('/version', createVersionRouter());
 	router.use('/internal/requeue', createInternalRequeueRouter());
+	router.use('/internal', createInternalOpsRouter());
 	router.use('/accounts', requireAuthenticatedUser, createAccountsRouter());
 	router.use('/categories', requireAuthenticatedUser, createCategoriesRouter());
 	router.use('/credit-cards', requireAuthenticatedUser, createCreditCardsRouter());

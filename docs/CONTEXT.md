@@ -37,7 +37,7 @@ money-manager/
 | **Clerk** | Authentication | JWT-based. JWKS: `big-mosquito-76.clerk.accounts.dev` |
 | **Cloudflare Queues** | Async job processing | 1 queue: `money-manager-email-sync` (DLQ: `money-manager-email-sync-dlq`) |
 | **Google OAuth** | Gmail access | Client ID: `611255820334-d25utocn5qima99l4o8hhe2346c732ee.apps...` |
-| **OpenCode Go** | AI model access | `https://opencode.ai/zen/go/v1/chat/completions`. Email extraction + daily sender/merchant classification |
+| **OpenCode Go / OpenRouter** | AI model access | Provider selected by `AI_PROVIDER` (default `opencode`; `openrouter` switches URL + key + model defaults in one flip). Email extraction + daily sender/merchant classification. OpenRouter defaults use `:free` models |
 
 Cron triggers (wrangler.jsonc): `*/10 * * * *` (email sync dispatch) and `30 21 * * *` (= 03:00 IST — daily sender classification + merchant mapping).
 
@@ -51,7 +51,7 @@ Cron triggers (wrangler.jsonc): `*/10 * * * *` (email sync dispatch) and `30 21 
 | `oauth_connections` | Google OAuth tokens | Tokens AES-GCM encrypted at rest. Status: ACTIVE/DORMANT/AUTH_REVOKED/ERROR_PAUSED |
 | `accounts` | User bank/card accounts | Types: cash/bank/card/other |
 | `categories` | Income/expense categories | `user_id` null = system category. Parent-child tree, RESTRICT delete. Exhaustive three-level system taxonomy: structural roots → parents (Food, Transport, Housing, Investments, …) → subcategories (Groceries, Fuel, Rent, Crypto, … ~85 nodes total) incl. per-type generics Miscellaneous/Other Income/Other Transfer. Roots are structural only — the engine never assigns them. Names unique per type (the mapper enum + AI prompt rely on it). No per-user category is auto-created at signup anymore |
-| `user_credit_cards` | Card identity (first4 + last4 + label + issuer) | Links to `card` account. CRUD via `/credit-cards`; the engine links transactions to cards by last4 (issuer tie-break); a DB trigger keeps `transactions.credit_card_id`/`account_id` consistent |
+| `user_credit_cards` | Card identity (first4 + last4 + label + issuer) | Links to `card` account (NOT NULL). POST `/credit-cards` may omit `account_id`: the sole unregistered same-last4 card account is adopted, else a backing account (name = card label, type card) is created automatically. The engine links transactions to cards by last4 (issuer tie-break); a DB trigger keeps `transactions.credit_card_id`/`account_id` consistent |
 | `global_merchants` | Canonical merchant name + type + default category | Types: MERCHANT/TRANSFER_INSTITUTION/AGGREGATOR/P2P. Grown by the daily merchant-mapping job, which also assigns `default_category_id` from the system expense taxonomy (MERCHANT type only — aggregators/P2P never get one; seed/manual values never overwritten) |
 | `global_merchant_aliases` | Search key → merchant mapping | `search_key` is PK, canonical uppercase-alphanumeric format |
 | `user_merchant_rules` | Per-user classification overrides | Unique per `(user_id, search_key)`. Written on review with `apply_rule`; consulted by BOTH extraction engines |
@@ -110,10 +110,12 @@ All routes under `/api/*`, authenticated via Clerk JWT (`Authorization: Bearer <
 | GET | `/oauth/google/connection` | Get connection status + email processing stats |
 | DELETE | `/oauth/google/connection` | Revoke connection (clear tokens) |
 
-### Internal
+### Internal (all secret-guarded: `AI_REQUIRES_WEBHOOK_SECRET` via `x-ai-webhook-secret` header)
 | Method | Route | Purpose |
 |--------|-------|---------|
-| POST | `/internal/requeue/pending` | Re-enqueue PENDING_EXTRACTION emails (secret-guarded: `AI_REQUIRES_WEBHOOK_SECRET` via `x-ai-webhook-secret` header; `?limit=`, default 1000, max 10,000) |
+| POST | `/internal/requeue/pending` | Re-enqueue PENDING_EXTRACTION emails (`?limit=`, default 1000, max 10,000) — the backlog-drain throttle |
+| POST | `/internal/backfill/sender-metadata` | One-time repair: fetch From/Subject headers (metadata only, via each row's own connection) for rows ingested before sender metadata existed (`?limit=`, default 200, max 1000). Run before draining an old backlog so it can teach templates; deleted messages are marked tried (`from_address=''`) so they stop re-scanning |
+| POST | `/internal/sync/probe` | Fetch only the newest N Gmail messages through the normal metadata-first + sender-gate flow (`?limit=`, default 10, max 100). Logs + returns per-message metadata and gate verdict; persists/enqueues like the real fetcher but **never advances `last_sync_timestamp`** |
 
 ---
 
@@ -307,11 +309,14 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 | `GOOGLE_OAUTH_STATE_SECRET` | HMAC-SHA256 key for state signing |
 | `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY` | 32-byte base64 AES-GCM key for token encryption |
 
-### AI (OpenCode Go)
+### AI provider
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `OPENCODE_GO_API_KEY` | — | Required for all AI paths; missing key = skip with error log |
-| `OPENCODE_GO_MODEL` | `deepseek-v4-flash` | Daily jobs model (sender classifier + merchant mapper) |
+| `AI_PROVIDER` | `opencode` | `openrouter` switches the whole stack (chat URL, API key var, model defaults). Both providers' keys can be configured at once; flip this one var to switch — an admin-dashboard toggle will front it later |
+| `OPENCODE_GO_API_KEY` | — | Key for the `opencode` provider; missing key = AI leg skipped with error log (templates still resolve) |
+| `OPENCODE_GO_MODEL` | `deepseek-v4-flash` | Daily jobs model on `opencode` (sender classifier + merchant mapper) |
+| `OPENROUTER_API_KEY` | — | Key for the `openrouter` provider |
+| `OPENROUTER_MODEL` | `nvidia/llama-3.1-nemotron-70b-instruct:free` | Daily jobs model on `openrouter`. Free-roster ids churn — verify at openrouter.ai/models |
 
 ### Sender gate & sync
 | Variable | Default | Purpose |
@@ -324,10 +329,10 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `EMAIL_TEMPLATES` | on | `off` disables template matching + learning (debug/rollback only — everything goes to AI) |
-| `AI_NORMALIZER_TIERS` | `deepseek-v4-flash,deepseek-v4-pro,qwen3.7-plus` | Comma-separated model chain |
-| `AI_NORMALIZER_TIER_ROTATE_FAILURES` | `3` | Fails before rotating tier |
+| `AI_NORMALIZER_TIERS` | per provider: `deepseek-v4-flash,deepseek-v4-pro,qwen3.7-plus` (opencode) / `deepseek/deepseek-r1:free,nvidia/llama-3.1-nemotron-70b-instruct:free,meta-llama/llama-3.3-70b-instruct:free` (openrouter) | Comma-separated model chain; overrides for whichever provider is active |
+| `AI_NORMALIZER_TIER_ATTEMPTS` | `2,2,1` | Per-tier attempt schedule before rotating (padded/truncated to the chain length). Legacy `AI_NORMALIZER_TIER_ROTATE_FAILURES` still works as a uniform per-tier value when this is unset |
 | `AI_NORMALIZER_TIER_COOLDOWN_MS` | `300000` | Cooldown on drained tier (5 min) |
-| `AI_NORMALIZER_MAX_RETRIES` | tiers × rotate (9) | Total retries across all tiers; the default covers the full chain so the last tier is always reachable |
+| `AI_NORMALIZER_MAX_RETRIES` | schedule sum (5) | Total retries across all tiers; the default spends the whole schedule once so the last tier is always reachable |
 | `AI_NORMALIZER_TIMEOUT_MS` | `45000` | Per-request timeout |
 | `AI_NORMALIZER_TEMPERATURE` | `0` | Deterministic output |
 | `AI_NORMALIZER_MAX_TOKENS` | `0` (unset) | Max AI response length |

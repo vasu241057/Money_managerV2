@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
-	ChevronLeft, ChevronDown, Trash2, Plus, Pencil, Loader2, Check, X,
+	ChevronLeft, Trash2, Plus, Pencil, Loader2, Check, X,
 } from 'lucide-react';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useCreditCards } from '../../hooks/useCreditCards';
@@ -107,7 +107,6 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 	const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
 	const [addingAccount, setAddingAccount] = useState(false);
 	const [newAccountName, setNewAccountName] = useState('');
-	const [newAccountType, setNewAccountType] = useState<AccountType>('bank');
 	const [newAccountLast4, setNewAccountLast4] = useState('');
 	const [editingCardId, setEditingCardId] = useState<string | null>(null);
 	const [addingCard, setAddingCard] = useState(false);
@@ -127,6 +126,20 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 		[accounts],
 	);
 
+	// Card accounts live in the Cards tab (as the card's spend figure); the
+	// Accounts tab shows only non-card folios.
+	const visibleAccounts = useMemo(
+		() => accounts.filter((a) => a.type !== 'card'),
+		[accounts],
+	);
+
+	// Card-type accounts with no registered card identity: the engine can't
+	// link their transactions by last4 until the card is registered here.
+	const unregisteredCardAccounts = useMemo(() => {
+		const registeredAccountIds = new Set(creditCards.map((c) => c.account_id));
+		return cardAccounts.filter((a) => !registeredAccountIds.has(a.id));
+	}, [cardAccounts, creditCards]);
+
 	// Balances are derived purely from transactions: income adds, expense
 	// subtracts, transfers are neutral (single account_id — no pair to move
 	// between). Unattributed transactions (no account) appear nowhere here.
@@ -143,7 +156,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 		return map;
 	}, [transactions]);
 
-	const netWorth = accounts.reduce((acc, a) => acc + (deltaByAccount.get(a.id) ?? 0), 0);
+	const netWorth = visibleAccounts.reduce((acc, a) => acc + (deltaByAccount.get(a.id) ?? 0), 0);
 	const isLoading = accountsLoading || cardsLoading;
 	const error = accountsError ?? cardsError;
 
@@ -151,9 +164,11 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 
 	const handleAddAccount = async () => {
 		if (!newAccountName.trim() || !newAccountLast4Valid) return;
+		// Only bank folios are user-created here: cards get theirs from the
+		// Cards tab, and the Cash folio is seeded once.
 		await addAccount({
 			name: newAccountName.trim(),
-			type: newAccountType,
+			type: 'bank',
 			instrument_last4: newAccountLast4 || null,
 		});
 		setNewAccountName('');
@@ -182,7 +197,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 		if (!editingCardId || !editCardDraft) return;
 		if (
 			!editCardDraft.label.trim() ||
-			editCardDraft.first4.length !== 4 ||
+			(editCardDraft.first4 !== '' && editCardDraft.first4.length !== 4) ||
 			editCardDraft.last4.length !== 4 ||
 			!editCardDraft.accountId
 		) {
@@ -194,7 +209,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 				card_label: editCardDraft.label.trim(),
 				issuer_name: editCardDraft.issuer.trim() || null,
 				network: editCardDraft.network,
-				first4: editCardDraft.first4,
+				first4: editCardDraft.first4 || null,
 				last4: editCardDraft.last4,
 				is_active: editCardDraft.isActive,
 			});
@@ -211,13 +226,15 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 	};
 
 	const handleAddCard = async () => {
-		if (!newCardLabel.trim() || newCardFirst4.length !== 4 || newCardLast4.length !== 4 || !newCardAccountId) return;
+		if (!newCardLabel.trim() || (newCardFirst4 !== '' && newCardFirst4.length !== 4) || newCardLast4.length !== 4) return;
+		// Register buttons prefill the existing folio; a fresh card omits it
+		// and the backend adopts-or-creates the backing folio itself.
 		const { relinkedTransactionCount } = await addCreditCard({
-			account_id: newCardAccountId,
+			account_id: newCardAccountId || undefined,
 			card_label: newCardLabel.trim(),
 			issuer_name: newCardIssuer.trim() || null,
 			network: newCardNetwork,
-			first4: newCardFirst4.trim(),
+			first4: newCardFirst4 || null,
 			last4: newCardLast4.trim(),
 		});
 		setRelinkNote(
@@ -287,7 +304,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 								className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2"
 								style={{ color: 'var(--ledger-muted)' }}
 							>
-								Net across {accounts.length} account{accounts.length !== 1 ? 's' : ''}
+								Net across {visibleAccounts.length} account{visibleAccounts.length !== 1 ? 's' : ''}
 							</p>
 							{isLoading && accounts.length === 0 ? (
 								<div className="flex items-center gap-2 py-2">
@@ -317,13 +334,13 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 							Folios
 						</p>
 
-						{accounts.length > 0 ? (
+						{visibleAccounts.length > 0 ? (
 							<div className="rounded-[10px] overflow-hidden mb-4" style={cardStyle}>
-								{accounts.map((account, index) => {
+								{visibleAccounts.map((account, index) => {
 									const isEditing = editingAccountId === account.id;
 									const balance = deltaByAccount.get(account.id) ?? 0;
 									const isNegative = balance < 0;
-									const isLast = index === accounts.length - 1;
+									const isLast = index === visibleAccounts.length - 1;
 
 									const meta = [
 										TYPE_CODE[account.type],
@@ -528,53 +545,23 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 									</button>
 								</div>
 
-								<div className="flex gap-2 mb-3 overflow-x-auto pb-1 no-scrollbar">
-									{(['cash', 'bank', 'card', 'other'] as const).map((t) => (
-										<button
-											key={t}
-											onClick={() => setNewAccountType(t)}
-											className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors"
-											style={
-												newAccountType === t
-													? { background: TYPE_COLOR[t], color: 'var(--ledger-bg)' }
-													: { background: 'var(--ledger-bg)', color: 'var(--ledger-muted)', border: '1px solid var(--ledger-rule)' }
-											}
-										>
-											{t}
-										</button>
-									))}
-								</div>
-
 								<input
 									type="text"
-									placeholder="Account name"
+									placeholder="Bank account name"
 									value={newAccountName}
 									onChange={(e) => setNewAccountName(e.target.value)}
 									className="w-full rounded-[8px] px-3 py-2.5 text-sm mb-2 focus:outline-none transition-all"
 									style={inputStyle}
 								/>
-								{(newAccountType === 'card' || newAccountType === 'bank') && (
-									<input
-										type="text"
-										inputMode="numeric"
-										placeholder={
-											newAccountType === 'card'
-												? 'Last 4 digits'
-												: 'A/C number (only last 4 kept, optional)'
-										}
-										value={newAccountLast4}
-										onChange={(e) =>
-											setNewAccountLast4(
-												newAccountType === 'card'
-													? digitsOnly(e.target.value)
-													: keepLast4Digits(e.target.value),
-											)
-										}
-										className="w-full rounded-[8px] px-3 py-2.5 text-sm mb-4 tnum focus:outline-none transition-all"
-										style={inputStyle}
-									/>
-								)}
-								{newAccountType !== 'card' && newAccountType !== 'bank' && <div className="mb-4" />}
+								<input
+									type="text"
+									inputMode="numeric"
+									placeholder="A/C number (only last 4 kept, optional)"
+									value={newAccountLast4}
+									onChange={(e) => setNewAccountLast4(keepLast4Digits(e.target.value))}
+									className="w-full rounded-[8px] px-3 py-2.5 text-sm mb-4 tnum focus:outline-none transition-all"
+									style={inputStyle}
+								/>
 
 								<button
 									onClick={() => { void handleAddAccount(); }}
@@ -619,9 +606,12 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 							<div className="space-y-3 mb-4">
 								{creditCards.map((card) => {
 									const isEditing = editingCardId === card.id;
-									const maskedNumber = `${card.first4} ······ ${card.last4}`;
+									const maskedNumber = card.first4 ? `${card.first4} ······ ${card.last4}` : `···· ······ ${card.last4}`;
 									const networkLabel = (card.network ?? 'other').toUpperCase();
 									const issuer = card.issuer_name ?? 'Unknown issuer';
+									// Spend rides the card's backing account: expenses minus
+									// refunds/cashback, same transaction sums as the folio list.
+									const spentPaise = Math.round(-(deltaByAccount.get(card.account_id) ?? 0) * 100);
 
 									return (
 										<div key={card.id}>
@@ -653,8 +643,14 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 														{maskedNumber}
 													</p>
 													<div className="flex items-end justify-between">
-														<p className="text-base font-semibold">{card.card_label}</p>
-														<span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider">
+														<div className="min-w-0">
+															<p className="text-[9px] font-bold uppercase tracking-[0.2em]" style={{ opacity: 0.7 }}>
+																Total spent
+															</p>
+															<p className="text-xl font-bold tnum">{formatRupees(spentPaise)}</p>
+															<p className="text-sm font-semibold mt-1.5 truncate">{card.card_label}</p>
+														</div>
+														<span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider shrink-0">
 															<span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--ledger-bg)' }} />
 															Active
 														</span>
@@ -686,8 +682,14 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 													</div>
 													<p className="text-lg font-bold tnum tracking-[0.1em]">{maskedNumber}</p>
 													<div className="flex items-end justify-between">
-														<p className="text-base font-semibold">{card.card_label}</p>
-														<span className="text-[10px] font-bold uppercase tracking-wider">Inactive</span>
+														<div className="min-w-0">
+															<p className="text-[9px] font-bold uppercase tracking-[0.2em]" style={{ opacity: 0.7 }}>
+																Total spent
+															</p>
+															<p className="text-xl font-bold tnum">{formatRupees(spentPaise)}</p>
+															<p className="text-sm font-semibold mt-1.5 truncate">{card.card_label}</p>
+														</div>
+														<span className="text-[10px] font-bold uppercase tracking-wider shrink-0">Inactive</span>
 													</div>
 												</button>
 											)}
@@ -700,7 +702,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 																label: card.card_label,
 																issuer: card.issuer_name ?? '',
 																network: card.network ?? 'other',
-																first4: card.first4,
+																first4: card.first4 ?? '',
 																last4: card.last4,
 																accountId: card.account_id,
 																isActive: card.is_active,
@@ -759,7 +761,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 														<input
 															type="text"
 															inputMode="numeric"
-															placeholder="First 4"
+															placeholder="First 4 (optional)"
 															value={editCardDraft.first4}
 															onChange={(e) => setEditCardDraft({ ...editCardDraft, first4: digitsOnly(e.target.value) })}
 															className="w-1/2 rounded-[8px] px-3 py-2.5 text-sm tnum focus:outline-none transition-all"
@@ -773,24 +775,6 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 															onChange={(e) => setEditCardDraft({ ...editCardDraft, last4: digitsOnly(e.target.value) })}
 															className="w-1/2 rounded-[8px] px-3 py-2.5 text-sm tnum focus:outline-none transition-all"
 															style={inputStyle}
-														/>
-													</div>
-													<div className="relative">
-														<select
-															value={editCardDraft.accountId}
-															onChange={(e) => setEditCardDraft({ ...editCardDraft, accountId: e.target.value })}
-															className="w-full rounded-[8px] px-3 py-2.5 text-sm focus:outline-none appearance-none cursor-pointer"
-															style={inputStyle}
-														>
-															<option value="" disabled>Linked account (card-type)</option>
-															{cardAccounts.map((a) => (
-																<option key={a.id} value={a.id}>{a.name}</option>
-															))}
-														</select>
-														<ChevronDown
-															size={16}
-															className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-															style={{ color: 'var(--ledger-muted)' }}
 														/>
 													</div>
 													<div className="flex items-center justify-between px-1">
@@ -821,7 +805,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 															onClick={() => { void handleSaveCardEdit(); }}
 															disabled={
 																!editCardDraft.label.trim() ||
-																editCardDraft.first4.length !== 4 ||
+																(editCardDraft.first4 !== '' && editCardDraft.first4.length !== 4) ||
 																editCardDraft.last4.length !== 4 ||
 																!editCardDraft.accountId ||
 																cardsLoading
@@ -832,7 +816,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 																color: 'var(--ledger-bg)',
 																opacity:
 																	(!editCardDraft.label.trim() ||
-																		editCardDraft.first4.length !== 4 ||
+																		(editCardDraft.first4 !== '' && editCardDraft.first4.length !== 4) ||
 																		editCardDraft.last4.length !== 4 ||
 																		!editCardDraft.accountId ||
 																		cardsLoading) ? 0.5 : 1,
@@ -853,6 +837,59 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 									No cards registered
 								</p>
 							)
+						)}
+
+						{unregisteredCardAccounts.length > 0 && (
+							<div className="mb-4">
+								<p
+									className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2"
+									style={{ color: 'var(--ledger-muted)' }}
+								>
+									Card accounts without a registered card
+								</p>
+								<p className="text-[11px] mb-3" style={{ color: 'var(--ledger-muted)' }}>
+									Register these so bank alerts link to the right card automatically.
+								</p>
+								<div className="rounded-[10px] overflow-hidden" style={cardStyle}>
+									{unregisteredCardAccounts.map((account, i) => (
+										<div
+											key={account.id}
+											className="px-4 py-3 flex items-center justify-between gap-3"
+											style={
+												i < unregisteredCardAccounts.length - 1
+													? { borderBottom: '1px solid var(--ledger-rule)' }
+													: undefined
+											}
+										>
+											<div className="min-w-0">
+												<p className="text-sm font-semibold truncate" style={{ color: 'var(--ledger-fg)' }}>
+													{account.name}
+												</p>
+												<p className="text-[10px] tnum mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+													{[
+														account.instrument_last4 ? `····${account.instrument_last4}` : null,
+														`${formatRupees(Math.round(-(deltaByAccount.get(account.id) ?? 0) * 100))} spent`,
+													].filter(Boolean).join(' · ')}
+												</p>
+											</div>
+											<button
+												onClick={() => {
+													setNewCardLabel(account.name);
+													setNewCardLast4(account.instrument_last4 ?? '');
+													setNewCardFirst4('');
+													setNewCardIssuer('');
+													setNewCardAccountId(account.id);
+													setAddingCard(true);
+												}}
+												className="shrink-0 text-xs font-bold px-3 py-1.5 rounded-full active:scale-95 transition-all"
+												style={{ background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }}
+											>
+												Register
+											</button>
+										</div>
+									))}
+								</div>
+							</div>
 						)}
 
 						{!addingCard ? (
@@ -884,12 +921,6 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 										Cancel
 									</button>
 								</div>
-
-								{cardAccounts.length === 0 && (
-									<p className="text-xs mb-3 px-1" style={{ color: 'var(--ledger-amber)' }}>
-										You need a card-type account first. Add one in the Accounts tab.
-									</p>
-								)}
 
 								<div className="flex flex-col gap-3 mb-4">
 									<input
@@ -930,7 +961,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 										<input
 											type="text"
 											inputMode="numeric"
-											placeholder="First 4"
+											placeholder="First 4 (optional)"
 											value={newCardFirst4}
 											onChange={(e) => setNewCardFirst4(digitsOnly(e.target.value))}
 											className="w-1/2 rounded-[8px] px-3 py-2.5 text-sm tnum focus:outline-none transition-all"
@@ -947,35 +978,20 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 										/>
 									</div>
 
-									<div className="relative">
-										<select
-											value={newCardAccountId}
-											onChange={(e) => setNewCardAccountId(e.target.value)}
-											className="w-full rounded-[8px] px-3 py-2.5 text-sm focus:outline-none appearance-none cursor-pointer"
-											style={inputStyle}
-										>
-											<option value="" disabled>Linked account (card-type)</option>
-											{cardAccounts.map((a) => (
-												<option key={a.id} value={a.id}>{a.name}</option>
-											))}
-										</select>
-										<ChevronDown
-											size={16}
-											className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-											style={{ color: 'var(--ledger-muted)' }}
-										/>
-									</div>
+									<p className="text-[11px] px-1" style={{ color: 'var(--ledger-muted)' }}>
+										Its folio is set up automatically — spend and history live there.
+									</p>
 								</div>
 
 								<button
 									onClick={() => { void handleAddCard(); }}
-									disabled={!newCardLabel.trim() || newCardFirst4.length !== 4 || newCardLast4.length !== 4 || !newCardAccountId || cardsLoading}
+									disabled={!newCardLabel.trim() || (newCardFirst4 !== '' && newCardFirst4.length !== 4) || newCardLast4.length !== 4 || cardsLoading}
 									className="w-full h-11 rounded-[10px] text-sm font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all"
 									style={{
 										background: 'var(--ledger-accent)',
 										color: 'var(--ledger-bg)',
 										boxShadow: '0 8px 24px -8px var(--ledger-accent)',
-										opacity: (!newCardLabel.trim() || newCardFirst4.length !== 4 || newCardLast4.length !== 4 || !newCardAccountId || cardsLoading) ? 0.5 : 1,
+										opacity: (!newCardLabel.trim() || (newCardFirst4 !== '' && newCardFirst4.length !== 4) || newCardLast4.length !== 4 || cardsLoading) ? 0.5 : 1,
 									}}
 								>
 									{cardsLoading ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}

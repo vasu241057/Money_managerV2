@@ -3,8 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../src/lib/config';
 import type { SqlClient } from '../src/lib/db/client';
 import {
+	runEmailSyncProbe,
 	runEmailSyncUserJob,
+	runRetroactiveSenderGate,
 	runSenderBackfillJob,
+	runSenderMetadataBackfill,
 	truncateWithoutSplittingSurrogates,
 } from '../src/workers/email-sync-fetcher';
 import { TransientMessageError } from '../src/workers/queue.errors';
@@ -1419,6 +1422,318 @@ describe('email-sync-fetcher', () => {
 			expect(queries.some(query => query.includes("set sync_status = 'ERROR_PAUSED'"))).toBe(false);
 		});
 	});
+
+describe('internal ops: sender-metadata backfill + sync probe', () => {
+	const appConfig: AppConfig = {
+		appName: 'money-manager-backend',
+		appVersion: '0.1.0',
+		nodeEnv: 'test',
+		supabasePoolerUrl: 'postgres://postgres:postgres@localhost:6543/postgres',
+		dbMaxConnections: 5,
+		dbConnectTimeoutSeconds: 5,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('metadata backfill: fills from_address/subject via the row\'s own connection, headers only', async () => {
+		const rawEmailId = '00000000-0000-4000-8000-00000000000c';
+		let updatedFrom: string | null = null;
+		let updatedSubject: string | null = null;
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('where re.from_address is null') && query.includes('order by re.created_at')) {
+				return [
+					{
+						id: rawEmailId,
+						user_id: '00000000-0000-4000-8000-000000000001',
+						source_id: 'g1',
+						oauth_connection_id: '00000000-0000-4000-8000-0000000000aa',
+					},
+				];
+			}
+			if (query.includes('where oc.id =') && query.includes('from public.oauth_connections')) {
+				return [buildConnectionRow()];
+			}
+			if (query.includes('set access_token =')) {
+				return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z' })];
+			}
+			if (query.includes('set from_address =') && query.includes('subject = coalesce')) {
+				updatedFrom = values[0] as string;
+				updatedSubject = values[1] as string;
+				return [{ id: rawEmailId }];
+			}
+			if (query.includes('count(*)::int as remaining')) {
+				return [{ remaining: 0 }];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+
+		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.includes('oauth2.googleapis.com/token')) {
+				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.includes('/g1?format=metadata')) {
+				return new Response(
+					JSON.stringify({
+						id: 'g1',
+						internalDate: '1700000100000',
+						payload: {
+							headers: [
+								{ name: 'From', value: 'ICICI Bank <alerts@icicibank.com>' },
+								{ name: 'Subject', value: 'Debit alert' },
+							],
+						},
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected URL (bodies must never be fetched): ${url}`);
+		});
+		getAppConfigMock.mockReturnValue(appConfig);
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runSenderMetadataBackfill(200, createEnv(), fetcher);
+
+		expect(result.scanned_count).toBe(1);
+		expect(result.updated_count).toBe(1);
+		expect(result.skipped_count).toBe(0);
+		expect(result.remaining_count).toBe(0);
+		expect(updatedFrom).toBe('alerts@icicibank.com');
+		expect(updatedSubject).toBe('Debit alert');
+	});
+
+	it('metadata backfill: a deleted message (404) is marked tried so it stops re-scanning', async () => {
+		const rawEmailId = '00000000-0000-4000-8000-00000000000d';
+		let markedTried = false;
+		const sql = createSqlMock((query) => {
+			if (query.includes('where re.from_address is null') && query.includes('order by re.created_at')) {
+				return [
+					{
+						id: rawEmailId,
+						user_id: '00000000-0000-4000-8000-000000000001',
+						source_id: 'gone1',
+						oauth_connection_id: '00000000-0000-4000-8000-0000000000aa',
+					},
+				];
+			}
+			if (query.includes('where oc.id =') && query.includes('from public.oauth_connections')) {
+				return [buildConnectionRow()];
+			}
+			if (query.includes('set access_token =')) {
+				return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z' })];
+			}
+			if (query.includes("set from_address = ''")) {
+				markedTried = true;
+				return [];
+			}
+			if (query.includes('count(*)::int as remaining')) {
+				return [{ remaining: 0 }];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+
+		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.includes('oauth2.googleapis.com/token')) {
+				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.includes('/gone1?format=metadata')) {
+				return new Response('not found', { status: 404 });
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+		getAppConfigMock.mockReturnValue(appConfig);
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runSenderMetadataBackfill(200, createEnv(), fetcher);
+
+		expect(result.updated_count).toBe(0);
+		expect(result.skipped_count).toBe(1);
+		expect(markedTried).toBe(true);
+	});
+
+	it('sync probe: reports metadata + gate verdicts, persists, enqueues, and never advances the watermark', async () => {
+		const queries: string[] = [];
+		const sql = createSqlMock((query) => {
+			queries.push(query);
+			if (query.includes('order by oc.updated_at desc limit 1')) {
+				return [buildConnectionRow()];
+			}
+			if (query.includes('set access_token =')) {
+				return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z' })];
+			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'icici' }];
+			}
+			if (query.includes('re.source_id = any(')) {
+				// m3 already exists in raw_emails -> already_known.
+				return [{ source_id: 'm3', status: 'PROCESSED', internal_date: '2026-07-01T00:00:00.000Z' }];
+			}
+			if (query.includes('insert into public.raw_emails')) {
+				return [{ id: '00000000-0000-4000-8000-0000000000f1' }];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+
+		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.includes('oauth2.googleapis.com/token')) {
+				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.includes('users/me/messages?')) {
+				expect(url).not.toContain('q=');
+				return new Response(
+					JSON.stringify({ messages: [{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }] }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			if (url.includes('/m1?format=metadata')) {
+				return new Response(
+					JSON.stringify({
+						id: 'm1',
+						internalDate: '1700000200000',
+						payload: {
+							headers: [
+								{ name: 'From', value: 'ICICI Bank <alerts@icicibank.com>' },
+								{ name: 'Subject', value: 'Debit alert' },
+							],
+						},
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			if (url.includes('/m1?format=full')) {
+				return new Response(
+					JSON.stringify({
+						id: 'm1',
+						internalDate: '1700000200000',
+						snippet: 'Rs.500 debited from a/c 1234',
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			if (url.includes('/m2?format=metadata')) {
+				return new Response(
+					JSON.stringify({
+						id: 'm2',
+						internalDate: '1700000300000',
+						payload: {
+							headers: [
+								{ name: 'From', value: 'Friend <friend@example.com>' },
+								{ name: 'Subject', value: 'Dinner plans' },
+							],
+						},
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected URL (gated bodies must never be fetched): ${url}`);
+		});
+		getAppConfigMock.mockReturnValue(appConfig);
+		getSqlClientMock.mockReturnValue(sql);
+
+		const queueSend = vi.fn().mockResolvedValue(undefined);
+		const result = await runEmailSyncProbe(
+			10,
+			createEnv({ EMAIL_SYNC_QUEUE: { send: queueSend } as unknown as Queue }),
+			fetcher,
+		);
+
+		expect(result.listed_count).toBe(3);
+		expect(result.enqueued_pending_count).toBe(1);
+
+		const verdictBySourceId = new Map(result.reports.map(r => [r.source_id, r.verdict]));
+		expect(verdictBySourceId.get('m1')).toBe('allowed');
+		expect(verdictBySourceId.get('m2')).toBe('gated');
+		expect(verdictBySourceId.get('m3')).toBe('already_known');
+
+		const allowedReport = result.reports.find(r => r.source_id === 'm1');
+		expect(allowedReport?.from_address).toBe('alerts@icicibank.com');
+		expect(allowedReport?.subject).toBe('Debit alert');
+
+		// The probe must never move the sync cursor.
+		expect(queries.some(q => q.includes('last_sync_timestamp = greatest'))).toBe(false);
+		expect(queueSend).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('retroactive sender gate', () => {
+	const appConfig: AppConfig = {
+		appName: 'money-manager-backend',
+		appVersion: '0.1.0',
+		nodeEnv: 'test',
+		supabasePoolerUrl: 'postgres://postgres:postgres@localhost:6543/postgres',
+		dbMaxConnections: 5,
+		dbConnectTimeoutSeconds: 5,
+	};
+
+	const pendingRows = [
+		{ id: '00000000-0000-4000-8000-0000000000e1', from_address: 'alerts@icicibank.com' },
+		{ id: '00000000-0000-4000-8000-0000000000e2', from_address: 'friend@example.com' },
+		{ id: '00000000-0000-4000-8000-0000000000e3', from_address: '' },
+	];
+
+	function createGateSqlMock(onDeniedUpdate: (ids: unknown) => void) {
+		return createSqlMock((query, values) => {
+			if (query.includes("re.status = 'PENDING_EXTRACTION'") && query.includes('select re.id, re.from_address')) {
+				return pendingRows;
+			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'icici' }];
+			}
+			if (query.includes("set status = 'IGNORED', clean_text = ''")) {
+				onDeniedUpdate(values[0]);
+				return [];
+			}
+			if (query.includes('count(*)::int as remaining')) {
+				return [{ remaining: 2 }];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('flips denied senders to IGNORED with purged bodies, keeps allowed + unknown pending', async () => {
+		let deniedIds: unknown = null;
+		getAppConfigMock.mockReturnValue(appConfig);
+		getSqlClientMock.mockReturnValue(createGateSqlMock(ids => { deniedIds = ids; }));
+
+		const result = await runRetroactiveSenderGate(2000, false, createEnv());
+
+		expect(result.gate_enabled).toBe(true);
+		expect(result.allowed_count).toBe(1);
+		expect(result.gated_count).toBe(1);
+		expect(result.unknown_sender_count).toBe(1);
+		expect(deniedIds).toEqual(['00000000-0000-4000-8000-0000000000e2']);
+	});
+
+	it('dry run reports the same counts without mutating anything', async () => {
+		let updateRan = false;
+		getAppConfigMock.mockReturnValue(appConfig);
+		getSqlClientMock.mockReturnValue(createGateSqlMock(() => { updateRan = true; }));
+
+		const result = await runRetroactiveSenderGate(2000, true, createEnv());
+
+		expect(result.dry_run).toBe(true);
+		expect(result.allowed_count).toBe(1);
+		expect(result.gated_count).toBe(1);
+		expect(updateRan).toBe(false);
+	});
+});
 
 describe('truncateWithoutSplittingSurrogates', () => {
 	it('never leaves a dangling high surrogate at the cut', () => {

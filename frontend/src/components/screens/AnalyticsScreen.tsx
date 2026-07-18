@@ -2,15 +2,30 @@ import { useMemo, useState } from 'react';
 import {
 	PieChart as RechartsPieChart, Pie, Cell, ResponsiveContainer, Tooltip,
 } from 'recharts';
-import { Loader2 } from 'lucide-react';
-import { useTransactions } from '../../hooks/useTransactions';
+import { ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
+import { useTransactions, type Transaction } from '../../hooks/useTransactions';
 
-type Period = 'thisMonth' | 'lastMonth';
-type Breakdown = 'category' | 'account' | 'card';
+// Cards are covered by the account breakdown: card transactions ride their
+// backing folio, so a separate by-card view would only repeat it.
+type Breakdown = 'category' | 'account';
 
 interface BreakdownItem {
 	name: string;
 	value: number;
+}
+
+function breakdownKey(t: Transaction, breakdown: Breakdown): string {
+	if (breakdown === 'category') return t.subCategory ?? t.category ?? 'Uncategorized';
+	return t.accountName ?? 'No account';
+}
+
+interface MonthKey {
+	year: number;
+	month: number;
+}
+
+function compareMonths(a: MonthKey, b: MonthKey): number {
+	return a.year !== b.year ? a.year - b.year : a.month - b.month;
 }
 
 const LEDGER_COLORS = [
@@ -35,24 +50,48 @@ function formatRupeesPaise(amount: number): string {
 	return amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function AnalyticsScreen() {
+interface AnalyticsScreenProps {
+	onEditTransaction: (transaction: Transaction) => void;
+}
+
+export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 	const { transactions, isLoading } = useTransactions();
-	const [period, setPeriod] = useState<Period>('thisMonth');
 	const [breakdown, setBreakdown] = useState<Breakdown>('category');
+	const [selectedSlice, setSelectedSlice] = useState<string | null>(null);
+	// null = auto: latest month that has data (falls back to the current month)
+	const [selectedMonth, setSelectedMonth] = useState<MonthKey | null>(null);
 
 	const now = new Date();
 	const thisYear = now.getFullYear();
 	const thisMonth = now.getMonth();
-	const lastMonthDate = new Date(thisYear, thisMonth - 1, 1);
-	const lastYear = lastMonthDate.getFullYear();
-	const lastMonth = lastMonthDate.getMonth();
+
+	const monthBounds = useMemo(() => {
+		const current: MonthKey = { year: thisYear, month: thisMonth };
+		let oldest = current;
+		let newestWithData: MonthKey | null = null;
+		for (const t of transactions) {
+			const key: MonthKey = { year: t.date.getFullYear(), month: t.date.getMonth() };
+			if (compareMonths(key, oldest) < 0) oldest = key;
+			if (!newestWithData || compareMonths(key, newestWithData) > 0) newestWithData = key;
+		}
+		const forwardLimit =
+			newestWithData && compareMonths(newestWithData, current) > 0 ? newestWithData : current;
+		return { oldest, newestWithData, forwardLimit };
+	}, [transactions, thisYear, thisMonth]);
+
+	const activeMonth =
+		selectedMonth ?? monthBounds.newestWithData ?? { year: thisYear, month: thisMonth };
+	const canGoBack = compareMonths(activeMonth, monthBounds.oldest) > 0;
+	const canGoForward = compareMonths(activeMonth, monthBounds.forwardLimit) < 0;
+
+	const stepMonth = (delta: number) => {
+		const next = new Date(activeMonth.year, activeMonth.month + delta, 1);
+		setSelectedMonth({ year: next.getFullYear(), month: next.getMonth() });
+	};
 
 	const periodTransactions = useMemo(() => {
-		return transactions.filter((t) => {
-			if (period === 'thisMonth') return isSameMonth(t.date, thisYear, thisMonth);
-			return isSameMonth(t.date, lastYear, lastMonth);
-		});
-	}, [transactions, period, thisYear, thisMonth, lastYear, lastMonth]);
+		return transactions.filter((t) => isSameMonth(t.date, activeMonth.year, activeMonth.month));
+	}, [transactions, activeMonth.year, activeMonth.month]);
 
 	const totals = useMemo(() => {
 		let income = 0;
@@ -68,14 +107,7 @@ export function AnalyticsScreen() {
 		const map = new Map<string, number>();
 		for (const t of periodTransactions) {
 			if (t.type !== 'expense') continue;
-			let key: string;
-			if (breakdown === 'category') {
-				key = t.subCategory ?? t.category ?? 'Uncategorized';
-			} else if (breakdown === 'account') {
-				key = t.accountName ?? 'No account';
-			} else {
-				key = t.creditCardLabel ?? 'No card';
-			}
+			const key = breakdownKey(t, breakdown);
 			map.set(key, (map.get(key) ?? 0) + t.amount);
 		}
 		return Array.from(map.entries())
@@ -83,8 +115,29 @@ export function AnalyticsScreen() {
 			.sort((a, b) => b.value - a.value);
 	}, [periodTransactions, breakdown]);
 
-	const periodLabel = period === 'thisMonth' ? 'This Month' : 'Last Month';
+	const sliceTransactions = useMemo(() => {
+		if (!selectedSlice) return [];
+		return periodTransactions
+			.filter((t) => t.type === 'expense' && breakdownKey(t, breakdown) === selectedSlice)
+			.sort((a, b) => b.date.getTime() - a.date.getTime());
+	}, [periodTransactions, breakdown, selectedSlice]);
+	const sliceTotal = sliceTransactions.reduce((acc, t) => acc + t.amount, 0);
+
+	const periodLabel = new Date(activeMonth.year, activeMonth.month, 1).toLocaleDateString(
+		'en-IN',
+		{ month: 'long', year: 'numeric' },
+	);
 	const totalExpense = totals.expense;
+
+	// Lakh/crore figures shrink to fit their third of the card instead of
+	// clipping off-screen; all three columns share one size.
+	const longestSummary = Math.max(
+		formatRupees(totals.income).length,
+		formatRupees(totals.expense).length,
+		formatRupees(Math.abs(totals.net)).length,
+	);
+	const summaryAmountClass =
+		longestSummary > 8 ? 'text-xs' : longestSummary > 6 ? 'text-sm' : 'text-lg';
 
 	return (
 		<div
@@ -110,6 +163,36 @@ export function AnalyticsScreen() {
 				) : (
 					<>
 						<div
+							className="flex items-center justify-between mb-4 rounded-[10px] px-2 py-1.5"
+							style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+						>
+							<button
+								onClick={() => stepMonth(-1)}
+								disabled={!canGoBack}
+								className="p-1.5 rounded-full disabled:opacity-30"
+								style={{ color: 'var(--ledger-fg)' }}
+								aria-label="Previous month"
+							>
+								<ChevronLeft size={18} />
+							</button>
+							<span
+								className="text-xs font-bold uppercase tracking-[0.15em]"
+								style={{ color: 'var(--ledger-fg)' }}
+							>
+								{periodLabel}
+							</span>
+							<button
+								onClick={() => stepMonth(1)}
+								disabled={!canGoForward}
+								className="p-1.5 rounded-full disabled:opacity-30"
+								style={{ color: 'var(--ledger-fg)' }}
+								aria-label="Next month"
+							>
+								<ChevronRight size={18} />
+							</button>
+						</div>
+
+						<div
 							className="rounded-[10px] p-5 mb-4"
 							style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
 						>
@@ -117,9 +200,9 @@ export function AnalyticsScreen() {
 								className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4"
 								style={{ color: 'var(--ledger-muted)' }}
 							>
-								{periodLabel}
+								Summary
 							</p>
-							<div className="flex items-baseline gap-4">
+							<div className="flex items-baseline gap-2.5">
 								<div className="flex-1">
 									<p
 										className="text-[10px] font-bold uppercase tracking-wider mb-1"
@@ -127,7 +210,7 @@ export function AnalyticsScreen() {
 									>
 										Income
 									</p>
-									<p className="text-lg font-bold tnum" style={{ color: 'var(--ledger-positive)' }}>
+									<p className={`${summaryAmountClass} font-bold tnum whitespace-nowrap`} style={{ color: 'var(--ledger-positive)' }}>
 										+₹{formatRupees(totals.income)}
 									</p>
 								</div>
@@ -139,7 +222,7 @@ export function AnalyticsScreen() {
 									>
 										Expense
 									</p>
-									<p className="text-lg font-bold tnum" style={{ color: 'var(--ledger-negative)' }}>
+									<p className={`${summaryAmountClass} font-bold tnum whitespace-nowrap`} style={{ color: 'var(--ledger-negative)' }}>
 										−₹{formatRupees(totals.expense)}
 									</p>
 								</div>
@@ -152,7 +235,7 @@ export function AnalyticsScreen() {
 										Net
 									</p>
 									<p
-										className="text-lg font-bold tnum"
+										className={`${summaryAmountClass} font-bold tnum whitespace-nowrap`}
 										style={{ color: totals.net >= 0 ? 'var(--ledger-positive)' : 'var(--ledger-negative)' }}
 									>
 										{totals.net >= 0 ? '+' : '−'}₹{formatRupees(Math.abs(totals.net))}
@@ -161,28 +244,11 @@ export function AnalyticsScreen() {
 							</div>
 						</div>
 
-						<div className="flex gap-2 mb-3">
-							{(['thisMonth', 'lastMonth'] as const).map((p) => (
-								<button
-									key={p}
-									onClick={() => setPeriod(p)}
-									className="rounded-full px-4 py-1.5 text-xs font-medium transition-colors"
-									style={
-										period === p
-											? { background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }
-											: { background: 'var(--ledger-card)', color: 'var(--ledger-muted)', border: '1px solid var(--ledger-rule)' }
-									}
-								>
-									{p === 'thisMonth' ? 'This Month' : 'Last Month'}
-								</button>
-							))}
-						</div>
-
 						<div className="flex gap-2 mb-4">
-							{(['category', 'account', 'card'] as const).map((b) => (
+							{(['category', 'account'] as const).map((b) => (
 								<button
 									key={b}
-									onClick={() => setBreakdown(b)}
+									onClick={() => { setBreakdown(b); setSelectedSlice(null); }}
 									className="flex-1 rounded-[10px] px-3 py-2 text-xs font-medium transition-colors capitalize"
 									style={
 										breakdown === b
@@ -190,7 +256,7 @@ export function AnalyticsScreen() {
 											: { background: 'var(--ledger-card)', color: 'var(--ledger-muted)', border: '1px solid var(--ledger-rule)' }
 									}
 								>
-									{b === 'card' ? 'By Card' : b}
+									{b}
 								</button>
 							))}
 						</div>
@@ -201,10 +267,10 @@ export function AnalyticsScreen() {
 								style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
 							>
 								<p className="text-sm font-medium" style={{ color: 'var(--ledger-muted)' }}>
-									No expenses in {periodLabel.toLowerCase()}
+									No expenses in {periodLabel}
 								</p>
 								<p className="text-xs mt-1" style={{ color: 'var(--ledger-muted)', opacity: 0.7 }}>
-									Try the other period or add a transaction
+									Step to another month or add a transaction
 								</p>
 							</div>
 						) : (
@@ -231,15 +297,19 @@ export function AnalyticsScreen() {
 												paddingAngle={2}
 												dataKey="value"
 												stroke="none"
+												onClick={(entry: unknown) => {
+													const name = (entry as { name?: unknown })?.name;
+													if (typeof name === 'string') setSelectedSlice(name);
+												}}
 											>
 												{data.map((_, index) => (
 													<Cell key={`cell-${index}`} fill={LEDGER_COLORS[index % LEDGER_COLORS.length]} />
 												))}
 											</Pie>
 											<Tooltip
-												formatter={(value: number | string | undefined) => {
+												formatter={(value: number | string | undefined, name: string | undefined) => {
 													const amount = typeof value === 'number' ? value : Number(value ?? 0);
-													return [`₹${formatRupeesPaise(amount)}`, ''];
+													return [`₹${formatRupeesPaise(amount)}`, name ?? ''];
 												}}
 												contentStyle={{
 													background: 'var(--ledger-card)',
@@ -259,9 +329,10 @@ export function AnalyticsScreen() {
 											? ((item.value / totalExpense) * 100).toFixed(1)
 											: '0.0';
 										return (
-											<div
+											<button
 												key={item.name}
-												className="flex items-center justify-between py-2.5"
+												onClick={() => setSelectedSlice(item.name)}
+												className="w-full flex items-center justify-between py-2.5 text-left"
 												style={
 													index < data.length - 1
 														? { borderBottom: '1px solid var(--ledger-rule)' }
@@ -285,7 +356,7 @@ export function AnalyticsScreen() {
 														{percentage}%
 													</span>
 												</div>
-											</div>
+											</button>
 										);
 									})}
 								</div>
@@ -294,6 +365,89 @@ export function AnalyticsScreen() {
 					</>
 				)}
 			</main>
+
+			{selectedSlice !== null && (
+				<div
+					className="absolute inset-0 z-40 flex items-center justify-center px-6"
+					style={{ background: 'rgba(0, 0, 0, 0.45)', backdropFilter: 'blur(3px)' }}
+					onClick={() => setSelectedSlice(null)}
+				>
+					<div
+						className="w-full max-w-[380px] rounded-[14px] flex flex-col overflow-hidden"
+						style={{
+							background: 'var(--ledger-card)',
+							border: '1px solid var(--ledger-rule)',
+							maxHeight: '65vh',
+							boxShadow: '0 24px 48px -16px rgba(0, 0, 0, 0.35)',
+						}}
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div
+							className="px-5 pt-4 pb-3 flex items-start justify-between shrink-0"
+							style={{ borderBottom: '1px solid var(--ledger-rule)' }}
+						>
+							<div className="min-w-0">
+								<p
+									className="text-[10px] font-bold uppercase tracking-[0.2em] truncate"
+									style={{ color: 'var(--ledger-muted)' }}
+								>
+									{selectedSlice} · {periodLabel}
+								</p>
+								<p className="text-lg font-bold tnum mt-1" style={{ color: 'var(--ledger-fg)' }}>
+									−₹{formatRupeesPaise(sliceTotal)}
+									<span className="text-xs font-medium ml-2" style={{ color: 'var(--ledger-muted)' }}>
+										{sliceTransactions.length} txn{sliceTransactions.length !== 1 ? 's' : ''}
+									</span>
+								</p>
+							</div>
+							<button
+								onClick={() => setSelectedSlice(null)}
+								className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 ml-3"
+								style={{ background: 'var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+								aria-label="Close"
+							>
+								<X size={15} />
+							</button>
+						</div>
+
+						<div className="overflow-y-auto px-5 pb-2">
+							{sliceTransactions.map((t, i) => (
+								<button
+									key={t.id}
+									onClick={() => onEditTransaction(t)}
+									className="w-full flex items-center justify-between gap-3 py-3 text-left"
+									style={
+										i < sliceTransactions.length - 1
+											? { borderBottom: '1px solid var(--ledger-rule)' }
+											: undefined
+									}
+								>
+									<div className="min-w-0">
+										<p className="text-sm font-medium truncate" style={{ color: 'var(--ledger-fg)' }}>
+											{t.merchantName ?? t.description ?? t.category}
+										</p>
+										<p className="text-[11px] mt-0.5 tnum" style={{ color: 'var(--ledger-muted)' }}>
+											{t.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+											{t.status === 'NEEDS_REVIEW' ? ' · needs review' : ''}
+										</p>
+									</div>
+									<p
+										className="text-sm font-semibold tnum shrink-0"
+										style={{ color: 'var(--ledger-negative)' }}
+									>
+										−₹{formatRupeesPaise(t.amount)}
+									</p>
+								</button>
+							))}
+							{sliceTransactions.length === 0 && (
+								<p className="text-sm py-6 text-center" style={{ color: 'var(--ledger-muted)' }}>
+									No transactions
+								</p>
+							)}
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

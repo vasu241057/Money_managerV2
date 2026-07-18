@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Plus, ArrowRight, ChevronRight, Loader2, Circle } from 'lucide-react';
 import type { ScreenId } from '../layout/BottomNav';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
@@ -42,10 +42,21 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 		connection,
 	} = useGmailConnection();
 
+	const [heroRange, setHeroRange] = useState<'month' | 'all'>('month');
+
 	const stats = useMemo(() => {
+		const now = new Date();
+		const thisYear = now.getFullYear();
+		const thisMonth = now.getMonth();
 		let income = 0;
 		let expense = 0;
 		for (const t of transactions) {
+			if (
+				heroRange === 'month' &&
+				(t.date.getFullYear() !== thisYear || t.date.getMonth() !== thisMonth)
+			) {
+				continue;
+			}
 			if (t.type === 'income') income += t.amount;
 			else if (t.type === 'expense') expense += t.amount;
 		}
@@ -54,13 +65,22 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 			expense,
 			balance: income - expense,
 		};
-	}, [transactions]);
+	}, [transactions, heroRange]);
 
 	const recent = useMemo(() => {
 		return [...transactions]
 			.sort((a, b) => b.date.getTime() - a.date.getTime())
 			.slice(0, 5);
 	}, [transactions]);
+
+	// The review backlog is huge (months of drained email); the callout leads
+	// with just the last 3 days, a swipe reveals the total.
+	const [reviewPane, setReviewPane] = useState(0);
+	const reviewLastThreeDaysCount = useMemo(() => {
+		const now = new Date();
+		const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2).getTime();
+		return reviewInbox.filter((t) => t.date.getTime() >= cutoff).length;
+	}, [reviewInbox]);
 
 	const reviewCount = reviewInbox.length;
 	const gmailConnected = connection?.sync_status === 'ACTIVE' || connection?.sync_status === 'DORMANT';
@@ -101,31 +121,59 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 
 				{/* BALANCE HERO */}
 				<section className="mb-6">
-					<p
-						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2"
-						style={{ color: 'var(--ledger-muted)' }}
-					>
-						Total Balance
-					</p>
+					<div className="flex items-center justify-between mb-2">
+						<p
+							className="text-[10px] font-bold uppercase tracking-[0.2em]"
+							style={{ color: 'var(--ledger-muted)' }}
+						>
+							{heroRange === 'month'
+								? `${new Date().toLocaleDateString('en-IN', { month: 'long' })} Balance`
+								: 'Total Balance'}
+						</p>
+						<div
+							className="flex items-center rounded-full p-0.5"
+							style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+						>
+							{(['month', 'all'] as const).map((r) => (
+								<button
+									key={r}
+									onClick={() => setHeroRange(r)}
+									className="px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider transition-all"
+									style={
+										heroRange === r
+											? { background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }
+											: { color: 'var(--ledger-muted)' }
+									}
+								>
+									{r === 'month' ? 'This Month' : 'All Time'}
+								</button>
+							))}
+						</div>
+					</div>
 					{isLoading && transactions.length === 0 ? (
 						<div className="flex items-center gap-2 py-2">
 							<Loader2 size={20} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />
 							<span className="text-sm" style={{ color: 'var(--ledger-muted)' }}>Loading…</span>
 						</div>
-					) : (
-						<div className="flex items-baseline gap-1 mb-4">
-							<span className="text-2xl font-medium" style={{ color: 'var(--ledger-muted)' }}>₹</span>
-							<span
-								className="text-5xl font-bold tnum tracking-tight"
-								style={{ color: stats.balance < 0 ? 'var(--ledger-negative)' : 'var(--ledger-fg)' }}
-							>
-								{Math.floor(Math.round(Math.abs(stats.balance) * 100) / 100).toLocaleString('en-IN')}
-							</span>
-							<span className="text-2xl font-medium tnum" style={{ color: 'var(--ledger-muted)' }}>
-								.{(Math.round(Math.abs(stats.balance) * 100) % 100).toString().padStart(2, '0')}
-							</span>
-						</div>
-					)}
+					) : (() => {
+						const intPart = Math.floor(Math.round(Math.abs(stats.balance) * 100) / 100).toLocaleString('en-IN');
+						// Lakh/crore figures shrink instead of clipping off-screen.
+						const sizeClass = intPart.length > 9 ? 'text-3xl' : intPart.length > 7 ? 'text-4xl' : 'text-5xl';
+						return (
+							<div className="flex items-baseline gap-1 mb-4 whitespace-nowrap">
+								<span className="text-2xl font-medium" style={{ color: 'var(--ledger-muted)' }}>₹</span>
+								<span
+									className={`${sizeClass} font-bold tnum tracking-tight`}
+									style={{ color: stats.balance < 0 ? 'var(--ledger-negative)' : 'var(--ledger-fg)' }}
+								>
+									{intPart}
+								</span>
+								<span className="text-2xl font-medium tnum" style={{ color: 'var(--ledger-muted)' }}>
+									.{(Math.round(Math.abs(stats.balance) * 100) % 100).toString().padStart(2, '0')}
+								</span>
+							</div>
+						);
+					})()}
 
 					<div
 						className="flex items-center justify-between pt-4"
@@ -170,29 +218,65 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 					</p>
 				</div>
 
-				{/* NEEDS REVIEW */}
+				{/* NEEDS REVIEW — swipe between last-3-days and total */}
 				{reviewCount > 0 && (
-					<button
-						onClick={() => onNavigate('review')}
-						className="w-full flex items-center justify-between p-4 mb-8 rounded-[10px] text-left transition-transform active:scale-[0.98]"
-						style={{
-							background: 'var(--ledger-amber-bg)',
-							border: '1px solid var(--ledger-amber)',
-						}}
-					>
-						<div className="flex-1">
-							<p className="text-sm font-bold mb-0.5" style={{ color: 'var(--ledger-amber)' }}>
-								{reviewCount} transaction{reviewCount !== 1 ? 's' : ''} need review
-							</p>
-							<p className="text-xs" style={{ color: 'var(--ledger-amber)', opacity: 0.7 }}>
-								Categorize recent imports
-							</p>
+					<div className="mb-8">
+						<div
+							className="flex overflow-x-auto snap-x snap-mandatory no-scrollbar gap-3"
+							onScroll={(e) => {
+								const el = e.currentTarget;
+								const next = Math.round(el.scrollLeft / el.clientWidth);
+								if (next !== reviewPane) setReviewPane(next);
+							}}
+						>
+							{[
+								{
+									count: reviewLastThreeDaysCount,
+									title: `${reviewLastThreeDaysCount} from the last 3 days`,
+									sub: reviewLastThreeDaysCount > 0
+										? 'Categorize recent imports'
+										: 'Nothing recent — swipe for the full backlog',
+								},
+								{
+									count: reviewCount,
+									title: `${reviewCount} in total`,
+									sub: 'The whole backlog, oldest included',
+								},
+							].map((paneData, paneIndex) => (
+								<button
+									key={paneIndex}
+									onClick={() => onNavigate('review')}
+									className="w-full shrink-0 snap-center flex items-center justify-between p-4 rounded-[10px] text-left transition-transform active:scale-[0.98]"
+									style={{
+										background: 'var(--ledger-amber-bg)',
+										border: '1px solid var(--ledger-amber)',
+									}}
+								>
+									<div className="flex-1 min-w-0">
+										<p className="text-sm font-bold mb-0.5" style={{ color: 'var(--ledger-amber)' }}>
+											Needs review · {paneData.title}
+										</p>
+										<p className="text-xs truncate" style={{ color: 'var(--ledger-amber)', opacity: 0.7 }}>
+											{paneData.sub}
+										</p>
+									</div>
+									<span className="flex items-center gap-1 text-xs font-bold shrink-0 ml-3" style={{ color: 'var(--ledger-amber)' }}>
+										Review
+										<ArrowRight size={14} strokeWidth={2.5} />
+									</span>
+								</button>
+							))}
 						</div>
-						<span className="flex items-center gap-1 text-xs font-bold shrink-0" style={{ color: 'var(--ledger-amber)' }}>
-							Review
-							<ArrowRight size={14} strokeWidth={2.5} />
-						</span>
-					</button>
+						<div className="flex justify-center gap-1.5 mt-2">
+							{[0, 1].map((i) => (
+								<span
+									key={i}
+									className="w-1 h-1 rounded-full transition-colors"
+									style={{ background: i === reviewPane ? 'var(--ledger-amber)' : 'var(--ledger-rule)' }}
+								/>
+							))}
+						</div>
+					</div>
 				)}
 
 				{/* RECENT ACTIVITY */}

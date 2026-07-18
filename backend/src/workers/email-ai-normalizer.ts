@@ -54,17 +54,16 @@ import {
 } from '../lib/masking';
 import { hasLikelyDuplicateEvent, resolveDedupWindowMinutes } from '../lib/txn-dedup';
 import {
+	resolveAiProviderConfig,
+	resolveEmailPipelineTraceEnabled,
 	resolveEmailTemplatesEnabled,
 	resolveNormalizerTierConfig,
-	resolveOpenCodeGoApiKey,
 } from '../lib/ai';
 import { getAppConfig } from '../lib/config';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
 import { toIsoDateTime, toNullableString, toRequiredString } from '../lib/db/serialization';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
-
-const OPENCODE_GO_CHAT_URL = 'https://opencode.ai/zen/go/v1/chat/completions';
 
 const VALID_PAYMENT_METHODS: readonly PaymentMethod[] = [
 	'upi',
@@ -115,14 +114,11 @@ function buildUserContextPrompt(ctx: UserNormalizationContext): string {
 		catList,
 		']',
 		'',
-		ctx.misc_category_id
-			? `MISCELLANEOUS category ID: "${ctx.misc_category_id}" — use this when no other category fits.`
-			: 'If no category fits, leave category_id as null.',
-		'',
 		'RULES for category matching:',
 		'- Pick the best matching category from the list above based on the transaction content.',
 		'- If a sub-category fits, set both category_id (parent) and sub_category_id.',
-		'- If unsure, use the MISCELLANEOUS category ID. Do NOT invent category IDs.',
+		'- The category type must match the money flow: debit → an "expense" (or "transfer") category; credit → an "income" (or "transfer") category. Never cross types.',
+		'- If unsure or nothing fits, return null for category_id and sub_category_id. Never guess, never invent IDs.',
 	].join('\n');
 }
 
@@ -153,12 +149,12 @@ function buildSystemPrompt(ctx: UserNormalizationContext): string {
 		'- amount_in_paise: Convert rupees to paise. Rs.100.50 → 10050. NO decimals, NO commas.',
 		'- txn_timestamp: Use the explicit date/time from email. Format: YYYY-MM-DDTHH:mm:ss.sssZ.',
 		'- direction: "debit" = money going OUT. "credit" = money coming IN.',
-		'- counterparty_raw: Extract merchant/person/bank name. null if unclear.',
+		'- counterparty_raw: Extract merchant/person/bank name. If BOTH a payment gateway/aggregator (Razorpay, PayU, BillDesk, Cashfree, CCAvenue) AND the actual merchant appear, use the actual merchant; if only the gateway is named, copy the gateway name as printed. null if unclear. Never invent a name.',
 		'- instrument_last4: Last 4 digits of card or account number seen in email. null if not present.',
 		'- payment_method: "upi" if VPA/UPI, "credit_card"/"debit_card" if card, "netbanking" if bank transfer, "cash" if ATM, "unknown" otherwise.',
-		'- category_id: Pick the best matching category ID from the user context. If none fits, use the MISCELLANEOUS category ID.',
-		'- sub_category_id: Pick the best matching sub-category ID from the user context. null if none fits.',
-		'- confidence: 0.95-1.0 when clear. 0.7-0.9 with inference. 0.4-0.7 when guessing. NEVER below 0.4.',
+		'- category_id / sub_category_id: pick from the user context per its rules; null when unsure.',
+		'- Amounts must be INR. If the transaction amount is only in a foreign currency (USD, EUR, ...) with no INR amount, do NOT extract that transaction.',
+		'- confidence: your honest certainty that this is a REAL transaction with the right values. 0.95-1.0 when explicit. 0.7-0.9 with inference. Below 0.4 when likely spurious — low-confidence items are discarded, so be honest.',
 		'- If the email has NO financial transactions, return {"transactions": []}.',
 		'- ALWAYS return valid JSON. No markdown, no code fences.',
 		buildUserContextPrompt(ctx),
@@ -194,12 +190,13 @@ function buildMaskedSystemPrompt(ctx: UserNormalizationContext): string {
 		'CRITICAL RULES:',
 		'- amount_token: the placeholder id of the TRANSACTION amount. Never pick balance/limit amounts',
 		'  (they follow words like "Avl Bal", "Available Limit", "Total Due").',
-		'- date_text: copy the date fragment exactly as it appears, placeholders included. null if absent.',
+		'- date_text: copy the fragment holding the date the TRANSACTION occurred, exactly as it appears, placeholders included — never statement dates, due dates, or footer dates. null if absent.',
 		'- direction: "debit" = money going OUT. "credit" = money coming IN.',
-		'- counterparty_raw: merchant/person/bank name copied from the email. null if unclear.',
+		'- counterparty_raw: merchant/person/bank name copied from the email. If BOTH a payment gateway/aggregator (Razorpay, PayU, BillDesk, Cashfree, CCAvenue) AND the actual merchant appear, use the actual merchant; if only the gateway is named, copy the gateway name as printed. null if unclear. Never invent a name.',
 		'- instrument_token: placeholder holding the account/card digits mentioned for the instrument. null if none.',
 		'- payment_method: "upi" if VPA/UPI, "credit_card"/"debit_card" if card, "netbanking" for NEFT/IMPS/RTGS, "cash" if ATM, "unknown" otherwise.',
-		'- confidence: 0.95-1.0 when clear. 0.7-0.9 with inference. 0.4-0.7 when guessing. NEVER below 0.4.',
+		'- Amounts must be INR. If the transaction amount is only in a foreign currency (USD, EUR, ...) with no INR amount, do NOT extract that transaction.',
+		'- confidence: your honest certainty that this is a REAL transaction with the right values. 0.95-1.0 when explicit. 0.7-0.9 with inference. Below 0.4 when likely spurious — low-confidence items are discarded, so be honest.',
 		'- If the email has NO financial transactions, return {"transactions": []}.',
 		'- ALWAYS return valid JSON. No markdown, no code fences.',
 		buildUserContextPrompt(ctx),
@@ -682,7 +679,48 @@ function classifyError(error: unknown): ModelError {
 	return { kind: 'transient', message: msg };
 }
 
+// Returns the last balanced top-level {...} block in the text, or null.
+// String-aware enough for JSON: braces inside quoted strings are ignored.
+function extractLastJsonObject(text: string): string | null {
+	let lastComplete: string | null = null;
+	let depth = 0;
+	let start = -1;
+	let inString = false;
+	let escaped = false;
+	for (let i = 0; i < text.length; i++) {
+		const ch = text[i];
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			} else if (ch === '\\') {
+				escaped = true;
+			} else if (ch === '"') {
+				inString = false;
+			}
+			continue;
+		}
+		if (ch === '"') {
+			if (depth > 0) inString = true;
+			continue;
+		}
+		if (ch === '{') {
+			if (depth === 0) start = i;
+			depth++;
+		} else if (ch === '}') {
+			if (depth > 0) {
+				depth--;
+				if (depth === 0 && start >= 0) {
+					lastComplete = text.slice(start, i + 1);
+					start = -1;
+				}
+			}
+		}
+	}
+	return lastComplete;
+}
+
 async function callModel(
+	chatUrl: string,
 	model: string,
 	emailText: string,
 	apiKey: string,
@@ -719,7 +757,7 @@ async function callModel(
 			body.max_tokens = maxTokens;
 		}
 
-		response = await fetch(OPENCODE_GO_CHAT_URL, {
+		response = await fetch(chatUrl, {
 			method: 'POST',
 			headers,
 			body: JSON.stringify(body),
@@ -756,18 +794,42 @@ async function callModel(
 	}
 
 	const json = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string } }>;
+		choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
 	};
 
-	const content = json.choices?.[0]?.message?.content;
+	const message = json.choices?.[0]?.message;
+	let content = message?.content;
+	// Reasoning-model responses (deepseek reasoner style) sometimes finish
+	// with empty content and the final JSON at the end of reasoning_content.
+	// Salvage the LAST balanced top-level object — earlier ones may be
+	// abandoned drafts. Salvaged values still face full local validation and
+	// token resolution, so a bad draft cannot inject data silently.
+	if (!content && typeof message?.reasoning_content === 'string') {
+		const salvaged = extractLastJsonObject(message.reasoning_content);
+		if (salvaged) {
+			console.warn('AI_NORMALIZER_REASONING_SALVAGE', {
+				model,
+				reasoningLength: message.reasoning_content.length,
+				salvagedLength: salvaged.length,
+			});
+			content = salvaged;
+		}
+	}
 	if (!content) {
 		console.error('AI_NORMALIZER_EMPTY_RESPONSE', {
 			status: response.status,
 			model,
 			responseKeys: Object.keys(json),
 			choicesLength: json.choices?.length,
-			hasMessage: Boolean(json.choices?.[0]?.message),
-			messageKeys: json.choices?.[0]?.message ? Object.keys(json.choices[0].message!) : [],
+			hasMessage: Boolean(message),
+			messageKeys: message ? Object.keys(message) : [],
+			contentLength: message?.content?.length ?? 0,
+			reasoningLength:
+				typeof message?.reasoning_content === 'string' ? message.reasoning_content.length : 0,
+			reasoningTail:
+				typeof message?.reasoning_content === 'string'
+					? message.reasoning_content.slice(-300)
+					: null,
 		});
 		throw new TransientMessageError('AI normalizer returned empty response');
 	}
@@ -809,6 +871,7 @@ async function callWithTieredFallback(
 	env: Env,
 	emailText: string,
 	apiKey: string,
+	chatUrl: string,
 	systemPrompt: string,
 ): Promise<AiNormalizationResponse> {
 	const config = resolveNormalizerTierConfig(env);
@@ -840,6 +903,7 @@ async function callWithTieredFallback(
 
 		try {
 			return await callModel(
+				chatUrl,
 				model,
 				emailText,
 				apiKey,
@@ -870,7 +934,7 @@ async function callWithTieredFallback(
 				continue;
 			}
 
-			if (tierFails >= config.rotateFailures) {
+			if (tierFails >= (config.tierAttempts[tierIdx] ?? 1)) {
 				state.cooldownUntil.set(tierIdx, Date.now() + config.cooldownMs);
 				state.activeIndex = tierIdx + 1;
 			}
@@ -1270,9 +1334,10 @@ export async function runNormalizeRawEmailsJob(
 
 	// A missing key only disables the AI leg; template matches still resolve
 	// locally and unmatched emails stay PENDING_EXTRACTION for a later run.
-	const apiKey = resolveOpenCodeGoApiKey(env);
+	const providerConfig = resolveAiProviderConfig(env);
+	const apiKey = providerConfig.apiKey;
 	if (!apiKey) {
-		console.error('AI normalizer: OPENCODE_GO_API_KEY is not set');
+		console.error(`AI normalizer: ${providerConfig.apiKeyEnvVar} is not set`);
 	}
 
 	const config = getAppConfig(env);
@@ -1333,21 +1398,9 @@ export async function runNormalizeRawEmailsJob(
 				item.credit_card_id = link.credit_card_id;
 				item.account_id = link.account_id;
 			}
-
-			if (!item.account_id && item.payment_method === 'upi') {
-				const emailLower = rawEmail.clean_text.toLowerCase();
-				const counterpartyLower = (item.counterparty_raw || '').toLowerCase();
-				const searchText = counterpartyLower + ' ' + emailLower;
-
-				const matched = ctx.accounts.find(a => {
-					const nameLower = a.name.toLowerCase();
-					const keywords = nameLower.split(' ').filter(w => w.length > 1);
-					return a.type === 'bank' && keywords.some(kw => searchText.includes(kw));
-				});
-				if (matched) {
-					item.account_id = matched.id;
-				}
-			}
+			// No guessy fallback beyond resolveInstrumentLink: digit-less or
+			// unmatched instruments stay unlinked for review rather than being
+			// keyword-matched to whichever bank account sorts first.
 		}
 
 		// Identity graph pass: user rules and global merchant aliases must
@@ -1369,6 +1422,30 @@ export async function runNormalizeRawEmailsJob(
 			identityLookup,
 			ctx.hidden_category_ids,
 		);
+
+		if (resolveEmailPipelineTraceEnabled(env)) {
+			// Content-bearing trace (counterparty names) — dev flag only.
+			for (const resolved of resolvedItems) {
+				console.info('PIPELINE_TRACE_RESOLVED', {
+					rawEmailId: rawEmail.id,
+					fromAddress: rawEmail.from_address,
+					amountInPaise: resolved.item.amount_in_paise,
+					txnTimestamp: resolved.item.txn_timestamp,
+					direction: resolved.item.direction,
+					paymentMethod: resolved.item.payment_method,
+					instrumentLast4: resolved.item.instrument_last4,
+					counterpartyRaw: resolved.item.counterparty_raw,
+					searchKey: resolved.search_key,
+					merchantId: resolved.merchant_id,
+					categoryId: resolved.category_id,
+					transactionType: resolved.transaction_type,
+					classificationSource: resolved.classification_source,
+					status: resolved.status,
+					linkedAccountId: resolved.item.account_id ?? null,
+					linkedCreditCardId: resolved.item.credit_card_id ?? null,
+				});
+			}
+		}
 
 		const persistence = await persistAiTransactions(
 			sql,
@@ -1521,7 +1598,13 @@ export async function runNormalizeRawEmailsJob(
 		});
 
 		try {
-			const aiResponse = await callWithTieredFallback(env, promptText, apiKey, systemPrompt);
+			const aiResponse = await callWithTieredFallback(
+				env,
+				promptText,
+				apiKey,
+				providerConfig.chatUrl,
+				systemPrompt,
+			);
 
 			const validated = masked
 				? validateMaskedResponse(
@@ -1591,6 +1674,7 @@ export async function runNormalizeRawEmailsJob(
 				env,
 				sections.join('\n\n'),
 				apiKey,
+				providerConfig.chatUrl,
 				buildMaskedBatchSystemPrompt(ctx, batch.length),
 			);
 			perEmailResponses = splitBatchResponse(aiResponse, batch.length);
