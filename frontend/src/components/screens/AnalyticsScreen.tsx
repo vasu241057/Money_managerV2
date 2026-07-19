@@ -4,28 +4,21 @@ import {
 } from 'recharts';
 import { ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
+import { useAnalyticsSummary, monthKeyIST } from '../../hooks/useAnalyticsSummary';
+import { useAccounts } from '../../hooks/useAccounts';
+import { paiseToRupees } from '../../lib/money';
+import { SkeletonBar, SkeletonDonut } from '../ui/Skeleton';
 
 // Cards are covered by the account breakdown: card transactions ride their
 // backing folio, so a separate by-card view would only repeat it.
 type Breakdown = 'category' | 'account';
 
 interface BreakdownItem {
+	id: string | null;
 	name: string;
-	value: number;
-}
-
-function breakdownKey(t: Transaction, breakdown: Breakdown): string {
-	if (breakdown === 'category') return t.subCategory ?? t.category ?? 'Uncategorized';
-	return t.accountName ?? 'No account';
-}
-
-interface MonthKey {
-	year: number;
-	month: number;
-}
-
-function compareMonths(a: MonthKey, b: MonthKey): number {
-	return a.year !== b.year ? a.year - b.year : a.month - b.month;
+	valuePaise: number;
+	value: number; // rupees, for the chart
+	txnCount: number;
 }
 
 const LEDGER_COLORS = [
@@ -38,10 +31,6 @@ const LEDGER_COLORS = [
 	'#A0826D',
 ];
 
-function isSameMonth(date: Date, year: number, month: number): boolean {
-	return date.getFullYear() === year && date.getMonth() === month;
-}
-
 function formatRupees(amount: number): string {
 	return amount.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
@@ -50,83 +39,101 @@ function formatRupeesPaise(amount: number): string {
 	return amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function shiftMonthKey(monthKey: string, delta: number): string {
+	const [yearStr, monthStr] = monthKey.split('-');
+	const shifted = new Date(Number(yearStr), Number(monthStr) - 1 + delta, 1);
+	return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthKeyLabel(monthKey: string): string {
+	const [yearStr, monthStr] = monthKey.split('-');
+	return new Date(Number(yearStr), Number(monthStr) - 1, 1).toLocaleDateString('en-IN', {
+		month: 'long',
+		year: 'numeric',
+	});
+}
+
 interface AnalyticsScreenProps {
 	onEditTransaction: (transaction: Transaction) => void;
 }
 
 export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
-	const { transactions, isLoading } = useTransactions();
+	const { summary, isLoading } = useAnalyticsSummary();
+	// Feed is only needed for the drill-down rows; it loads in the background
+	// and shares its cache with Home and the Ledger.
+	const { transactions, isLoading: feedLoading } = useTransactions();
+	const { accounts } = useAccounts();
 	const [breakdown, setBreakdown] = useState<Breakdown>('category');
-	const [selectedSlice, setSelectedSlice] = useState<string | null>(null);
-	// null = auto: latest month that has data (falls back to the current month)
-	const [selectedMonth, setSelectedMonth] = useState<MonthKey | null>(null);
+	const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+	const [selectedSlice, setSelectedSlice] = useState<{ id: string | null; name: string } | null>(null);
 
-	const now = new Date();
-	const thisYear = now.getFullYear();
-	const thisMonth = now.getMonth();
+	const months = summary?.months ?? [];
+	const currentMonthKey = monthKeyIST(new Date());
+	const latestDataMonth = months.length > 0 ? months[months.length - 1]?.month ?? null : null;
+	// Default to the latest month that has data (falls back to the current month)
+	const activeMonthKey = selectedMonth ?? latestDataMonth ?? currentMonthKey;
+	const activeMonth = months.find((m) => m.month === activeMonthKey) ?? null;
 
-	const monthBounds = useMemo(() => {
-		const current: MonthKey = { year: thisYear, month: thisMonth };
-		let oldest = current;
-		let newestWithData: MonthKey | null = null;
-		for (const t of transactions) {
-			const key: MonthKey = { year: t.date.getFullYear(), month: t.date.getMonth() };
-			if (compareMonths(key, oldest) < 0) oldest = key;
-			if (!newestWithData || compareMonths(key, newestWithData) > 0) newestWithData = key;
-		}
-		const forwardLimit =
-			newestWithData && compareMonths(newestWithData, current) > 0 ? newestWithData : current;
-		return { oldest, newestWithData, forwardLimit };
-	}, [transactions, thisYear, thisMonth]);
-
-	const activeMonth =
-		selectedMonth ?? monthBounds.newestWithData ?? { year: thisYear, month: thisMonth };
-	const canGoBack = compareMonths(activeMonth, monthBounds.oldest) > 0;
-	const canGoForward = compareMonths(activeMonth, monthBounds.forwardLimit) < 0;
+	const oldestMonth = months[0]?.month ?? currentMonthKey;
+	const forwardLimit =
+		latestDataMonth && latestDataMonth > currentMonthKey ? latestDataMonth : currentMonthKey;
+	const canGoBack = activeMonthKey > oldestMonth;
+	const canGoForward = activeMonthKey < forwardLimit;
 
 	const stepMonth = (delta: number) => {
-		const next = new Date(activeMonth.year, activeMonth.month + delta, 1);
-		setSelectedMonth({ year: next.getFullYear(), month: next.getMonth() });
+		setSelectedMonth(shiftMonthKey(activeMonthKey, delta));
+		setSelectedSlice(null);
 	};
 
-	const periodTransactions = useMemo(() => {
-		return transactions.filter((t) => isSameMonth(t.date, activeMonth.year, activeMonth.month));
-	}, [transactions, activeMonth.year, activeMonth.month]);
+	const accountsById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
 	const totals = useMemo(() => {
-		let income = 0;
-		let expense = 0;
-		for (const t of periodTransactions) {
-			if (t.type === 'income') income += t.amount;
-			else if (t.type === 'expense') expense += t.amount;
-		}
+		const income = paiseToRupees(activeMonth?.income_in_paise ?? 0);
+		const expense = paiseToRupees(activeMonth?.expense_in_paise ?? 0);
 		return { income, expense, net: income - expense };
-	}, [periodTransactions]);
+	}, [activeMonth]);
 
 	const data = useMemo<BreakdownItem[]>(() => {
-		const map = new Map<string, number>();
-		for (const t of periodTransactions) {
-			if (t.type !== 'expense') continue;
-			const key = breakdownKey(t, breakdown);
-			map.set(key, (map.get(key) ?? 0) + t.amount);
+		if (!activeMonth) return [];
+		if (breakdown === 'category') {
+			return activeMonth.expense_by_category.map((slice) => ({
+				id: slice.category_id,
+				name: slice.category_name ?? 'Uncategorized',
+				valuePaise: slice.amount_in_paise,
+				value: Math.round(paiseToRupees(slice.amount_in_paise)),
+				txnCount: slice.txn_count,
+			}));
 		}
-		return Array.from(map.entries())
-			.map(([name, value]) => ({ name, value: Math.round(value) }))
-			.sort((a, b) => b.value - a.value);
-	}, [periodTransactions, breakdown]);
+		return activeMonth.expense_by_account.map((slice) => ({
+			id: slice.account_id,
+			name: slice.account_id
+				? accountsById.get(slice.account_id)?.name ?? 'Unknown account'
+				: 'No account',
+			valuePaise: slice.amount_in_paise,
+			value: Math.round(paiseToRupees(slice.amount_in_paise)),
+			txnCount: slice.txn_count,
+		}));
+	}, [activeMonth, breakdown, accountsById]);
+
+	const selectedBucket = selectedSlice
+		? data.find((item) => item.id === selectedSlice.id) ?? null
+		: null;
 
 	const sliceTransactions = useMemo(() => {
 		if (!selectedSlice) return [];
-		return periodTransactions
-			.filter((t) => t.type === 'expense' && breakdownKey(t, breakdown) === selectedSlice)
+		return transactions
+			.filter((t) => {
+				if (t.type !== 'expense') return false;
+				if (monthKeyIST(t.date) !== activeMonthKey) return false;
+				if (breakdown === 'category') {
+					return (t.persistedCategoryId ?? null) === selectedSlice.id;
+				}
+				return (t.accountId ?? null) === selectedSlice.id;
+			})
 			.sort((a, b) => b.date.getTime() - a.date.getTime());
-	}, [periodTransactions, breakdown, selectedSlice]);
-	const sliceTotal = sliceTransactions.reduce((acc, t) => acc + t.amount, 0);
+	}, [transactions, selectedSlice, breakdown, activeMonthKey]);
 
-	const periodLabel = new Date(activeMonth.year, activeMonth.month, 1).toLocaleDateString(
-		'en-IN',
-		{ month: 'long', year: 'numeric' },
-	);
+	const periodLabel = monthKeyLabel(activeMonthKey);
 	const totalExpense = totals.expense;
 
 	// Lakh/crore figures shrink to fit their third of the card instead of
@@ -155,10 +162,44 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 			</header>
 
 			<main className="flex-1 overflow-y-auto pb-24 px-5 pt-5">
-				{isLoading && periodTransactions.length === 0 ? (
-					<div className="flex items-center gap-2 py-8">
-						<Loader2 size={20} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />
-						<span className="text-sm" style={{ color: 'var(--ledger-muted)' }}>Loading analytics…</span>
+				{isLoading && !summary ? (
+					<div aria-label="Loading analytics">
+						<SkeletonBar className="h-11 w-full rounded-[10px] mb-4" />
+						<div
+							className="rounded-[10px] p-5 mb-4"
+							style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+						>
+							<SkeletonBar className="h-2.5 w-20 rounded-full mb-5" />
+							<div className="flex items-baseline gap-2.5">
+								{[0, 1, 2].map((i) => (
+									<div key={i} className="flex-1 flex flex-col gap-2">
+										<SkeletonBar className="h-2 w-12 rounded-full" delayMs={i * 120} />
+										<SkeletonBar className="h-5 w-full rounded-[6px]" delayMs={i * 120 + 60} />
+									</div>
+								))}
+							</div>
+						</div>
+						<div className="flex gap-2 mb-4">
+							<SkeletonBar className="h-9 flex-1 rounded-[10px]" />
+							<SkeletonBar className="h-9 flex-1 rounded-[10px]" delayMs={150} />
+						</div>
+						<div
+							className="rounded-[10px] p-5"
+							style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+						>
+							<SkeletonBar className="h-2.5 w-32 rounded-full mb-6" />
+							<div className="py-4">
+								<SkeletonDonut />
+							</div>
+							<div className="flex flex-col gap-3 mt-6">
+								{[0, 1, 2].map((i) => (
+									<div key={i} className="flex items-center justify-between">
+										<SkeletonBar className="h-2.5 w-28 rounded-full" delayMs={i * 120} />
+										<SkeletonBar className="h-2.5 w-16 rounded-full" delayMs={i * 120 + 60} />
+									</div>
+								))}
+							</div>
+						</div>
 					</div>
 				) : (
 					<>
@@ -297,13 +338,13 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 												paddingAngle={2}
 												dataKey="value"
 												stroke="none"
-												onClick={(entry: unknown) => {
-													const name = (entry as { name?: unknown })?.name;
-													if (typeof name === 'string') setSelectedSlice(name);
+												onClick={(_entry: unknown, index: number) => {
+													const item = data[index];
+													if (item) setSelectedSlice({ id: item.id, name: item.name });
 												}}
 											>
-												{data.map((_, index) => (
-													<Cell key={`cell-${index}`} fill={LEDGER_COLORS[index % LEDGER_COLORS.length]} />
+												{data.map((item, index) => (
+													<Cell key={item.id ?? 'none'} fill={LEDGER_COLORS[index % LEDGER_COLORS.length]} />
 												))}
 											</Pie>
 											<Tooltip
@@ -326,12 +367,12 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 								<div className="mt-4 space-y-0">
 									{data.map((item, index) => {
 										const percentage = totalExpense > 0
-											? ((item.value / totalExpense) * 100).toFixed(1)
+											? ((paiseToRupees(item.valuePaise) / totalExpense) * 100).toFixed(1)
 											: '0.0';
 										return (
 											<button
-												key={item.name}
-												onClick={() => setSelectedSlice(item.name)}
+												key={item.id ?? 'none'}
+												onClick={() => setSelectedSlice({ id: item.id, name: item.name })}
 												className="w-full flex items-center justify-between py-2.5 text-left"
 												style={
 													index < data.length - 1
@@ -391,12 +432,12 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 									className="text-[10px] font-bold uppercase tracking-[0.2em] truncate"
 									style={{ color: 'var(--ledger-muted)' }}
 								>
-									{selectedSlice} · {periodLabel}
+									{selectedSlice.name} · {periodLabel}
 								</p>
 								<p className="text-lg font-bold tnum mt-1" style={{ color: 'var(--ledger-fg)' }}>
-									−₹{formatRupeesPaise(sliceTotal)}
+									−₹{formatRupeesPaise(paiseToRupees(selectedBucket?.valuePaise ?? 0))}
 									<span className="text-xs font-medium ml-2" style={{ color: 'var(--ledger-muted)' }}>
-										{sliceTransactions.length} txn{sliceTransactions.length !== 1 ? 's' : ''}
+										{selectedBucket?.txnCount ?? sliceTransactions.length} txn{(selectedBucket?.txnCount ?? sliceTransactions.length) !== 1 ? 's' : ''}
 									</span>
 								</p>
 							</div>
@@ -439,7 +480,13 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 									</p>
 								</button>
 							))}
-							{sliceTransactions.length === 0 && (
+							{sliceTransactions.length === 0 && feedLoading && (
+								<div className="flex items-center justify-center gap-2 py-6">
+									<Loader2 size={16} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />
+									<span className="text-sm" style={{ color: 'var(--ledger-muted)' }}>Loading transactions…</span>
+								</div>
+							)}
+							{sliceTransactions.length === 0 && !feedLoading && (
 								<p className="text-sm py-6 text-center" style={{ color: 'var(--ledger-muted)' }}>
 									No transactions
 								</p>

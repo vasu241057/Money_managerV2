@@ -14,6 +14,7 @@ import { parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
 import { ensureLegacyLocalDataMigrated } from './lib/legacy-local-migration';
 import { queryClient } from './lib/query-client';
 import { useGmailConnectionForOAuthCallback } from './hooks/useGmailConnection';
+import { SkeletonBar, SkeletonRules } from './components/ui/Skeleton';
 import { useTransactions } from './hooks/useTransactions';
 import type { Transaction } from './hooks/useTransactions';
 import './styles/app.css';
@@ -21,15 +22,74 @@ import './styles/app.css';
 type Overlay = 'editor' | 'review' | null;
 type SettingsSubscreen = 'main' | 'accounts';
 
+// Every screen and overlay owns a URL so a refresh (or back/forward) lands
+// exactly where the user was. History API only — no router dependency.
+interface RouteState {
+	screen: ScreenId;
+	settingsSubscreen: SettingsSubscreen;
+	overlay: Overlay;
+	editorTxnId: string | 'new' | null;
+}
+
+function parseRoute(pathname: string): RouteState {
+	const base: RouteState = {
+		screen: 'home',
+		settingsSubscreen: 'main',
+		overlay: null,
+		editorTxnId: null,
+	};
+	if (pathname === '/ledger') return { ...base, screen: 'ledger' };
+	if (pathname === '/analytics') return { ...base, screen: 'analytics' };
+	if (pathname === '/settings') return { ...base, screen: 'settings' };
+	if (pathname === '/settings/accounts') {
+		return { ...base, screen: 'settings', settingsSubscreen: 'accounts' };
+	}
+	if (pathname === '/review') return { ...base, overlay: 'review' };
+	if (pathname === '/transaction/new') return { ...base, overlay: 'editor', editorTxnId: 'new' };
+	const txnMatch = /^\/transaction\/([0-9a-fA-F-]{8,})$/.exec(pathname);
+	if (txnMatch?.[1]) return { ...base, overlay: 'editor', editorTxnId: txnMatch[1] };
+	return base;
+}
+
+function pathForScreen(screen: ScreenId, settingsSubscreen: SettingsSubscreen): string {
+	if (screen === 'ledger') return '/ledger';
+	if (screen === 'analytics') return '/analytics';
+	if (screen === 'settings') {
+		return settingsSubscreen === 'accounts' ? '/settings/accounts' : '/settings';
+	}
+	return '/';
+}
+
+function syncPath(path: string, replace = false) {
+	if (window.location.pathname !== path) {
+		window.history[replace ? 'replaceState' : 'pushState'](null, '', path);
+	}
+}
+
 function LedgerApp() {
-	const [activeScreen, setActiveScreen] = useState<ScreenId>('home');
-	const [overlay, setOverlay] = useState<Overlay>(null);
-	const [editorMode, setEditorMode] = useState<'add' | 'edit'>('add');
+	const initialRoute = useRef(parseRoute(window.location.pathname)).current;
+	const [activeScreen, setActiveScreen] = useState<ScreenId>(initialRoute.screen);
+	const [overlay, setOverlay] = useState<Overlay>(
+		initialRoute.overlay === 'review' || initialRoute.editorTxnId === 'new'
+			? initialRoute.overlay
+			: null,
+	);
+	const [editorMode, setEditorMode] = useState<'add' | 'edit'>(
+		initialRoute.editorTxnId === 'new' ? 'add' : 'edit',
+	);
 	const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 	const [reviewedCount, setReviewedCount] = useState(0);
-	const [settingsSubscreen, setSettingsSubscreen] = useState<SettingsSubscreen>('main');
+	const [settingsSubscreen, setSettingsSubscreen] = useState<SettingsSubscreen>(
+		initialRoute.settingsSubscreen,
+	);
+	// A deep-linked /transaction/:id must wait for the feed to deliver the row.
+	const [pendingTxnId, setPendingTxnId] = useState<string | null>(
+		initialRoute.editorTxnId && initialRoute.editorTxnId !== 'new'
+			? initialRoute.editorTxnId
+			: null,
+	);
 
-	const { reviewInbox } = useTransactions();
+	const { reviewInbox, transactions, isFeedComplete } = useTransactions();
 
 	useEffect(() => {
 		// One-time legacy localStorage migration. Runs detached: it never
@@ -38,20 +98,74 @@ function LedgerApp() {
 		void ensureLegacyLocalDataMigrated().then(() => queryClient.invalidateQueries());
 	}, []);
 
-	const openEditor = (mode: 'add' | 'edit') => {
+	// Resolve a deep-linked transaction once the (incrementally loading)
+	// feed contains it; a confirmed miss falls back home.
+	useEffect(() => {
+		if (!pendingTxnId) return;
+		const found = transactions.find((t) => t.id === pendingTxnId);
+		if (found) {
+			setEditingTransaction(found);
+			setEditorMode('edit');
+			setOverlay('editor');
+			setPendingTxnId(null);
+		} else if (isFeedComplete) {
+			setPendingTxnId(null);
+			setOverlay(null);
+			setActiveScreen('home');
+			syncPath('/', true);
+		}
+	}, [pendingTxnId, transactions, isFeedComplete]);
+
+	// Back/forward buttons re-derive all state from the URL.
+	useEffect(() => {
+		const onPopState = () => {
+			const route = parseRoute(window.location.pathname);
+			setActiveScreen(route.screen);
+			setSettingsSubscreen(route.settingsSubscreen);
+			setReviewedCount(0);
+			if (route.overlay === 'editor') {
+				if (route.editorTxnId === 'new') {
+					setEditorMode('add');
+					setEditingTransaction(null);
+					setOverlay('editor');
+				} else if (route.editorTxnId) {
+					setOverlay(null);
+					setPendingTxnId(route.editorTxnId);
+				}
+			} else {
+				setOverlay(route.overlay);
+				setEditingTransaction(null);
+				setPendingTxnId(null);
+			}
+		};
+		window.addEventListener('popstate', onPopState);
+		return () => window.removeEventListener('popstate', onPopState);
+	}, []);
+
+	const navigateToScreen = (screen: ScreenId, subscreen: SettingsSubscreen = 'main') => {
+		setActiveScreen(screen);
+		setSettingsSubscreen(subscreen);
+		syncPath(pathForScreen(screen, subscreen));
+	};
+
+	const openEditor = (mode: 'add' | 'edit', transaction: Transaction | null = null) => {
 		setEditorMode(mode);
-		if (mode === 'add') setEditingTransaction(null);
+		setEditingTransaction(mode === 'add' ? null : transaction);
 		setOverlay('editor');
+		syncPath(mode === 'add' ? '/transaction/new' : `/transaction/${transaction?.id ?? ''}`);
 	};
 	const closeOverlay = () => {
 		setOverlay(null);
 		setEditingTransaction(null);
+		setPendingTxnId(null);
 		setReviewedCount(0);
+		syncPath(pathForScreen(activeScreen, settingsSubscreen));
 	};
 
 	const openReview = () => {
 		setReviewedCount(0);
 		setOverlay('review');
+		syncPath('/review');
 	};
 
 	const handleHomeNavigate = (screen: ScreenId) => {
@@ -60,7 +174,7 @@ function LedgerApp() {
 		} else if (screen === 'review') {
 			openReview();
 		} else {
-			setActiveScreen(screen);
+			navigateToScreen(screen);
 		}
 	};
 
@@ -69,10 +183,7 @@ function LedgerApp() {
 			{activeScreen === 'home' && (
 				<HomeDashboard
 					onNavigate={handleHomeNavigate}
-					onEditTransaction={(t) => {
-						setEditingTransaction(t);
-						openEditor('edit');
-					}}
+					onEditTransaction={(t) => openEditor('edit', t)}
 				/>
 			)}
 
@@ -82,42 +193,50 @@ function LedgerApp() {
 						if (screen === 'add') {
 							openEditor('add');
 						} else {
-							setActiveScreen(screen);
+							navigateToScreen(screen);
 						}
 					}}
-					onEditTransaction={(t) => {
-						setEditingTransaction(t);
-						openEditor('edit');
-					}}
+					onEditTransaction={(t) => openEditor('edit', t)}
 				/>
 			)}
 
 			{activeScreen === 'analytics' && (
-				<AnalyticsScreen
-					onEditTransaction={(t) => {
-						setEditingTransaction(t);
-						openEditor('edit');
-					}}
-				/>
+				<AnalyticsScreen onEditTransaction={(t) => openEditor('edit', t)} />
 			)}
 
 			{activeScreen === 'settings' && settingsSubscreen === 'main' && (
 				<SettingsHub
-					onOpenAccounts={() => setSettingsSubscreen('accounts')}
-					onSignOut={() => setActiveScreen('home')}
+					onOpenAccounts={() => navigateToScreen('settings', 'accounts')}
+					onSignOut={() => navigateToScreen('home')}
 				/>
 			)}
 			{activeScreen === 'settings' && settingsSubscreen === 'accounts' && (
-				<AccountsCardsManager onBack={() => setSettingsSubscreen('main')} />
+				<AccountsCardsManager onBack={() => navigateToScreen('settings', 'main')} />
 			)}
 
 			<BottomNav
 				activeTab={activeScreen}
-				onTabChange={(tab) => {
-					setActiveScreen(tab);
-					if (tab !== 'settings') setSettingsSubscreen('main');
-				}}
+				onTabChange={(tab) => navigateToScreen(tab)}
 			/>
+
+			{/* Deep link resolving: cover the screen immediately so home never
+			    flashes while the feed delivers the linked transaction. */}
+			{pendingTxnId !== null && overlay === null && (
+				<div
+					className="absolute inset-0 z-50 flex flex-col"
+					style={{ background: 'var(--ledger-bg)', color: 'var(--ledger-fg)' }}
+				>
+					<header
+						className="h-[56px] shrink-0 flex items-center px-5"
+						style={{ borderBottom: '1px solid var(--ledger-rule)' }}
+					>
+						<SkeletonBar className="w-8 h-8 rounded-full" />
+					</header>
+					<div className="flex-1 flex items-center justify-center">
+						<SkeletonRules caption="Opening transaction" />
+					</div>
+				</div>
+			)}
 
 			{overlay === 'editor' && (
 				<TransactionEditor
@@ -144,7 +263,7 @@ function LedgerApp() {
 					onClose={closeOverlay}
 					onNavigate={(screen) => {
 						closeOverlay();
-						setActiveScreen(screen);
+						navigateToScreen(screen);
 					}}
 				/>
 			)}

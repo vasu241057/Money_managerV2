@@ -24,6 +24,7 @@
 	"dependencies": {
 		"@types/express": "^5.0.6",
 		"express": "^5.2.1",
-		"postgres": "^3.4.8"
+		"postgres": "^3.4.8",
+		"unpdf": "^1.6.2"
 	}
 }

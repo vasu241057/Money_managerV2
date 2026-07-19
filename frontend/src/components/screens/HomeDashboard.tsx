@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Plus, ArrowRight, ChevronRight, Loader2, Circle } from 'lucide-react';
+import { Plus, ArrowRight, ChevronRight, Circle } from 'lucide-react';
 import type { ScreenId } from '../layout/BottomNav';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
+import { useAnalyticsSummary, monthKeyIST } from '../../hooks/useAnalyticsSummary';
 import { useGmailConnection } from '../../hooks/useGmailConnection';
+import { paiseToRupees } from '../../lib/money';
+import { HomeSkeleton, SkeletonTxnRow } from '../ui/Skeleton';
 
 interface HomeDashboardProps {
 	onNavigate: (screen: ScreenId) => void;
@@ -43,29 +46,31 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 	} = useGmailConnection();
 
 	const [heroRange, setHeroRange] = useState<'month' | 'all'>('month');
+	const { summary, isLoading: summaryLoading } = useAnalyticsSummary();
 
+	// Hero figures come from the server-computed summary — no need to wait
+	// for the full transaction feed.
 	const stats = useMemo(() => {
-		const now = new Date();
-		const thisYear = now.getFullYear();
-		const thisMonth = now.getMonth();
-		let income = 0;
-		let expense = 0;
-		for (const t of transactions) {
-			if (
-				heroRange === 'month' &&
-				(t.date.getFullYear() !== thisYear || t.date.getMonth() !== thisMonth)
-			) {
-				continue;
+		let incomePaise = 0;
+		let expensePaise = 0;
+		if (summary) {
+			if (heroRange === 'month') {
+				const currentMonth = summary.months.find((m) => m.month === monthKeyIST(new Date()));
+				incomePaise = currentMonth?.income_in_paise ?? 0;
+				expensePaise = currentMonth?.expense_in_paise ?? 0;
+			} else {
+				incomePaise = summary.all_time.income_in_paise;
+				expensePaise = summary.all_time.expense_in_paise;
 			}
-			if (t.type === 'income') income += t.amount;
-			else if (t.type === 'expense') expense += t.amount;
 		}
+		const income = paiseToRupees(incomePaise);
+		const expense = paiseToRupees(expensePaise);
 		return {
 			income,
 			expense,
 			balance: income - expense,
 		};
-	}, [transactions, heroRange]);
+	}, [summary, heroRange]);
 
 	const recent = useMemo(() => {
 		return [...transactions]
@@ -74,15 +79,11 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 	}, [transactions]);
 
 	// The review backlog is huge (months of drained email); the callout leads
-	// with just the last 3 days, a swipe reveals the total.
+	// with just the last 3 days, a swipe reveals the total. Counts come from
+	// the summary so the callout renders before the feed does.
 	const [reviewPane, setReviewPane] = useState(0);
-	const reviewLastThreeDaysCount = useMemo(() => {
-		const now = new Date();
-		const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2).getTime();
-		return reviewInbox.filter((t) => t.date.getTime() >= cutoff).length;
-	}, [reviewInbox]);
-
-	const reviewCount = reviewInbox.length;
+	const reviewLastThreeDaysCount = summary?.review.last_3_days ?? 0;
+	const reviewCount = summary?.review.total ?? reviewInbox.length;
 	const gmailConnected = connection?.sync_status === 'ACTIVE' || connection?.sync_status === 'DORMANT';
 
 	return (
@@ -119,6 +120,10 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 					<p className="text-xs mb-4" style={{ color: 'var(--ledger-negative)' }}>{error}</p>
 				)}
 
+				{summaryLoading && !summary ? (
+					<HomeSkeleton />
+				) : (
+				<>
 				{/* BALANCE HERO */}
 				<section className="mb-6">
 					<div className="flex items-center justify-between mb-2">
@@ -150,12 +155,7 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 							))}
 						</div>
 					</div>
-					{isLoading && transactions.length === 0 ? (
-						<div className="flex items-center gap-2 py-2">
-							<Loader2 size={20} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />
-							<span className="text-sm" style={{ color: 'var(--ledger-muted)' }}>Loading…</span>
-						</div>
-					) : (() => {
+					{(() => {
 						const intPart = Math.floor(Math.round(Math.abs(stats.balance) * 100) / 100).toLocaleString('en-IN');
 						// Lakh/crore figures shrink instead of clipping off-screen.
 						const sizeClass = intPart.length > 9 ? 'text-3xl' : intPart.length > 7 ? 'text-4xl' : 'text-5xl';
@@ -295,7 +295,16 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 						</button>
 					</div>
 
-					{recent.length === 0 && !isLoading ? (
+					{recent.length === 0 && isLoading ? (
+						<div
+							className="rounded-[10px] overflow-hidden"
+							style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+						>
+							{[0, 1, 2].map((i) => (
+								<SkeletonTxnRow key={i} delayMs={i * 120} isLast={i === 2} />
+							))}
+						</div>
+					) : recent.length === 0 ? (
 						<p className="text-sm py-4" style={{ color: 'var(--ledger-muted)' }}>
 							No transactions yet
 						</p>
@@ -352,6 +361,8 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 						</div>
 					)}
 				</section>
+				</>
+				)}
 			</main>
 
 			<button

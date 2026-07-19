@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo } from 'react';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AccountRow,
   CategoryRow,
@@ -19,6 +19,8 @@ import {
 
 interface UseTransactionsResult {
   transactions: Transaction[];
+  /** True once every feed page has been fetched (deep links can trust a miss). */
+  isFeedComplete: boolean;
   reviewInbox: Transaction[];
   addTransaction: (transaction: Omit<Transaction, 'id'> | Transaction) => Promise<Transaction>;
   reviewTransaction: (params: {
@@ -33,6 +35,8 @@ interface UseTransactionsResult {
 const TRANSACTIONS_QUERY_KEY = ['transactions'] as const;
 const ACCOUNTS_QUERY_KEY = ['accounts'] as const;
 const CATEGORIES_QUERY_KEY = ['categories'] as const;
+const ANALYTICS_SUMMARY_QUERY_KEY = ['analytics-summary'] as const;
+const FEED_STALE_TIME_MS = 30_000;
 
 function mapFeedItemToUiTransaction(
   item: TransactionFeedItem,
@@ -108,24 +112,7 @@ function mapFeedItemToUiTransaction(
   };
 }
 
-async function listAllTransactions(): Promise<TransactionFeedItem[]> {
-  const limit = 100;
-  let page = 1;
-  const allItems: TransactionFeedItem[] = [];
-
-  while (true) {
-    const response = await apiClient.listTransactions({ page, limit });
-    allItems.push(...response.data);
-
-    if (!response.has_more) {
-      break;
-    }
-
-    page += 1;
-  }
-
-  return allItems;
-}
+const FEED_PAGE_LIMIT = 100;
 
 function useRemoteTransactions(): UseTransactionsResult {
   const queryClient = useQueryClient();
@@ -135,19 +122,39 @@ function useRemoteTransactions(): UseTransactionsResult {
     queryFn: async () => {
       return apiClient.listAccounts();
     },
+    staleTime: FEED_STALE_TIME_MS,
   });
 
   const categoriesQuery = useQuery({
     queryKey: CATEGORIES_QUERY_KEY,
     queryFn: async () => {
-      return apiClient.listCategories();
+      // include_hidden must match useCategories: both hooks share this query
+      // key, and hidden rows are needed so transactions pointing at a hidden
+      // category still resolve its name.
+      return apiClient.listCategories(undefined, true);
     },
+    staleTime: FEED_STALE_TIME_MS,
   });
 
-  const transactionsQuery = useQuery({
+  // Paged so the first 100 rows render immediately; the effect below pumps
+  // the remaining pages in the background instead of blocking first paint.
+  const transactionsQuery = useInfiniteQuery({
     queryKey: TRANSACTIONS_QUERY_KEY,
-    queryFn: listAllTransactions,
+    initialPageParam: 1,
+    queryFn: async ({ pageParam }) => {
+      return apiClient.listTransactions({ page: pageParam, limit: FEED_PAGE_LIMIT });
+    },
+    getNextPageParam: (lastPage, _pages, lastPageParam) =>
+      lastPage.has_more ? lastPageParam + 1 : undefined,
+    staleTime: FEED_STALE_TIME_MS,
   });
+
+  const { hasNextPage, isFetchingNextPage, isError: feedHasError, fetchNextPage } = transactionsQuery;
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage && !feedHasError) {
+      void fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, feedHasError, fetchNextPage]);
 
   const accountsById = useMemo(() => {
     const rows = accountsQuery.data ?? [];
@@ -160,7 +167,7 @@ function useRemoteTransactions(): UseTransactionsResult {
   }, [categoriesQuery.data]);
 
   const transactions = useMemo(() => {
-    const rows = transactionsQuery.data ?? [];
+    const rows = transactionsQuery.data?.pages.flatMap(page => page.data) ?? [];
     return rows.map(item => mapFeedItemToUiTransaction(item, accountsById, categoriesById));
   }, [transactionsQuery.data, accountsById, categoriesById]);
 
@@ -217,6 +224,7 @@ function useRemoteTransactions(): UseTransactionsResult {
             await apiClient.deleteTransaction(transactionInput.id);
           } catch (deleteError) {
             await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
 
             const detail =
               deleteError instanceof Error ? deleteError.message : 'Please refresh and retry.';
@@ -251,6 +259,7 @@ function useRemoteTransactions(): UseTransactionsResult {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
     },
   });
 
@@ -260,6 +269,7 @@ function useRemoteTransactions(): UseTransactionsResult {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
     },
   });
 
@@ -276,9 +286,11 @@ function useRemoteTransactions(): UseTransactionsResult {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
     },
     onError: async () => {
       await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
     },
   });
 
@@ -292,6 +304,7 @@ function useRemoteTransactions(): UseTransactionsResult {
 
   return {
     transactions,
+    isFeedComplete: transactionsQuery.isSuccess && !transactionsQuery.hasNextPage,
     reviewInbox,
     addTransaction: async transaction => upsertTransactionMutation.mutateAsync(transaction),
     reviewTransaction: async params => reviewTransactionMutation.mutateAsync(params),

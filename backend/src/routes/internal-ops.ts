@@ -13,6 +13,7 @@ import {
 	runEmailSyncProbe,
 	runRetroactiveSenderGate,
 	runSenderMetadataBackfill,
+	runStatementHarvest,
 } from '../workers/email-sync-fetcher';
 
 const DEFAULT_PROBE_LIMIT = 10;
@@ -64,6 +65,25 @@ export function createInternalOpsRouter(): Router {
 			const limit = parseLimit(req.query.limit, 2000, 10_000);
 			const dryRun = req.query.dry_run === 'true';
 			const result = await runRetroactiveSenderGate(limit, dryRun, runtimeEnv);
+			res.json(result);
+		}),
+	);
+
+	// One-time statement harvest: re-flips historical statement-looking
+	// emails (IGNORED/PROCESSED, matched by subject/sender wording) to
+	// PENDING and re-runs the normalizer, which now captures them as
+	// card_statements. ?dry_run=true previews counts per sender.
+	router.post(
+		'/statements/harvest',
+		asyncHandler(async (req, res) => {
+			requireSecret(req);
+			const limit = parseLimit(req.query.limit, 500, 2000);
+			const dryRun = req.query.dry_run === 'true';
+			// ?days= restricts the backfill window (e.g. 30 = current cycle only).
+			const parsedDays = parseInt(String(req.query.days ?? ''), 10);
+			const windowDays =
+				Number.isFinite(parsedDays) && parsedDays > 0 ? Math.min(parsedDays, 3650) : null;
+			const result = await runStatementHarvest(limit, dryRun, runtimeEnv, windowDays);
 			res.json(result);
 		}),
 	);

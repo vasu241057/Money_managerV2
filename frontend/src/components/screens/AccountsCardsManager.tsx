@@ -3,9 +3,11 @@ import {
 	ChevronLeft, Trash2, Plus, Pencil, Loader2, Check, X,
 } from 'lucide-react';
 import { useAccounts } from '../../hooks/useAccounts';
+import { useAnalyticsSummary } from '../../hooks/useAnalyticsSummary';
+import { useCardStatements } from '../../hooks/useCardStatements';
 import { useCreditCards } from '../../hooks/useCreditCards';
 import { useTransactions } from '../../hooks/useTransactions';
-import { paiseToRupees } from '../../lib/money';
+import { paiseToRupees, rupeesToPaise } from '../../lib/money';
 import type { AccountType, CardNetwork } from '../../../../shared/types';
 
 const TYPE_COLOR: Record<AccountType, string> = {
@@ -67,6 +69,29 @@ interface CardDraft {
 	last4: string;
 	accountId: string;
 	isActive: boolean;
+	// The real password never reaches the browser; a stored one shows as a
+	// sentinel of the same length (server reveals only the length). Only a
+	// value different from the sentinel is submitted.
+	pdfPassword: string;
+	pdfPasswordSentinel: string;
+	billingCycleDay: string;
+}
+
+function pdfPasswordSentinelFor(card: { has_pdf_password?: boolean; pdf_password_length?: number | null }): string {
+	if (!card.has_pdf_password) return '';
+	return '•'.repeat(card.pdf_password_length ?? 8);
+}
+
+interface BillDraft {
+	total: string;
+	dueDate: string;
+}
+
+function formatDueDate(dateOnly: string): string {
+	return new Date(dateOnly + 'T12:00:00').toLocaleDateString('en-IN', {
+		day: 'numeric',
+		month: 'short',
+	});
 }
 
 function formatRupees(paise: number): string {
@@ -101,7 +126,12 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 		isLoading: cardsLoading,
 		error: cardsError,
 	} = useCreditCards();
+	const { summary, isLoading: summaryLoading } = useAnalyticsSummary();
+	const { latestByCard, saveStatement, isLoading: statementsLoading } = useCardStatements();
+	// Feed loads in the background (shared cache) — only tracked-spend uses it.
 	const { transactions } = useTransactions();
+	const [billEntryCardId, setBillEntryCardId] = useState<string | null>(null);
+	const [billDraft, setBillDraft] = useState<BillDraft>({ total: '', dueDate: '' });
 
 	const [filter, setFilter] = useState<'accounts' | 'cards'>('accounts');
 	const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
@@ -140,27 +170,59 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 		return cardAccounts.filter((a) => !registeredAccountIds.has(a.id));
 	}, [cardAccounts, creditCards]);
 
-	// Balances are derived purely from transactions: income adds, expense
-	// subtracts, transfers are neutral (single account_id — no pair to move
-	// between). Unattributed transactions (no account) appear nowhere here.
+	// Balances are derived purely from transactions (income adds, expense
+	// subtracts, transfers neutral) — computed server-side in the analytics
+	// summary so this screen never waits on the full feed.
 	const deltaByAccount = useMemo(() => {
 		const map = new Map<string, number>();
-		for (const t of transactions) {
-			if (!t.accountId) continue;
-			if (t.type === 'income') {
-				map.set(t.accountId, (map.get(t.accountId) ?? 0) + t.amount);
-			} else if (t.type === 'expense') {
-				map.set(t.accountId, (map.get(t.accountId) ?? 0) - t.amount);
-			}
+		for (const account of summary?.accounts ?? []) {
+			map.set(
+				account.account_id,
+				paiseToRupees(account.income_in_paise - account.expense_in_paise),
+			);
 		}
 		return map;
-	}, [transactions]);
+	}, [summary]);
 
 	const netWorth = visibleAccounts.reduce((acc, a) => acc + (deltaByAccount.get(a.id) ?? 0), 0);
-	const isLoading = accountsLoading || cardsLoading;
+	const isLoading = accountsLoading || cardsLoading || summaryLoading;
 	const error = accountsError ?? cardsError;
 
 	const newAccountLast4Valid = newAccountLast4 === '' || newAccountLast4.length === 4;
+
+	// Spend inside a statement period on the card's backing account — the
+	// number to hold against the billed total. Approximate by design: the
+	// bill also carries carried-forward balance, fees, and interest.
+	const trackedForPeriod = (
+		accountId: string,
+		periodStart: string | null,
+		periodEnd: string | null,
+	): number | null => {
+		if (!periodStart || !periodEnd) return null;
+		let total = 0;
+		for (const t of transactions) {
+			if (t.accountId !== accountId || t.type !== 'expense') continue;
+			const day = t.date.toLocaleDateString('en-CA');
+			if (day >= periodStart && day <= periodEnd) total += t.amount;
+		}
+		return total;
+	};
+
+	const handleSaveBill = async (creditCardId: string) => {
+		const totalRupees = Number.parseFloat(billDraft.total);
+		if (!Number.isFinite(totalRupees) || totalRupees <= 0) return;
+		try {
+			await saveStatement({
+				credit_card_id: creditCardId,
+				total_due_in_paise: rupeesToPaise(totalRupees),
+				due_date: billDraft.dueDate || null,
+			});
+			setBillEntryCardId(null);
+			setBillDraft({ total: '', dueDate: '' });
+		} catch {
+			// hook error state renders; keep the form open
+		}
+	};
 
 	const handleAddAccount = async () => {
 		if (!newAccountName.trim() || !newAccountLast4Valid) return;
@@ -203,6 +265,10 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 		) {
 			return;
 		}
+		const cycleDay = editCardDraft.billingCycleDay
+			? Number.parseInt(editCardDraft.billingCycleDay, 10)
+			: null;
+		if (cycleDay !== null && (!Number.isInteger(cycleDay) || cycleDay < 1 || cycleDay > 31)) return;
 		try {
 			const { relinkedTransactionCount } = await updateCreditCard(editingCardId, {
 				account_id: editCardDraft.accountId,
@@ -212,6 +278,13 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 				first4: editCardDraft.first4 || null,
 				last4: editCardDraft.last4,
 				is_active: editCardDraft.isActive,
+				// Only sent when actually retyped — the untouched sentinel (or a
+				// cleared field) never overwrites the stored password.
+				...(editCardDraft.pdfPassword &&
+				editCardDraft.pdfPassword !== editCardDraft.pdfPasswordSentinel
+					? { pdf_password: editCardDraft.pdfPassword }
+					: {}),
+				...(editCardDraft.billingCycleDay !== '' ? { billing_cycle_day: cycleDay } : {}),
 			});
 			setRelinkNote(
 				relinkedTransactionCount > 0
@@ -612,6 +685,14 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 									// Spend rides the card's backing account: expenses minus
 									// refunds/cashback, same transaction sums as the folio list.
 									const spentPaise = Math.round(-(deltaByAccount.get(card.account_id) ?? 0) * 100);
+									const statement = latestByCard.get(card.id);
+									const trackedRupees = statement
+										? trackedForPeriod(card.account_id, statement.period_start, statement.period_end)
+										: null;
+									const billsMatch =
+										trackedRupees !== null && statement?.total_due_in_paise != null
+											? Math.abs(rupeesToPaise(trackedRupees) - statement.total_due_in_paise) <= 10000
+											: null;
 
 									return (
 										<div key={card.id}>
@@ -642,6 +723,28 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 													<p className="text-lg font-bold tnum tracking-[0.15em]" style={{ letterSpacing: '0.1em' }}>
 														{maskedNumber}
 													</p>
+													{statement && (statement.total_due_in_paise != null || statement.due_date) && (
+														<div
+															className="flex items-center justify-between rounded-[8px] px-3 py-2 my-1"
+															style={{ background: 'rgba(255,255,255,0.14)' }}
+														>
+															<span className="text-[10px] font-bold uppercase tracking-wider tnum">
+																{statement.total_due_in_paise != null
+																	? `Bill ${formatRupees(statement.total_due_in_paise)}`
+																	: 'Bill —'}
+																{statement.due_date ? ` · due ${formatDueDate(statement.due_date)}` : ''}
+															</span>
+															{trackedRupees !== null && (
+																<span className="flex items-center gap-1.5 text-[10px] font-bold tnum shrink-0">
+																	<span
+																		className="w-1.5 h-1.5 rounded-full"
+																		style={{ background: billsMatch === false ? 'var(--ledger-amber)' : 'var(--ledger-bg)' }}
+																	/>
+																	Tracked {formatRupees(Math.round(trackedRupees * 100))}
+																</span>
+															)}
+														</div>
+													)}
 													<div className="flex items-end justify-between">
 														<div className="min-w-0">
 															<p className="text-[9px] font-bold uppercase tracking-[0.2em]" style={{ opacity: 0.7 }}>
@@ -694,8 +797,77 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 												</button>
 											)}
 
-											{isEditing && !editCardDraft && (
+											{isEditing && !editCardDraft && billEntryCardId === card.id && (
+												<div className="rounded-[14px] p-4 mt-2 flex flex-col gap-3" style={cardStyle}>
+													<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>
+														Enter bill
+													</p>
+													<div className="flex gap-2">
+														<input
+															type="text"
+															inputMode="decimal"
+															placeholder="Total due (₹)"
+															value={billDraft.total}
+															onChange={(e) => setBillDraft({ ...billDraft, total: e.target.value })}
+															className="w-1/2 rounded-[8px] px-3 py-2.5 text-sm tnum focus:outline-none"
+															style={inputStyle}
+														/>
+														<input
+															type="date"
+															value={billDraft.dueDate}
+															onChange={(e) => setBillDraft({ ...billDraft, dueDate: e.target.value })}
+															className="w-1/2 rounded-[8px] px-3 py-2.5 text-sm tnum focus:outline-none"
+															style={inputStyle}
+														/>
+													</div>
+													<div className="flex items-center justify-end gap-3">
+														<button
+															onClick={() => { setBillEntryCardId(null); setBillDraft({ total: '', dueDate: '' }); }}
+															className="flex items-center gap-1 text-xs font-medium"
+															style={{ color: 'var(--ledger-muted)' }}
+														>
+															<X size={13} /> Cancel
+														</button>
+														<button
+															onClick={() => { void handleSaveBill(card.id); }}
+															disabled={
+																!Number.isFinite(Number.parseFloat(billDraft.total)) ||
+																Number.parseFloat(billDraft.total) <= 0 ||
+																statementsLoading
+															}
+															className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-full"
+															style={{
+																background: 'var(--ledger-accent)',
+																color: 'var(--ledger-bg)',
+																opacity:
+																	(!Number.isFinite(Number.parseFloat(billDraft.total)) ||
+																		Number.parseFloat(billDraft.total) <= 0 ||
+																		statementsLoading) ? 0.5 : 1,
+															}}
+														>
+															<Check size={13} /> Save bill
+														</button>
+													</div>
+												</div>
+											)}
+
+											{isEditing && !editCardDraft && billEntryCardId !== card.id && (
 												<div className="flex items-center justify-end gap-3 px-1 pt-2">
+													<button
+														onClick={() => {
+															setBillEntryCardId(card.id);
+															setBillDraft({
+																total: statement?.total_due_in_paise != null
+																	? paiseToRupees(statement.total_due_in_paise).toFixed(2)
+																	: '',
+																dueDate: statement?.due_date ?? '',
+															});
+														}}
+														className="flex items-center gap-1 text-xs font-medium"
+														style={{ color: 'var(--ledger-muted)' }}
+													>
+														<Plus size={12} /> Bill
+													</button>
 													<button
 														onClick={() =>
 															setEditCardDraft({
@@ -706,6 +878,9 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 																last4: card.last4,
 																accountId: card.account_id,
 																isActive: card.is_active,
+																pdfPassword: pdfPasswordSentinelFor(card),
+																pdfPasswordSentinel: pdfPasswordSentinelFor(card),
+																billingCycleDay: card.billing_cycle_day?.toString() ?? '',
 															})
 														}
 														className="flex items-center gap-1 text-xs font-medium"
@@ -777,6 +952,45 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 															style={inputStyle}
 														/>
 													</div>
+													<div className="flex gap-2">
+														<input
+															type="password"
+															placeholder="Statement PDF password"
+															value={editCardDraft.pdfPassword}
+															onChange={(e) => setEditCardDraft({ ...editCardDraft, pdfPassword: e.target.value })}
+															onFocus={() => {
+																if (editCardDraft.pdfPassword === editCardDraft.pdfPasswordSentinel) {
+																	setEditCardDraft({ ...editCardDraft, pdfPassword: '' });
+																}
+															}}
+															onBlur={() => {
+																if (editCardDraft.pdfPassword === '') {
+																	setEditCardDraft({ ...editCardDraft, pdfPassword: editCardDraft.pdfPasswordSentinel });
+																}
+															}}
+															autoComplete="off"
+															className="w-2/3 rounded-[8px] px-3 py-2.5 text-sm focus:outline-none transition-all"
+															style={inputStyle}
+														/>
+														<input
+															type="text"
+															inputMode="numeric"
+															placeholder="Cycle day"
+															value={editCardDraft.billingCycleDay}
+															onChange={(e) =>
+																setEditCardDraft({
+																	...editCardDraft,
+																	billingCycleDay: e.target.value.replace(/\D/g, '').slice(0, 2),
+																})
+															}
+															className="w-1/3 rounded-[8px] px-3 py-2.5 text-sm tnum focus:outline-none transition-all"
+															style={inputStyle}
+														/>
+													</div>
+													<p className="text-[10px] px-1" style={{ color: 'var(--ledger-muted)' }}>
+														The PDF password unlocks statement PDFs locally when the email hides bill
+														details (HDFC). Cycle day is auto-learned from statements when possible.
+													</p>
 													<div className="flex items-center justify-between px-1">
 														<span className="text-xs font-medium" style={{ color: 'var(--ledger-muted)' }}>
 															Card active
@@ -822,7 +1036,8 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 																		cardsLoading) ? 0.5 : 1,
 															}}
 														>
-															<Check size={13} /> Save
+															{cardsLoading ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+															{cardsLoading ? 'Saving…' : 'Save'}
 														</button>
 													</div>
 												</div>

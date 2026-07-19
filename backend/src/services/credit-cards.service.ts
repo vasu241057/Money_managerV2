@@ -12,6 +12,12 @@ import {
 } from '../lib/db/serialization';
 import { badRequest, conflict, notFound } from '../lib/http/errors';
 import { asRecord, parseLast4, parseRequiredString, parseUuid } from '../lib/http/validation';
+import {
+	ENCRYPTED_TOKEN_PREFIX,
+	encryptTokenValue,
+	getGoogleRefreshConfig,
+} from '../workers/email-sync-fetcher';
+import { relinkStatementsForCreditCard } from './card-statements.service';
 
 const CARD_NETWORKS = new Set(['visa', 'mastercard', 'rupay', 'amex', 'diners', 'other'] as const);
 
@@ -25,11 +31,28 @@ interface UserCreditCardRowRaw {
 	first4: unknown;
 	last4: unknown;
 	is_active: unknown;
+	billing_cycle_day?: unknown;
+	has_pdf_password?: unknown;
+	pdf_password?: unknown;
 	created_at: unknown;
 	updated_at: unknown;
 }
 
+// Derives the plaintext length from the encrypted blob's size (base64url of
+// 12-byte IV + ciphertext + 16-byte GCM tag) — the FE renders exactly that
+// many dots without the password ever leaving the server.
+function pdfPasswordLength(encrypted: unknown): number | null {
+	if (typeof encrypted !== 'string' || encrypted.length === 0) return null;
+	const payload = encrypted.startsWith(ENCRYPTED_TOKEN_PREFIX)
+		? encrypted.slice(ENCRYPTED_TOKEN_PREFIX.length)
+		: encrypted;
+	const decodedBytes = Math.floor((payload.length * 3) / 4);
+	const plainBytes = decodedBytes - 12 - 16;
+	return plainBytes > 0 ? plainBytes : null;
+}
+
 function mapUserCreditCardRow(row: UserCreditCardRowRaw): UserCreditCardRow {
+	const cycleDay = Number(row.billing_cycle_day);
 	return {
 		id: toRequiredString(row.id, 'user_credit_cards.id'),
 		user_id: toRequiredString(row.user_id, 'user_credit_cards.user_id'),
@@ -43,9 +66,46 @@ function mapUserCreditCardRow(row: UserCreditCardRowRaw): UserCreditCardRow {
 		first4: toNullableString(row.first4, 'user_credit_cards.first4'),
 		last4: toRequiredString(row.last4, 'user_credit_cards.last4'),
 		is_active: row.is_active === true,
+		billing_cycle_day: Number.isInteger(cycleDay) && cycleDay >= 1 ? cycleDay : null,
+		has_pdf_password: row.has_pdf_password === true,
+		pdf_password_length: pdfPasswordLength(row.pdf_password),
 		created_at: toIsoDateTime(row.created_at, 'user_credit_cards.created_at'),
 		updated_at: toIsoDateTime(row.updated_at, 'user_credit_cards.updated_at'),
 	};
+}
+
+function parseBillingCycleDay(value: unknown, fieldName: string): number | null {
+	if (value === undefined || value === null) return null;
+	const parsed = Number(value);
+	if (!Number.isInteger(parsed) || parsed < 1 || parsed > 31) {
+		throw badRequest('INVALID_PAYLOAD', `${fieldName} must be an integer between 1 and 31`);
+	}
+	return parsed;
+}
+
+function parsePdfPassword(value: unknown, fieldName: string): string | null {
+	if (value === undefined || value === null) return null;
+	if (typeof value !== 'string' || value.length === 0 || value.length > 200) {
+		throw badRequest('INVALID_PAYLOAD', `${fieldName} must be a non-empty string`);
+	}
+	return value;
+}
+
+// The PDF password is encrypted with the same AES-GCM key as OAuth tokens
+// before it touches the database; a plain value never persists.
+async function encryptPdfPassword(
+	password: string | null,
+	env: Env | undefined,
+): Promise<string | null> {
+	if (password === null) return null;
+	if (!env) {
+		throw badRequest(
+			'PDF_PASSWORD_UNAVAILABLE',
+			'Server is not configured to store PDF passwords',
+		);
+	}
+	const { tokenEncryptionKey } = getGoogleRefreshConfig(env);
+	return encryptTokenValue(password, tokenEncryptionKey);
 }
 
 function parseRequired4Digits(value: unknown, fieldName: string): string {
@@ -93,6 +153,8 @@ export function parseCreateUserCreditCardRequest(payload: unknown): CreateUserCr
 		first4: parseLast4(body.first4, 'first4') ?? null,
 		last4: parseRequired4Digits(body.last4, 'last4'),
 		is_active: body.is_active === undefined ? true : body.is_active === true,
+		pdf_password: parsePdfPassword(body.pdf_password, 'pdf_password'),
+		billing_cycle_day: parseBillingCycleDay(body.billing_cycle_day, 'billing_cycle_day'),
 	};
 }
 
@@ -123,6 +185,15 @@ export function parseUpdateUserCreditCardRequest(payload: unknown): UpdateUserCr
 			throw badRequest('INVALID_PAYLOAD', 'is_active must be a boolean');
 		}
 		updateRequest.is_active = body.is_active;
+	}
+	if (body.pdf_password !== undefined) {
+		updateRequest.pdf_password = parsePdfPassword(body.pdf_password, 'pdf_password');
+	}
+	if (body.billing_cycle_day !== undefined) {
+		updateRequest.billing_cycle_day = parseBillingCycleDay(
+			body.billing_cycle_day,
+			'billing_cycle_day',
+		);
 	}
 
 	if (Object.keys(updateRequest).length === 0) {
@@ -257,6 +328,11 @@ export async function relinkTransactionsForCreditCard(
 			and fe.instrument_id = ${last4}
 		returning t.id
 	`;
+
+	// Parked statements (bills harvested before the card existed) ride the
+	// same twins-guarded relink moment.
+	await relinkStatementsForCreditCard(sql, userId, creditCardId, last4);
+
 	return updated.length;
 }
 
@@ -268,6 +344,8 @@ export async function listUserCreditCards(
 		select
 			ucc.id, ucc.user_id, ucc.account_id, ucc.card_label, ucc.issuer_name,
 			ucc.network, ucc.first4, ucc.last4, ucc.is_active,
+			ucc.billing_cycle_day, (ucc.pdf_password is not null) as has_pdf_password,
+			ucc.pdf_password,
 			ucc.created_at, ucc.updated_at
 		from public.user_credit_cards as ucc
 		where ucc.user_id = ${userId}
@@ -281,6 +359,7 @@ export async function createUserCreditCard(
 	sql: SqlClient,
 	userId: string,
 	input: CreateUserCreditCardRequest,
+	env?: Env,
 ): Promise<{ card: UserCreditCardRow; relinked_transaction_count: number }> {
 	let backingAccountId: string;
 	if (input.account_id) {
@@ -290,21 +369,27 @@ export async function createUserCreditCard(
 		backingAccountId = await resolveBackingAccountId(sql, userId, input);
 	}
 
+	const encryptedPassword = await encryptPdfPassword(input.pdf_password ?? null, env);
+
 	let rows: UserCreditCardRowRaw[];
 	try {
 		rows = await sql<UserCreditCardRowRaw[]>`
 			insert into public.user_credit_cards (
 				user_id, account_id, card_label, issuer_name, network,
-				first4, last4, is_active
+				first4, last4, is_active, pdf_password, billing_cycle_day
 			)
 			values (
 				${userId}, ${backingAccountId}, ${input.card_label},
 				${input.issuer_name ?? null}, ${input.network ?? null},
-				${input.first4 ?? null}, ${input.last4}, ${input.is_active ?? true}
+				${input.first4 ?? null}, ${input.last4}, ${input.is_active ?? true},
+				${encryptedPassword}, ${input.billing_cycle_day ?? null}
 			)
 			returning
 				id, user_id, account_id, card_label, issuer_name,
-				network, first4, last4, is_active, created_at, updated_at
+				network, first4, last4, is_active,
+				billing_cycle_day, (pdf_password is not null) as has_pdf_password,
+				pdf_password,
+				created_at, updated_at
 		`;
 	} catch (error) {
 		if (isUniqueViolation(error)) {
@@ -334,6 +419,7 @@ export async function updateUserCreditCard(
 	userId: string,
 	creditCardId: string,
 	input: UpdateUserCreditCardRequest,
+	env?: Env,
 ): Promise<{ card: UserCreditCardRow; relinked_transaction_count: number }> {
 	if (input.account_id !== undefined) {
 		await assertCardBackingAccount(sql, userId, input.account_id);
@@ -346,6 +432,12 @@ export async function updateUserCreditCard(
 	const hasFirst4Update = input.first4 !== undefined;
 	const hasLast4Update = input.last4 !== undefined;
 	const hasActiveUpdate = input.is_active !== undefined;
+	const hasPdfPasswordUpdate = input.pdf_password !== undefined;
+	const hasCycleDayUpdate = input.billing_cycle_day !== undefined;
+
+	const encryptedPassword = hasPdfPasswordUpdate
+		? await encryptPdfPassword(input.pdf_password ?? null, env)
+		: null;
 
 	let rows: UserCreditCardRowRaw[];
 	try {
@@ -358,12 +450,17 @@ export async function updateUserCreditCard(
 				network = case when ${hasNetworkUpdate} then ${input.network ?? null} else ucc.network end,
 				first4 = case when ${hasFirst4Update} then ${input.first4 ?? null} else ucc.first4 end,
 				last4 = case when ${hasLast4Update} then ${input.last4 ?? null} else ucc.last4 end,
-				is_active = case when ${hasActiveUpdate} then ${input.is_active ?? true} else ucc.is_active end
+				is_active = case when ${hasActiveUpdate} then ${input.is_active ?? true} else ucc.is_active end,
+				pdf_password = case when ${hasPdfPasswordUpdate} then ${encryptedPassword} else ucc.pdf_password end,
+				billing_cycle_day = case when ${hasCycleDayUpdate} then ${input.billing_cycle_day ?? null} else ucc.billing_cycle_day end
 			where ucc.id = ${creditCardId}
 				and ucc.user_id = ${userId}
 			returning
 				id, user_id, account_id, card_label, issuer_name,
-				network, first4, last4, is_active, created_at, updated_at
+				network, first4, last4, is_active,
+				billing_cycle_day, (pdf_password is not null) as has_pdf_password,
+				pdf_password,
+				created_at, updated_at
 		`;
 	} catch (error) {
 		if (isUniqueViolation(error)) {

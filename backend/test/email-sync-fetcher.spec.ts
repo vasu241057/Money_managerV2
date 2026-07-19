@@ -1751,3 +1751,67 @@ describe('truncateWithoutSplittingSurrogates', () => {
 		expect(truncateWithoutSplittingSurrogates('short', 500)).toBe('short');
 	});
 });
+
+describe('runStatementHarvest', () => {
+	const ROW_A = { id: '00000000-0000-4000-8000-00000000e001', from_address: 'estatement@yes.bank.in' };
+	const ROW_B = { id: '00000000-0000-4000-8000-00000000e002', from_address: 'noreply@slice.bank.in' };
+
+	it('dry run reports matches per sender without flipping anything', async () => {
+		const queries: string[] = [];
+		const sql = createSqlMock((query) => {
+			queries.push(query);
+			if (query.startsWith('select re.id, re.from_address')) return [ROW_A, ROW_A, ROW_B];
+			throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv();
+
+		const { runStatementHarvest } = await import('../src/workers/email-sync-fetcher');
+		const result = await runStatementHarvest(500, true, env);
+
+		expect(result).toMatchObject({
+			dry_run: true,
+			matched_count: 3,
+			flipped_count: 0,
+			enqueued_batches: 0,
+			by_sender: { 'estatement@yes.bank.in': 2, 'noreply@slice.bank.in': 1 },
+		});
+		// Candidates: statement wording, IGNORED/PROCESSED only, and never an
+		// email that already produced a statement row.
+		expect(queries[0]).toContain("re.status in ('IGNORED', 'PROCESSED')");
+		expect(queries[0]).toContain('not exists');
+		expect(queries[0]).toContain('card_statements');
+		expect(queries.length).toBe(1);
+	});
+
+	it('real run flips candidates to PENDING and enqueues normalize batches', async () => {
+		const queries: string[] = [];
+		const sql = createSqlMock((query) => {
+			queries.push(query);
+			if (query.startsWith('select re.id, re.from_address')) return [ROW_A, ROW_B];
+			if (query.startsWith('update public.raw_emails')) return [{ id: ROW_A.id }, { id: ROW_B.id }];
+			throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv();
+
+		const { runStatementHarvest } = await import('../src/workers/email-sync-fetcher');
+		const result = await runStatementHarvest(500, false, env);
+
+		expect(result).toMatchObject({
+			dry_run: false,
+			matched_count: 2,
+			flipped_count: 2,
+			enqueued_batches: 1,
+		});
+		const flipQuery = queries.find((q) => q.startsWith('update public.raw_emails'));
+		expect(flipQuery).toContain("set status = 'PENDING_EXTRACTION'");
+		const sendMock = (env as unknown as { EMAIL_SYNC_QUEUE: { send: ReturnType<typeof vi.fn> } })
+			.EMAIL_SYNC_QUEUE.send;
+		expect(sendMock).toHaveBeenCalledTimes(1);
+		expect(sendMock).toHaveBeenCalledWith(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [ROW_A.id, ROW_B.id] },
+			{ contentType: 'json' },
+		);
+	});
+});

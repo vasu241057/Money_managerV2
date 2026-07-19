@@ -1,5 +1,7 @@
 import type {
   AccountRow,
+  AnalyticsSummaryResponse,
+  CardStatementRow,
   CategoryRow,
   CreateAccountRequest,
   CreateCategoryRequest,
@@ -118,6 +120,31 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const apiClient = {
+  async getAnalyticsSummary(): Promise<AnalyticsSummaryResponse> {
+    const response = await request<ApiEnvelope<AnalyticsSummaryResponse>>('/analytics/summary');
+    return response.data;
+  },
+
+  async listCardStatements(): Promise<CardStatementRow[]> {
+    const response = await request<ApiEnvelope<CardStatementRow[]>>('/card-statements');
+    return response.data;
+  },
+
+  async upsertCardStatement(payload: {
+    credit_card_id: string;
+    total_due_in_paise?: number | null;
+    min_due_in_paise?: number | null;
+    due_date?: string | null;
+    period_start?: string | null;
+    period_end?: string | null;
+  }): Promise<CardStatementRow> {
+    const response = await request<ApiEnvelope<CardStatementRow>>('/card-statements', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return response.data;
+  },
+
   async listAccounts(): Promise<AccountRow[]> {
     const response = await request<ApiEnvelope<AccountRow[]>>('/accounts');
     return response.data;

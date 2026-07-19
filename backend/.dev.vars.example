@@ -13,6 +13,29 @@
 # First sync of a connection fetches at most this many days of history (default 90).
 # EMAIL_SYNC_INITIAL_LOOKBACK_DAYS=90
 
+# AI provider (default: opencode). "openrouter" switches the whole stack —
+# chat URL, API key var, and model defaults (free-tier ":free" models).
+# Configure both keys and flip this one var to switch providers.
+# AI_PROVIDER=opencode
+# OPENCODE_GO_API_KEY=...
+# OPENROUTER_API_KEY=...
+# Daily-jobs model per provider (sender classifier + merchant mapper):
+# OPENCODE_GO_MODEL=deepseek-v4-flash
+# OPENROUTER_MODEL=nvidia/llama-3.1-nemotron-70b-instruct:free
+
+# Per-tier attempt schedule before rotating to the next model tier
+# (default 2,2,1 -> max 5 attempts total across the 3-tier chain).
+# AI_NORMALIZER_TIER_ATTEMPTS=2,2,1
+
+# Pipeline trace logging (default off). One structured log line per
+# transaction with the full resolve outcome. Content-bearing (counterparty
+# names) — local dev only, never enable in production.
+# EMAIL_PIPELINE_TRACE=true
+
+# Secret guarding the /internal/* ops endpoints (requeue, metadata backfill,
+# sync probe). Required to invoke them.
+# AI_REQUIRES_WEBHOOK_SECRET=local-dev-secret
+
 # AI normalizer masks all numbers as <N#> placeholders before the model call
 # (default true). Set to false only for debugging extraction quality.
 # AI_NORMALIZER_MASK_NUMBERS=true

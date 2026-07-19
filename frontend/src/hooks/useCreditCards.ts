@@ -23,15 +23,21 @@ function useRemoteCreditCards(): UseCreditCardsResult {
     },
   });
 
+  // The card list refetch is awaited (small, and "stored ✓" indicators must
+  // be fresh when the form closes); the transaction-feed refetch is fired in
+  // the background — it re-pulls every loaded page serially and awaiting it
+  // held the save button hostage for ~10s.
+  const invalidateAfterCardChange = async () => {
+    void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    await queryClient.invalidateQueries({ queryKey: CREDIT_CARDS_QUERY_KEY });
+  };
+
   const addCreditCardMutation = useMutation({
     mutationFn: async (payload: CreateUserCreditCardRequest) => {
       const result = await apiClient.createCreditCard(payload);
       return { relinkedTransactionCount: result.relinkedTransactionCount };
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: CREDIT_CARDS_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ['transactions'] });
-    },
+    onSuccess: invalidateAfterCardChange,
   });
 
   const updateCreditCardMutation = useMutation({
@@ -39,20 +45,14 @@ function useRemoteCreditCards(): UseCreditCardsResult {
       const result = await apiClient.updateCreditCard(id, payload);
       return { relinkedTransactionCount: result.relinkedTransactionCount };
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: CREDIT_CARDS_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ['transactions'] });
-    },
+    onSuccess: invalidateAfterCardChange,
   });
 
   const deleteCreditCardMutation = useMutation({
     mutationFn: async (creditCardId: string) => {
       return apiClient.deleteCreditCard(creditCardId);
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: CREDIT_CARDS_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ['transactions'] });
-    },
+    onSuccess: invalidateAfterCardChange,
   });
 
   const firstError =

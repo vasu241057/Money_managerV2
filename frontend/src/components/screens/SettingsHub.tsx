@@ -5,6 +5,7 @@ import {
 	EyeOff, RotateCcw, Pencil, Check,
 } from 'lucide-react';
 import { useGmailConnection } from '../../hooks/useGmailConnection';
+import { SettingsSkeleton } from '../ui/Skeleton';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useCreditCards } from '../../hooks/useCreditCards';
 import { useCategories } from '../../hooks/useCategories';
@@ -48,10 +49,10 @@ const STATUS_DOT_COLOR: Record<OAuthSyncStatus, string> = {
 };
 
 const STATUS_LABEL: Record<OAuthSyncStatus, string> = {
-	ACTIVE: 'Active',
+	ACTIVE: 'Connected',
 	DORMANT: 'Dormant',
-	AUTH_REVOKED: 'Auth revoked',
-	ERROR_PAUSED: 'Error paused',
+	AUTH_REVOKED: 'Reconnect needed',
+	ERROR_PAUSED: 'Paused — reconnect',
 };
 
 function formatSyncAgo(timestampMs: number): string {
@@ -156,6 +157,10 @@ export function SettingsHub({
 			</header>
 
 			<main className="flex-1 overflow-y-auto px-5 pt-6 pb-24 min-h-0">
+				{categoriesLoading && allCategories.length === 0 ? (
+					<SettingsSkeleton />
+				) : (
+				<>
 				<section className="mb-8">
 					<p
 						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4"
@@ -733,6 +738,8 @@ export function SettingsHub({
 					<LogOut size={18} />
 					Sign out
 				</button>
+				</>
+				)}
 			</main>
 		</div>
 	);

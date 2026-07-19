@@ -37,6 +37,10 @@ function useRemoteGmailConnection(skipStatusQuery = false): UseGmailConnectionRe
         processingStats: response.processing_stats,
       };
     },
+    // Opening Settings repeatedly must not re-hit the backend each time;
+    // the server self-verifies stale-looking grants, so a short freshness
+    // window keeps the display accurate without per-visit calls.
+    staleTime: 5 * 60 * 1000,
   });
 
   const connectMutation = useMutation({

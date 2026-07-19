@@ -28,7 +28,7 @@ const GOOGLE_OAUTH_PROVIDER = 'google';
 const GOOGLE_OAUTH_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GMAIL_API_MESSAGES_LIST_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/users/me/messages';
 const GMAIL_API_MESSAGES_GET_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/users/me/messages';
-const ENCRYPTED_TOKEN_PREFIX = 'enc:v1:';
+export const ENCRYPTED_TOKEN_PREFIX = 'enc:v1:';
 const GMAIL_QUERY_OVERLAP_MS = 15 * 60 * 1000;
 const GMAIL_LIST_MAX_RESULTS = 100;
 const GMAIL_LIST_MAX_PAGES = 1000;
@@ -213,7 +213,7 @@ function parseBase64SecretBytes(value: string, fieldName: string): Uint8Array {
 	}
 }
 
-function getGoogleRefreshConfig(env: Env): {
+export function getGoogleRefreshConfig(env: Env): {
 	clientId: string;
 	clientSecret: string;
 	tokenEncryptionKey: Uint8Array;
@@ -267,7 +267,7 @@ function isEncryptedToken(value: string | null): boolean {
 	return Boolean(value && value.startsWith(ENCRYPTED_TOKEN_PREFIX));
 }
 
-async function decryptTokenValue(value: string, keyBytes: Uint8Array): Promise<string> {
+export async function decryptTokenValue(value: string, keyBytes: Uint8Array): Promise<string> {
 	if (!isEncryptedToken(value)) {
 		return value;
 	}
@@ -302,7 +302,7 @@ async function decryptTokenValue(value: string, keyBytes: Uint8Array): Promise<s
 	}
 }
 
-async function encryptTokenValue(plainText: string, keyBytes: Uint8Array): Promise<string> {
+export async function encryptTokenValue(plainText: string, keyBytes: Uint8Array): Promise<string> {
 	const iv = crypto.getRandomValues(new Uint8Array(12));
 	const cryptoKey = await importAesKey(keyBytes);
 	const cipherBuffer = await crypto.subtle.encrypt(
@@ -335,7 +335,7 @@ function mapOauthConnectionRow(row: OAuthConnectionFetchRowRaw): OauthConnection
 	};
 }
 
-async function listEligibleConnectionsForUser(
+export async function listEligibleConnectionsForUser(
 	sql: SqlClient,
 	userId: UUID,
 ): Promise<OauthConnectionRow[]> {
@@ -568,7 +568,7 @@ async function enqueueNormalizeRawEmailsJobs(queue: Queue, rawEmailIds: UUID[]):
 	}
 }
 
-async function refreshAccessTokenWithOcc(
+export async function refreshAccessTokenWithOcc(
 	sql: SqlClient,
 	connection: OauthConnectionRow,
 	config: ReturnType<typeof getGoogleRefreshConfig>,
@@ -962,7 +962,58 @@ function buildSanitizedEmailText(message: GmailMessageResponse): string {
 	return '';
 }
 
-async function gmailGetMessage(
+// Fetches one attachment's bytes (base64url in the response). Same error
+// classification as message GET.
+export async function gmailGetAttachment(
+	accessToken: string,
+	messageId: string,
+	attachmentId: string,
+	fetcher: FetchLike,
+): Promise<{ revoked: boolean; paused: boolean; data: string | null }> {
+	const url = new URL(
+		`${GMAIL_API_MESSAGES_GET_ENDPOINT}/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+	);
+
+	let response: Response;
+	try {
+		response = await fetcher(url, {
+			method: 'GET',
+			headers: {
+				authorization: `Bearer ${accessToken}`,
+				accept: 'application/json',
+			},
+		});
+	} catch {
+		throw new TransientMessageError('Failed to reach Gmail attachment API');
+	}
+
+	if (response.status === 401) {
+		return { revoked: true, paused: false, data: null };
+	}
+	if (response.status === 404) {
+		return { revoked: false, paused: false, data: null };
+	}
+	if (response.status === 429 || response.status >= 500) {
+		throw new TransientMessageError(`Gmail attachment API retryable status ${response.status}`);
+	}
+	if (response.status === 403) {
+		return { revoked: false, paused: true, data: null };
+	}
+	if (!response.ok) {
+		throw new TransientMessageError(
+			`Gmail attachment API failed with status ${response.status}`,
+		);
+	}
+
+	try {
+		const parsed = (await response.json()) as { data?: string };
+		return { revoked: false, paused: false, data: parsed.data ?? null };
+	} catch {
+		throw new TransientMessageError('Gmail attachment API returned invalid JSON');
+	}
+}
+
+export async function gmailGetMessage(
 	accessToken: string,
 	messageId: string,
 	fetcher: FetchLike,
@@ -2123,6 +2174,91 @@ export async function runEmailSyncUserJob(
 		if (connectionResult.continuation_enqueued) {
 			break;
 		}
+	}
+
+	return result;
+}
+
+export interface StatementHarvestResult {
+	dry_run: boolean;
+	matched_count: number;
+	flipped_count: number;
+	enqueued_batches: number;
+	by_sender: Record<string, number>;
+}
+
+const STATEMENT_HARVEST_BATCH_SIZE = 250;
+
+// One-time (idempotent) harvest of historical statement emails: candidates
+// are matched permissively by subject/sender wording, flipped back to
+// PENDING_EXTRACTION, and re-run through the normalizer — which now
+// classifies them as statements (fields captured, PDF fallback when the
+// text is bare) instead of transactions. Safe to re-run: emails that
+// already produced a card_statements row are excluded, true statements
+// yield zero transactions under the current prompt, and cross-email dedup
+// guards any non-statement that slips through the match.
+export async function runStatementHarvest(
+	limit: number,
+	dryRun: boolean,
+	env: Env,
+	windowDays: number | null = null,
+): Promise<StatementHarvestResult> {
+	const config = getAppConfig(env);
+	const sql = getSqlClient(config);
+
+	const rows = await sql<{ id: unknown; from_address: unknown }[]>`
+		select re.id, re.from_address
+		from public.raw_emails as re
+		where re.status in ('IGNORED', 'PROCESSED')
+			and (re.subject ~* 'statement' or re.from_address ~* 'statement')
+			and (
+				${windowDays}::int is null
+				or re.internal_date >= now() - (${windowDays} || ' days')::interval
+			)
+			and not exists (
+				select 1
+				from public.card_statements as cs
+				where cs.source_raw_email_id = re.id
+			)
+		order by re.internal_date desc
+		limit ${limit}
+	`;
+
+	const result: StatementHarvestResult = {
+		dry_run: dryRun,
+		matched_count: rows.length,
+		flipped_count: 0,
+		enqueued_batches: 0,
+		by_sender: {},
+	};
+	const ids: UUID[] = [];
+	for (const row of rows) {
+		ids.push(toRequiredString(row.id, 'raw_emails.id'));
+		const sender = toNullableString(row.from_address, 'raw_emails.from_address') ?? '<unknown>';
+		result.by_sender[sender] = (result.by_sender[sender] ?? 0) + 1;
+	}
+
+	if (dryRun || ids.length === 0) {
+		return result;
+	}
+
+	const flipped = await sql<{ id: unknown }[]>`
+		update public.raw_emails as re
+		set status = 'PENDING_EXTRACTION'
+		where re.id = any(${ids}::uuid[])
+			and re.status in ('IGNORED', 'PROCESSED')
+		returning re.id
+	`;
+	result.flipped_count = flipped.length;
+
+	const flippedIds = flipped.map(row => toRequiredString(row.id, 'raw_emails.id'));
+	for (let i = 0; i < flippedIds.length; i += STATEMENT_HARVEST_BATCH_SIZE) {
+		const batch = flippedIds.slice(i, i + STATEMENT_HARVEST_BATCH_SIZE);
+		await env.EMAIL_SYNC_QUEUE.send(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: batch },
+			{ contentType: 'json' },
+		);
+		result.enqueued_batches += 1;
 	}
 
 	return result;

@@ -136,3 +136,20 @@
     account-flavoured mirror of `relinkTransactionsForCreditCard` is
     required, else accepting a bank prompt does nothing for history), and
     digit-less transactions (a real minority — see Slice) can never prompt.
+32. **Precomputed analytics tables — Phase 2 (July 19, design agreed,
+    deferred until scale demands)** — Phase 1 (live `GET /analytics/summary`
+    running GROUP BYs per request) is fine for years at current volume; when
+    it isn't, add three per-user-per-month rollup tables:
+    `monthly_totals` (type → sum + count), `monthly_category_totals`
+    (category → sum + count, null = uncategorized), and
+    `monthly_account_totals` (account → income/expense sums + count, null =
+    unattributed). Maintained by ONE DB trigger on `transactions` (insert
+    adds, delete subtracts, update moves between buckets) — a trigger, not
+    app code, because transactions are written by the engine, manual entry,
+    review edits, relinks, merchant backfills, and raw SQL repairs, and a
+    trigger catches every path. Month bucketing fixed to Asia/Kolkata (must
+    match `monthKeyIST` on the FE). Decide REVERSED handling when item 30
+    lands (trigger subtracts on that status flip). Plus an internal rebuild
+    endpoint that recomputes a user's buckets from `transactions` inside one
+    transaction — the drift-cure lever. The summary endpoint then reads the
+    tables instead of grouping live.

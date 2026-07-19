@@ -120,6 +120,12 @@ export interface UserCreditCardRow {
   first4: string | null;
   last4: string;
   is_active: boolean;
+  /** Day-of-month the billing cycle closes; auto-derived from statements. */
+  billing_cycle_day: number | null;
+  /** Whether a statement-PDF password is stored (the password itself never leaves the server). */
+  has_pdf_password: boolean;
+  /** Character count of the stored password — display-only (renders as that many dots). */
+  pdf_password_length: number | null;
   created_at: ISODateTimeString;
   updated_at: ISODateTimeString;
 }
@@ -356,6 +362,9 @@ export interface CreateUserCreditCardRequest {
   first4?: string | null;
   last4: string;
   is_active?: boolean;
+  /** Statement-PDF password; encrypted at rest, never returned. */
+  pdf_password?: string | null;
+  billing_cycle_day?: number | null;
 }
 
 export interface UpdateUserCreditCardRequest {
@@ -366,6 +375,10 @@ export interface UpdateUserCreditCardRequest {
   first4?: string | null;
   last4?: string;
   is_active?: boolean;
+  /** Statement-PDF password; encrypted at rest, never returned. Null clears. */
+  pdf_password?: string | null;
+  /** Day-of-month the billing cycle closes; normally auto-derived. */
+  billing_cycle_day?: number | null;
 }
 
 export interface UpsertUserMerchantRuleRequest {
@@ -598,6 +611,8 @@ export interface AiNormalizedTransactionItem {
 
 export interface AiNormalizationResponse {
   transactions: AiNormalizedTransactionItem[];
+  /** Present when the email is a credit-card statement notification. */
+  statement?: unknown;
 }
 
 export interface NormalizerTierConfig {
@@ -615,4 +630,66 @@ export interface NormalizerTierConfig {
   maskNumbers: boolean;
   /** Emails per model call in masked mode (1 disables batching). */
   batchSize: number;
+}
+
+// ---- Analytics summary (computed server-side; months bucket by Asia/Kolkata) ----
+
+export interface MonthlyCategorySlice {
+  category_id: UUID | null;
+  category_name: string | null;
+  amount_in_paise: number;
+  txn_count: number;
+}
+
+export interface MonthlyAccountSlice {
+  account_id: UUID | null;
+  amount_in_paise: number;
+  txn_count: number;
+}
+
+export interface MonthlySummary {
+  /** 'YYYY-MM' in Asia/Kolkata */
+  month: string;
+  income_in_paise: number;
+  expense_in_paise: number;
+  transfer_in_paise: number;
+  txn_count: number;
+  expense_by_category: MonthlyCategorySlice[];
+  expense_by_account: MonthlyAccountSlice[];
+}
+
+export interface AccountAllTimeSummary {
+  account_id: UUID;
+  income_in_paise: number;
+  expense_in_paise: number;
+}
+
+export interface AnalyticsSummaryResponse {
+  /** Ascending by month */
+  months: MonthlySummary[];
+  all_time: { income_in_paise: number; expense_in_paise: number };
+  accounts: AccountAllTimeSummary[];
+  review: { total: number; last_3_days: number };
+}
+
+// ---- Card statements (billing-cycle capture from statement emails) ----
+
+export type CardStatementSource = 'EMAIL' | 'USER';
+
+export interface CardStatementRow {
+  id: UUID;
+  user_id: UUID;
+  /** Null while parked: last4 matched no registered card yet. */
+  credit_card_id: UUID | null;
+  card_last4: string | null;
+  period_start: string | null; // date (YYYY-MM-DD)
+  period_end: string | null;
+  statement_date: string | null;
+  total_due_in_paise: number | null;
+  min_due_in_paise: number | null;
+  due_date: string | null;
+  source: CardStatementSource;
+  source_raw_email_id: UUID | null;
+  created_at: ISODateTimeString;
+  updated_at: ISODateTimeString;
 }

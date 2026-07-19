@@ -16,6 +16,7 @@ import {
 } from '../lib/db/serialization';
 import { asRecord, parseRequiredString } from '../lib/http/validation';
 import { badRequest, serviceUnavailable } from '../lib/http/errors';
+import { getGoogleRefreshConfig, refreshAccessTokenWithOcc } from '../workers/email-sync-fetcher';
 
 const GOOGLE_OAUTH_PROVIDER = 'google';
 const GOOGLE_OAUTH_SCOPE =
@@ -671,21 +672,56 @@ export async function completeGoogleOAuthCallback(
 	};
 }
 
+// A row can claim ACTIVE long after Google revoked the grant: the sync cron
+// discovers it in prod, but local dev has no cron and a Testing-mode OAuth
+// app expires refresh tokens weekly. If the row looks healthy but has not
+// synced recently, verify the grant for real so Settings never shows a dead
+// connection as Active. Verification self-limits: a revoked row flips to
+// AUTH_REVOKED and is never re-verified.
+const STATUS_VERIFY_AFTER_MS = 30 * 60 * 1000;
+
 export async function getGoogleOAuthConnectionStatus(
 	sql: SqlClient,
 	userId: UUID,
+	env?: Env,
 ): Promise<GoogleOAuthConnectionStatusResponse> {
 	const [connections, processingStats] = await Promise.all([
 		listGoogleConnections(sql, userId),
 		getGoogleOAuthProcessingStats(sql, userId),
 	]);
-	const latestConnection = connections[0] ?? null;
+	let latestConnection = connections[0] ?? null;
 
 	if (!latestConnection) {
 		return {
 			connection: null,
 			processing_stats: processingStats,
 		};
+	}
+
+	if (
+		env &&
+		latestConnection.sync_status === 'ACTIVE' &&
+		Date.now() - latestConnection.last_sync_timestamp > STATUS_VERIFY_AFTER_MS
+	) {
+		try {
+			const outcome = await refreshAccessTokenWithOcc(
+				sql,
+				latestConnection,
+				getGoogleRefreshConfig(env),
+				fetch,
+			);
+			// The helper mutates the DB row (rotated token or AUTH_REVOKED);
+			// re-read so the response reflects what it decided.
+			if (outcome.revoked) {
+				const refreshed = await listGoogleConnections(sql, userId);
+				latestConnection = refreshed[0] ?? latestConnection;
+			} else {
+				latestConnection = outcome.connection;
+			}
+		} catch {
+			// Verification is best-effort (Google unreachable, etc.) — fall
+			// back to the stored row rather than failing the status call.
+		}
 	}
 
 	return {

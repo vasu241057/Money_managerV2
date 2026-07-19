@@ -133,6 +133,11 @@ describe('createUserCreditCard', () => {
 				queries.push(query);
 				return [{ id: 'txn-1' }, { id: 'txn-2' }];
 			},
+			// parked-statement relink rides the same moment
+			query => {
+				queries.push(query);
+				return [];
+			},
 		]);
 
 		const { card, relinked_transaction_count } = await createUserCreditCard(sql, USER_ID, {
@@ -173,9 +178,10 @@ describe('createUserCreditCard', () => {
 				insertedValues.push(values);
 				return [CARD_ROW];
 			},
-			// relink: card lookup, ambiguity count, update
+			// relink: card lookup, ambiguity count, update, statement relink
 			() => [{ id: CARD_ID, account_id: ACCOUNT_ID, last4: '9876' }],
 			() => [{ count: 1 }],
+			() => [],
 			() => [],
 		]);
 
@@ -210,9 +216,10 @@ describe('createUserCreditCard', () => {
 				queries.push(query);
 				return [{ ...CARD_ROW, account_id: NEW_ACCOUNT_ID }];
 			},
-			// relink: card lookup, ambiguity count, update
+			// relink: card lookup, ambiguity count, update, statement relink
 			() => [{ id: CARD_ID, account_id: NEW_ACCOUNT_ID, last4: '9876' }],
 			() => [{ count: 1 }],
+			() => [],
 			() => [],
 		]);
 

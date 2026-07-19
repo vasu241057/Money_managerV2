@@ -42,6 +42,7 @@ export function createCreditCardsRouter(): Router {
 				sql,
 				userId,
 				payload,
+				runtimeEnv,
 			);
 			res.status(201).json({ data: card, relinked_transaction_count });
 		}),
@@ -61,6 +62,7 @@ export function createCreditCardsRouter(): Router {
 				userId,
 				creditCardId,
 				payload,
+				runtimeEnv,
 			);
 			res.status(200).json({ data: card, relinked_transaction_count });
 		}),

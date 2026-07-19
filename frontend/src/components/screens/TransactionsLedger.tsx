@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import {
-	Plus, SlidersHorizontal, Loader2, Circle, ArrowLeftRight,
+	Plus, SlidersHorizontal, Circle, ArrowLeftRight,
 } from 'lucide-react';
 import type { ScreenId } from '../layout/BottomNav';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
+import { LedgerListSkeleton } from '../ui/Skeleton';
 
 interface TransactionsLedgerProps {
 	onNavigate: (screen: ScreenId) => void;
@@ -164,10 +165,7 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 				)}
 
 				{isLoading && transactions.length === 0 ? (
-					<div className="flex items-center gap-2 py-8">
-						<Loader2 size={20} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />
-						<span className="text-sm" style={{ color: 'var(--ledger-muted)' }}>Loading transactions…</span>
-					</div>
+					<LedgerListSkeleton />
 				) : filtered.length === 0 ? (
 					<div className="flex flex-col items-center justify-center py-16">
 						<p className="text-sm font-medium" style={{ color: 'var(--ledger-muted)' }}>No transactions found</p>

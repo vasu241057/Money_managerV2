@@ -52,6 +52,9 @@ import {
 	resolveTokenValue,
 	unmaskText,
 } from '../lib/masking';
+import { resolveMaskedStatement } from '../lib/statements';
+import { persistCardStatement } from '../services/card-statements.service';
+import { completeStatementFromPdf } from '../services/statement-pdf.service';
 import { hasLikelyDuplicateEvent, resolveDedupWindowMinutes } from '../lib/txn-dedup';
 import {
 	resolveAiProviderConfig,
@@ -142,8 +145,22 @@ function buildSystemPrompt(ctx: UserNormalizationContext): string {
 		'      "sub_category_id": "string or null",',
 		'      "confidence": number',
 		'    }',
-		'  ]',
+		'  ],',
+		'  "statement": null | {',
+		'    "card_last4": "string or null",',
+		'    "total_due_in_paise": "number or null",',
+		'    "min_due_in_paise": "number or null",',
+		'    "due_date": "YYYY-MM-DD or null",',
+		'    "period_start": "YYYY-MM-DD or null",',
+		'    "period_end": "YYYY-MM-DD or null",',
+		'    "confidence": number',
+		'  }',
 		'}',
+		'',
+		'STATEMENT DETECTION:',
+		'- If the email is a credit-card STATEMENT notification (monthly bill / e-statement ready), fill "statement" and return "transactions": [].',
+		'- The bill totals (Total Amount Due, Minimum Amount Due) are NOT transactions — never extract them as transactions.',
+		'- Payment-received / repayment confirmations are transactions, NOT statements. "statement" is null for every non-statement email.',
 		'',
 		'CRITICAL RULES:',
 		'- amount_in_paise: Convert rupees to paise. Rs.100.50 → 10050. NO decimals, NO commas.',
@@ -184,8 +201,22 @@ function buildMaskedSystemPrompt(ctx: UserNormalizationContext): string {
 		'      "sub_category_id": "string or null",',
 		'      "confidence": number',
 		'    }',
-		'  ]',
+		'  ],',
+		'  "statement": null | {',
+		'    "card_last4_token": "N3 (placeholder holding the card number) or null",',
+		'    "total_due_token": "N4 (placeholder holding the Total Amount Due) or null",',
+		'    "min_due_token": "N5 (placeholder holding the Minimum Amount Due) or null",',
+		'    "due_date_text": "string copied from the email holding the payment due date, placeholders included, or null",',
+		'    "period_text": "string copied from the email holding the statement/billing period (both dates), placeholders included, or null",',
+		'    "confidence": number',
+		'  }',
 		'}',
+		'',
+		'STATEMENT DETECTION:',
+		'- If the email is a credit-card STATEMENT notification (monthly bill / e-statement ready), fill "statement" and return "transactions": [].',
+		'- The bill totals (Total Amount Due, Minimum Amount Due) are NOT transactions — never extract them as transactions.',
+		'- Payment-received / repayment confirmations are transactions, NOT statements. "statement" is null for every non-statement email.',
+		'- Fill only the statement fields the email actually shows; null the rest.',
 		'',
 		'CRITICAL RULES:',
 		'- amount_token: the placeholder id of the TRANSACTION amount. Never pick balance/limit amounts',
@@ -211,7 +242,7 @@ function buildMaskedBatchSystemPrompt(ctx: UserNormalizationContext, emailCount:
 		`BATCH MODE: the user message contains ${emailCount} emails, separated by "=== EMAIL k ===" headers.`,
 		'Placeholder ids are unique across ALL emails — reference them exactly as printed.',
 		'Return strict JSON with exactly this shape instead of the single-email shape:',
-		'{ "emails": [ { "email": 1, "transactions": [ ...same transaction objects... ] }, ... ] }',
+		'{ "emails": [ { "email": 1, "transactions": [ ...same transaction objects... ], "statement": null | { ...same statement object... } }, ... ] }',
 		`Include every email number from 1 to ${emailCount} exactly once, even when its transactions array is empty.`,
 	].join('\n');
 }
@@ -235,7 +266,10 @@ function splitBatchResponse(
 		if (!Number.isInteger(emailNumber) || emailNumber < 1 || emailNumber > emailCount) continue;
 		if (perEmail.has(emailNumber)) continue;
 		const transactions = Array.isArray(record.transactions) ? record.transactions : [];
-		perEmail.set(emailNumber, { transactions } as AiNormalizationResponse);
+		perEmail.set(emailNumber, {
+			transactions,
+			statement: record.statement ?? null,
+		} as AiNormalizationResponse);
 	}
 	return perEmail;
 }
@@ -251,6 +285,7 @@ interface RawEmailRecord {
 	internal_date_iso: string;
 	clean_text: string;
 	from_address: string | null;
+	subject: string | null;
 	status: RawEmailStatus;
 }
 
@@ -260,6 +295,7 @@ interface RawEmailFetchRowRaw {
 	internal_date: unknown;
 	clean_text: unknown;
 	from_address?: unknown;
+	subject?: unknown;
 	status: unknown;
 }
 
@@ -288,6 +324,7 @@ export interface NormalizeRawEmailsResult {
 	needs_review_transaction_count: number;
 	template_matched_count: number;
 	template_learned_count: number;
+	statement_captured_count: number;
 	failed_raw_email_ids: UUID[];
 	unrecognized_raw_email_ids: UUID[];
 }
@@ -463,15 +500,23 @@ function dedupeUuidPreserveOrder(ids: UUID[]): UUID[] {
 }
 
 function mapRawEmailRow(row: RawEmailFetchRowRaw): RawEmailRecord {
+	if (typeof row.clean_text !== 'string') {
+		throw new Error('raw_emails.clean_text is not a string');
+	}
 	return {
 		id: toRequiredString(row.id, 'raw_emails.id') as UUID,
 		user_id: toRequiredString(row.user_id, 'raw_emails.user_id') as UUID,
 		internal_date_iso: toIsoDateTime(row.internal_date, 'raw_emails.internal_date'),
-		clean_text: toRequiredString(row.clean_text, 'raw_emails.clean_text'),
+		// Empty is legitimate: some senders (YES Bank) yield no extractable
+		// body text — the subject and the statement-PDF fallback still carry
+		// those emails through the pipeline.
+		clean_text: row.clean_text,
 		from_address:
 			row.from_address === undefined
 				? null
 				: toNullableString(row.from_address, 'raw_emails.from_address'),
+		subject:
+			row.subject === undefined ? null : toNullableString(row.subject, 'raw_emails.subject'),
 		status: toRequiredString(row.status, 'raw_emails.status') as RawEmailStatus,
 	};
 }
@@ -481,7 +526,7 @@ async function loadRawEmailsByIds(
 	rawEmailIds: UUID[],
 ): Promise<RawEmailRecord[]> {
 	const rows = await sql<RawEmailFetchRowRaw[]>`
-		select re.id, re.user_id, re.internal_date, re.clean_text, re.from_address, re.status
+		select re.id, re.user_id, re.internal_date, re.clean_text, re.from_address, re.subject, re.status
 		from public.raw_emails as re
 		where re.id = any(${rawEmailIds}::uuid[])
 		order by re.internal_date asc
@@ -643,6 +688,7 @@ function createEmptyResult(requestedCount: number): NormalizeRawEmailsResult {
 		needs_review_transaction_count: 0,
 		template_matched_count: 0,
 		template_learned_count: 0,
+		statement_captured_count: 0,
 		failed_raw_email_ids: [],
 		unrecognized_raw_email_ids: [],
 	};
@@ -1307,6 +1353,21 @@ async function markRawEmailIgnored(
 	`;
 }
 
+// A statement email produced no transactions but WAS meaningfully processed
+// (its bill fields were captured) — PROCESSED, not IGNORED.
+async function markRawEmailProcessed(
+	sql: SqlClient,
+	rawEmail: RawEmailRecord,
+): Promise<void> {
+	await sql`
+		update public.raw_emails as re
+		set status = 'PROCESSED'
+		where re.id = ${rawEmail.id}
+			and re.user_id = ${rawEmail.user_id}
+			and re.status = 'PENDING_EXTRACTION'
+	`;
+}
+
 export async function runNormalizeRawEmailsJob(
 	job: NormalizeRawEmailsJobPayload,
 	env: Env,
@@ -1364,21 +1425,160 @@ export async function runNormalizeRawEmailsJob(
 
 	// Applies validated extractions to one email: account match, identity
 	// graph, persistence, and result accounting.
+	// Resolves + persists the model's statement answer (masked mode). Returns
+	// true when a statement was captured — the caller then marks a zero-
+	// transaction email PROCESSED instead of IGNORED and skips template
+	// learning (statements are monthly one-offs; never worth a template).
+	const maybeCaptureStatement = async (
+		rawEmail: RawEmailRecord,
+		ctx: UserNormalizationContext,
+		response: AiNormalizationResponse,
+		tokens: Map<string, string>,
+	): Promise<boolean> => {
+		try {
+			const resolved = resolveMaskedStatement(
+				response.statement,
+				tokens,
+				rawEmail.internal_date_iso,
+				normConfig.minConfidence,
+			);
+
+			// The statement FLAG matters even when no field resolved from the
+			// text: HDFC statement emails carry nothing in the body — the PDF
+			// fallback is their only route.
+			const stmtRecord =
+				response.statement && typeof response.statement === 'object'
+					? (response.statement as Record<string, unknown>)
+					: null;
+			const stmtConfidence = stmtRecord ? Number(stmtRecord.confidence) : Number.NaN;
+			const flagged =
+				stmtRecord !== null &&
+				Number.isFinite(stmtConfidence) &&
+				stmtConfidence >= normConfig.minConfidence &&
+				stmtConfidence <= 1;
+			if (!resolved && !flagged) return false;
+
+			const base = resolved ?? {
+				card_last4: null,
+				total_due_in_paise: null,
+				min_due_in_paise: null,
+				due_date: null,
+				period_start: null,
+				period_end: null,
+				confidence: stmtConfidence,
+			};
+
+			const missingFields =
+				base.card_last4 === null ||
+				base.total_due_in_paise === null ||
+				base.min_due_in_paise === null ||
+				base.due_date === null ||
+				base.period_end === null;
+			if (missingFields) {
+				// PDF completion is contained: a Gmail hiccup here must not
+				// re-run the whole email (and its AI call) — the partial row
+				// persists and manual entry covers the gap.
+				try {
+					const pdfResult = await completeStatementFromPdf(
+						sql,
+						env,
+						rawEmail.id,
+						rawEmail.user_id,
+						rawEmail.internal_date_iso,
+						base.card_last4,
+					);
+					console.info('AI_NORMALIZER_STATEMENT_PDF_FALLBACK', {
+						rawEmailId: rawEmail.id,
+						reason: pdfResult.reason,
+					});
+					if (pdfResult.fields) {
+						// Email-extracted values win; the PDF fills the blanks.
+						base.card_last4 = base.card_last4 ?? pdfResult.fields.card_last4;
+						base.total_due_in_paise =
+							base.total_due_in_paise ?? pdfResult.fields.total_due_in_paise;
+						base.min_due_in_paise =
+							base.min_due_in_paise ?? pdfResult.fields.min_due_in_paise;
+						base.due_date = base.due_date ?? pdfResult.fields.due_date;
+						if (base.period_end === null) {
+							base.period_start = pdfResult.fields.period_start;
+							base.period_end = pdfResult.fields.period_end;
+						}
+					}
+				} catch (pdfError) {
+					console.warn('AI_NORMALIZER_STATEMENT_PDF_ERROR', {
+						rawEmailId: rawEmail.id,
+						message: pdfError instanceof Error ? pdfError.message : 'unknown',
+					});
+				}
+			}
+
+			const hasAnyField =
+				base.total_due_in_paise !== null ||
+				base.min_due_in_paise !== null ||
+				base.due_date !== null ||
+				base.period_end !== null;
+			if (!hasAnyField && base.card_last4 === null) {
+				// Nothing anchors a row; the email still counts as a statement
+				// (PROCESSED, no template) — a later harvest can retry once a
+				// password is stored.
+				console.info('AI_NORMALIZER_STATEMENT_EMPTY', { rawEmailId: rawEmail.id });
+				return flagged;
+			}
+
+			const outcome = await persistCardStatement(
+				sql,
+				rawEmail.user_id,
+				rawEmail.id,
+				base,
+				ctx.credit_cards,
+			);
+			if (outcome.persisted) {
+				result.statement_captured_count++;
+			}
+			console.info('AI_NORMALIZER_STATEMENT_CAPTURED', {
+				rawEmailId: rawEmail.id,
+				cardLast4Present: base.card_last4 !== null,
+				linkedCreditCardId: outcome.linked_credit_card_id,
+				duplicate: outcome.duplicate,
+				fields: {
+					total: base.total_due_in_paise !== null,
+					min: base.min_due_in_paise !== null,
+					due: base.due_date !== null,
+					period: base.period_end !== null,
+				},
+			});
+			return true;
+		} catch (error) {
+			// Statement capture must never fail the email's transaction path.
+			console.warn('AI_NORMALIZER_STATEMENT_CAPTURE_ERROR', {
+				rawEmailId: rawEmail.id,
+				message: error instanceof Error ? error.message : 'unknown',
+			});
+			return false;
+		}
+	};
+
 	const finishEmail = async (
 		rawEmail: RawEmailRecord,
 		ctx: UserNormalizationContext,
 		validated: AiNormalizedTransactionItem[],
 		emailStartMs: number,
+		statementCaptured = false,
 	): Promise<void> => {
 		result.reconciled_fact_count += validated.length;
 
 		if (validated.length === 0) {
-			await markRawEmailIgnored(sql, rawEmail);
-			result.ignored_raw_email_count++;
+			if (statementCaptured) {
+				await markRawEmailProcessed(sql, rawEmail);
+				result.processed_raw_email_count++;
+			} else {
+				await markRawEmailIgnored(sql, rawEmail);
+				result.ignored_raw_email_count++;
+			}
 			console.info('AI_NORMALIZER_EMAIL_IGNORED', {
 				rawEmailId: rawEmail.id,
 				totalElapsedMs: Date.now() - emailStartMs,
-				reason: 'no transactions extracted',
+				reason: statementCaptured ? 'statement captured, no transactions' : 'no transactions extracted',
 			});
 			return;
 		}
@@ -1490,6 +1690,10 @@ export async function runNormalizeRawEmailsJob(
 		tokens: Map<string, string>,
 	): Promise<void> => {
 		if (!templatesEnabled || !rawEmail.from_address) return;
+		// Statement emails must not teach templates: an IGNORE template would
+		// swallow future bills before their fields are captured, and they
+		// arrive monthly — template savings are negligible anyway.
+		if (response.statement !== null && response.statement !== undefined) return;
 
 		try {
 			const rawTransactions = Array.isArray(response.transactions)
@@ -1578,6 +1782,12 @@ export async function runNormalizeRawEmailsJob(
 		}
 	};
 
+	// Prompt text is "Subject: ...\n\n<body>" — statement emails (ICICI) put
+	// the billing cycle in the subject alone. Body tokens are masked first so
+	// template skeletons (body-only) keep their usual numbering.
+	const buildPromptWithSubject = (subjectText: string | null, bodyText: string): string =>
+		subjectText ? `Subject: ${subjectText}\n\n${bodyText}` : bodyText;
+
 	const processSingleEmail = async (rawEmail: RawEmailRecord): Promise<void> => {
 		if (!apiKey) return;
 		const ctx = await getUserContext(rawEmail.user_id);
@@ -1585,7 +1795,20 @@ export async function runNormalizeRawEmailsJob(
 		// Masked mode (default): the model only ever sees <N#> placeholders in
 		// place of digits — no amounts, balances, or account numbers leave us.
 		const masked = normConfig.maskNumbers ? maskNumericTokens(rawEmail.clean_text) : null;
-		const promptText = masked ? masked.masked : rawEmail.clean_text;
+		let promptText: string;
+		let allTokens: Map<string, string>;
+		if (masked) {
+			const maskedSubject = rawEmail.subject
+				? maskNumericTokens(rawEmail.subject, masked.nextIndex)
+				: null;
+			allTokens = maskedSubject
+				? new Map([...masked.tokens, ...maskedSubject.tokens])
+				: masked.tokens;
+			promptText = buildPromptWithSubject(maskedSubject?.masked ?? null, masked.masked);
+		} else {
+			allTokens = new Map();
+			promptText = buildPromptWithSubject(rawEmail.subject, rawEmail.clean_text);
+		}
 		const systemPrompt = masked ? buildMaskedSystemPrompt(ctx) : buildSystemPrompt(ctx);
 		const emailStartMs = Date.now();
 
@@ -1611,7 +1834,7 @@ export async function runNormalizeRawEmailsJob(
 						aiResponse,
 						normConfig.minConfidence,
 						ctx,
-						masked.tokens,
+						allTokens,
 						rawEmail.internal_date_iso,
 					)
 				: validateAndCleanResponse(
@@ -1624,11 +1847,15 @@ export async function runNormalizeRawEmailsJob(
 			result.extracted_fact_count +=
 				Array.isArray(aiResponse.transactions) ? aiResponse.transactions.length : 0;
 
-			await finishEmail(rawEmail, ctx, validated, emailStartMs);
+			const statementCaptured = masked
+				? await maybeCaptureStatement(rawEmail, ctx, aiResponse, allTokens)
+				: false;
+
+			await finishEmail(rawEmail, ctx, validated, emailStartMs, statementCaptured);
 
 			// Learning needs the model's token references, so masked mode only.
 			if (masked) {
-				await maybeLearnTemplate(rawEmail, aiResponse, validated, masked.masked, masked.tokens);
+				await maybeLearnTemplate(rawEmail, aiResponse, validated, masked.masked, allTokens);
 			}
 		} catch (error) {
 			if (error instanceof TransientMessageError) {
@@ -1658,8 +1885,19 @@ export async function runNormalizeRawEmailsJob(
 			for (const [id, value] of masked.tokens) {
 				tokens.set(id, value);
 			}
+			// Template skeletons stay body-only; the prompt section also carries
+			// the (separately masked) subject for statement/context signals.
 			maskedTexts.push(masked.masked);
-			sections.push(`=== EMAIL ${position + 1} ===\n${masked.masked}`);
+			let sectionText = masked.masked;
+			if (rawEmail.subject) {
+				const maskedSubject = maskNumericTokens(rawEmail.subject, nextIndex);
+				nextIndex = maskedSubject.nextIndex;
+				for (const [id, value] of maskedSubject.tokens) {
+					tokens.set(id, value);
+				}
+				sectionText = `Subject: ${maskedSubject.masked}\n\n${masked.masked}`;
+			}
+			sections.push(`=== EMAIL ${position + 1} ===\n${sectionText}`);
 		}
 
 		console.info('AI_NORMALIZER_BATCH_INPUT', {
@@ -1715,7 +1953,14 @@ export async function runNormalizeRawEmailsJob(
 					? emailResponse.transactions.length
 					: 0;
 
-				await finishEmail(rawEmail, ctx, validated, batchStartMs);
+				const statementCaptured = await maybeCaptureStatement(
+					rawEmail,
+					ctx,
+					emailResponse,
+					tokens,
+				);
+
+				await finishEmail(rawEmail, ctx, validated, batchStartMs, statementCaptured);
 				await maybeLearnTemplate(
 					rawEmail,
 					emailResponse,
