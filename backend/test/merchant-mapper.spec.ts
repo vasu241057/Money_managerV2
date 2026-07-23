@@ -302,3 +302,112 @@ describe('merchant-mapper worker', () => {
 		expect(result.alias_created_count).toBe(0);
 	});
 });
+
+describe('sure-gate and web context', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		getAppConfigMock.mockReturnValue(appConfig);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('skips unsure identifications and records the attempt for cooldown', async () => {
+		const insertedMerchants: string[] = [];
+		let attemptKeys: unknown = null;
+		let candidateQuery = '';
+		const sql = createSqlMock((query, values) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('group by fe.search_key')) {
+				candidateQuery = query;
+				return [
+					{ search_key: 'SURESHOP', counterparty_raw: 'FSN E-COMMERCE VENTURES' },
+					{ search_key: 'MYSTERYCO', counterparty_raw: 'MYSTERY TRADING CO' },
+				];
+			}
+			if (query.includes('default_category_id is null')) return [];
+			if (query.includes('insert into public.global_merchants')) {
+				insertedMerchants.push(values[0] as string);
+				return [{ id: MERCHANT_ID }];
+			}
+			if (query.includes('insert into public.global_merchant_aliases')) {
+				return [{ search_key: values[0] }];
+			}
+			if (query.includes('update public.transactions as t')) return [];
+			if (query.includes('insert into public.merchant_mapping_attempts')) {
+				attemptKeys = values[0];
+				return [];
+			}
+			if (query.includes('insert into public.usage_counters')) return [];
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				modelResponse([
+					{ key: 'SURESHOP', canonical_name: 'Nykaa', type: 'MERCHANT', category: 'Shopping', sure: true },
+					{ key: 'MYSTERYCO', canonical_name: 'Mystery Brand Guess', type: 'MERCHANT', category: 'Shopping', sure: false },
+				]),
+			),
+		);
+
+		const result = await runMerchantMappingJob(JOB, createEnv());
+
+		expect(result.mapped_count).toBe(1);
+		expect(result.unsure_skipped_count).toBe(1);
+		expect(insertedMerchants).toEqual(['Nykaa']);
+		// Both keys rest in the cooldown table; the candidate query excludes
+		// recently attempted keys.
+		expect(attemptKeys).toEqual(['SURESHOP', 'MYSTERYCO']);
+		expect(candidateQuery).toContain('merchant_mapping_attempts');
+		expect(candidateQuery).toContain('last_attempt_at >');
+	});
+
+	it('rotates Tavily keys on quota exhaustion and counts real searches', async () => {
+		const { searchMerchantWebContext } = await import('../src/workers/merchant-mapper');
+		const calls: string[] = [];
+		const fetcher = vi.fn().mockImplementation(async (_url: unknown, init?: RequestInit) => {
+			const auth = (init?.headers as Record<string, string>)?.Authorization ?? '';
+			calls.push(auth);
+			if (auth.includes('key-one')) {
+				return new Response('{}', { status: 432 });
+			}
+			return new Response(
+				JSON.stringify({ results: [{ title: 'Swiggy', content: 'Bundl Technologies is Swiggy' }] }),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			);
+		});
+
+		const outcome = await searchMerchantWebContext(
+			createEnv({ TAVILY_API_KEY: 'key-one, key-two' }),
+			[
+				{ key: 'BUNDLTECH', name: 'BUNDL TECHNOLOGIES' },
+				{ key: 'ZEPTOMKT', name: 'ZEPTO MARKETPLACE' },
+			],
+			fetcher as unknown as typeof fetch,
+		);
+
+		// key-one died on the first candidate; key-two answered both.
+		expect(calls.filter((auth) => auth.includes('key-one'))).toHaveLength(1);
+		expect(calls.filter((auth) => auth.includes('key-two'))).toHaveLength(2);
+		expect(outcome.searches_performed).toBe(2);
+		expect(outcome.context.get('BUNDLTECH')).toContain('Swiggy');
+	});
+
+	it('returns empty context without a key and never searches', async () => {
+		const { searchMerchantWebContext } = await import('../src/workers/merchant-mapper');
+		const fetcher = vi.fn();
+		const outcome = await searchMerchantWebContext(
+			createEnv(),
+			[{ key: 'K', name: 'N' }],
+			fetcher as unknown as typeof fetch,
+		);
+		expect(outcome.context.size).toBe(0);
+		expect(outcome.searches_performed).toBe(0);
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+});

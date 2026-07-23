@@ -48,3 +48,8 @@
 # alert for the same user+amount+direction inside the window is never
 # auto-verified.
 # TXN_DEDUP_WINDOW_MINUTES=10
+
+# Tavily web search for the daily merchant mapper (free tier: 1000/month).
+# Comma-separate multiple keys to rotate when one exhausts its quota.
+# Absent = mapper runs without web context, exactly as before.
+# TAVILY_API_KEY=tvly-aaa,tvly-bbb,tvly-ccc

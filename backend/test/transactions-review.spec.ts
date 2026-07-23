@@ -105,6 +105,8 @@ describe('reviewTransaction', () => {
 			],
 			() => [],
 			() => [transactionFeedRow()],
+			// probation lookup: no alias for this key
+			() => [],
 		]);
 
 		const result = await reviewTransaction(
@@ -118,7 +120,7 @@ describe('reviewTransaction', () => {
 		expect(result.applied_search_key).toBeNull();
 		expect(result.transaction.transaction.status).toBe('VERIFIED');
 		expect(result.transaction.transaction.classification_source).toBe('USER');
-		expect(queries).toHaveLength(3);
+		expect(queries).toHaveLength(4);
 	});
 
 	it('applies user merchant rule when requested', async () => {
@@ -140,6 +142,8 @@ describe('reviewTransaction', () => {
 					category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
 				}),
 			],
+			// probation lookup: no alias for this key
+			() => [],
 			(_query, values) => {
 				ruleInsertValues = values;
 				return [];
@@ -160,7 +164,7 @@ describe('reviewTransaction', () => {
 		expect(result.applied_search_key).toBe('ZOMATOPAY');
 		expect(ruleInsertValues).toContain('ZOMATOPAY');
 		expect(ruleInsertValues).toContain('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
-		expect(queries[3]).toContain('insert into public.user_merchant_rules');
+		expect(queries[4]).toContain('insert into public.user_merchant_rules');
 	});
 
 	it('rejects rule write when no search key is available', async () => {
@@ -222,5 +226,97 @@ describe('reviewTransaction', () => {
 		});
 
 		expect(queries).toHaveLength(1);
+	});
+
+	it('confirms an unconfirmed AI mapping when the review keeps its merchant', async () => {
+		const MERCHANT = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+		const { sql, queries } = createSqlForReviewTests([
+			() => [
+				{
+					transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					transaction_status: 'NEEDS_REVIEW',
+					transaction_category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+					transaction_merchant_id: MERCHANT,
+					financial_event_search_key: 'bundltech',
+				},
+			],
+			() => [],
+			() => [transactionFeedRow({ transaction_merchant_id: MERCHANT, merchant_id: MERCHANT, merchant_canonical_name: 'Swiggy', merchant_type: 'MERCHANT' })],
+			// probation lookup: AI-sourced alias pointing at the kept merchant
+			() => [{ merchant_id: MERCHANT, source: 'AI' }],
+			// confirm update
+			() => [],
+		]);
+
+		await reviewTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{},
+		);
+
+		const confirm = queries[4] ?? '';
+		expect(confirm).toContain('set confirmed = true');
+		expect(confirm).toContain('confirmed = false');
+	});
+
+	it('dissents (demotes) an AI mapping when the review replaces its merchant', async () => {
+		const ALIAS_MERCHANT = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+		const USER_PICK = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+		const { sql, queries } = createSqlForReviewTests([
+			() => [
+				{
+					transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					transaction_status: 'NEEDS_REVIEW',
+					transaction_category_id: null,
+					transaction_merchant_id: ALIAS_MERCHANT,
+					financial_event_search_key: 'bundltech',
+				},
+			],
+			() => [],
+			() => [transactionFeedRow({ transaction_merchant_id: USER_PICK, merchant_id: USER_PICK, merchant_canonical_name: 'Zepto', merchant_type: 'MERCHANT' })],
+			() => [{ merchant_id: ALIAS_MERCHANT, source: 'AI' }],
+			// dissent update
+			() => [],
+		]);
+
+		await reviewTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ merchant_id: USER_PICK },
+		);
+
+		const dissent = queries[4] ?? '';
+		expect(dissent).toContain('dissent_count = gm.dissent_count + 1');
+		expect(dissent).toContain('set confirmed = false');
+	});
+
+	it('never touches SEED/MANUAL merchants from the probation path', async () => {
+		const MERCHANT = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+		const { sql, queries } = createSqlForReviewTests([
+			() => [
+				{
+					transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					transaction_status: 'NEEDS_REVIEW',
+					transaction_category_id: null,
+					transaction_merchant_id: MERCHANT,
+					financial_event_search_key: 'zomato',
+				},
+			],
+			() => [],
+			() => [transactionFeedRow()],
+			() => [{ merchant_id: MERCHANT, source: 'SEED' }],
+		]);
+
+		await reviewTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ merchant_id: null },
+		);
+
+		// probation select ran, but no confirm/dissent write followed
+		expect(queries).toHaveLength(4);
 	});
 });

@@ -17,6 +17,9 @@
   --ledger-card: #FFFFFF;
   --ledger-amber: #B8732A;
   --ledger-amber-bg: #FDF6EC;
+  --ledger-category-blue: #37688D;
+  --ledger-category-plum: #7E5680;
+  --ledger-category-rose: #A65D6F;
 
   background-color: var(--ledger-bg);
   color: var(--ledger-fg);
@@ -34,6 +37,9 @@
   --ledger-card: #1E1E1E;
   --ledger-amber: #D4A24C;
   --ledger-amber-bg: #2A2418;
+  --ledger-category-blue: #75A8D1;
+  --ledger-category-plum: #C49AC6;
+  --ledger-category-rose: #D995A6;
 }
 
 /* Utility classes */

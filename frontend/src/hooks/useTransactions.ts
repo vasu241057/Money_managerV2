@@ -49,6 +49,7 @@ function mapFeedItemToUiTransaction(
 
   let categoryName = 'Uncategorized';
   let categoryId: string | null | undefined = transaction.category_id;
+  let categoryIcon: string | null | undefined = item.category?.icon;
   let subCategory: string | undefined;
   let subCategoryId: string | null | undefined;
 
@@ -61,26 +62,32 @@ function mapFeedItemToUiTransaction(
       if (parent && parent.parent_id === null) {
         categoryName = matchedCategory.name;
         categoryId = matchedCategory.id;
+        categoryIcon = matchedCategory.icon;
       } else if (parent) {
         // Normal 3-level: parent → sub (e.g., Food → Groceries)
         categoryName = parent.name;
         categoryId = parent.id;
         subCategory = matchedCategory.name;
         subCategoryId = matchedCategory.id;
+        categoryIcon = matchedCategory.icon ?? parent.icon;
       } else {
         categoryName = matchedCategory.name;
         categoryId = matchedCategory.id;
+        categoryIcon = matchedCategory.icon;
       }
     } else if (matchedCategory) {
       categoryName = matchedCategory.name;
       categoryId = matchedCategory.id;
+      categoryIcon = matchedCategory.icon;
     } else if (item.category) {
       categoryName = item.category.name;
       categoryId = item.category.id;
+      categoryIcon = item.category.icon;
     }
   } else if (item.category) {
     categoryName = item.category.name;
     categoryId = item.category.id;
+    categoryIcon = item.category.icon;
   }
 
   return {
@@ -89,6 +96,7 @@ function mapFeedItemToUiTransaction(
     type: transaction.type,
     category: categoryName,
     categoryId,
+    categoryIcon,
     subCategory,
     subCategoryId,
     date: new Date(transaction.txn_date),

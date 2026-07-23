@@ -132,3 +132,32 @@ describe('resolveInstrumentLink', () => {
 		expect(link).toEqual({ credit_card_id: null, account_id: 'acct-card' });
 	});
 });
+
+describe('alias probation (resolveIdentityForSearchKeys)', () => {
+	it('threads confirmed=false so unconfirmed aliases inform but cannot verify', async () => {
+		const { resolveIdentityForSearchKeys } = await import('../src/lib/identity');
+		const lookup = {
+			system_categories: { income: null, expense: null, transfer: null },
+			user_rules: new Map(),
+			global_aliases: new Map([
+				[
+					'BUNDLTECH',
+					{
+						merchant_id: 'm-1',
+						default_category_id: 'c-1',
+						merchant_type: 'MERCHANT' as const,
+						confirmed: false,
+					},
+				],
+			]),
+		};
+
+		const identity = resolveIdentityForSearchKeys('u-1', ['BUNDLTECH'], lookup);
+		// Mapping still informs (merchant + category applied)...
+		expect(identity.merchant_id).toBe('m-1');
+		expect(identity.alias_category_id).toBe('c-1');
+		expect(identity.global_alias_hit).toBe(true);
+		// ...but the probation flag blocks auto-verify at the caller.
+		expect(identity.alias_confirmed).toBe(false);
+	});
+});

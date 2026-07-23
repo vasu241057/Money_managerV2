@@ -8,7 +8,9 @@ import { toRequiredString } from '../lib/db/serialization';
 import { isAllowedSender, resolveSenderGateConfig } from '../lib/sender-gate';
 import { TransientMessageError } from './queue.errors';
 
-const AI_CHAT_TIMEOUT_MS = 30_000;
+// The provider routinely takes 25-45s on large prompts; queue consumers
+// can afford a generous window.
+const AI_CHAT_TIMEOUT_MS = 120_000;
 const MAX_SENDERS_PER_RUN = 200;
 const GATED_SENDER_LOOKBACK_DAYS = 14;
 // AI DENY rules get a second look every 30 days so one bad classification

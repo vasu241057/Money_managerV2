@@ -26,6 +26,7 @@ export interface Transaction {
   type: 'income' | 'expense' | 'transfer';
   category: string;
   categoryId?: string | null;
+  categoryIcon?: string | null;
   subCategory?: string;
   subCategoryId?: string | null;
   date: Date;

@@ -7,11 +7,25 @@ import { toRequiredString } from '../lib/db/serialization';
 import { loadSystemExpenseCategories } from '../lib/identity';
 import { TransientMessageError } from './queue.errors';
 
-const AI_CHAT_TIMEOUT_MS = 30_000;
+// The provider routinely takes 25-45s on large prompts; queue consumers
+// can afford a generous window.
+const AI_CHAT_TIMEOUT_MS = 120_000;
+// Candidates per AI call: one 200-entry answer exceeds sane response sizes
+// (and slow-provider timeouts); small chunks keep each call fast and bounded.
+const MAPPING_AI_CHUNK_SIZE = 40;
 const MAX_MERCHANTS_PER_RUN = 200;
 const MAX_CATEGORY_BACKFILL_PER_RUN = 100;
 const UNMAPPED_LOOKBACK_DAYS = 14;
 const MAX_CANONICAL_NAME_LENGTH = 120;
+// Web-context searches per daily run: matches the mapper's candidate cap so
+// every key the model sees gets context. Steady state is a few dozen keys a
+// month; only a backlog day comes near this, and key rotation absorbs it.
+const MAX_WEB_SEARCHES_PER_RUN = MAX_MERCHANTS_PER_RUN;
+const WEB_SEARCH_TIMEOUT_MS = 10_000;
+const MAX_WEB_SNIPPET_LENGTH = 240;
+const WEB_SEARCH_MAX_RESULTS = 5;
+// Unsure keys rest this long before the mapper asks the model again.
+const MAPPING_RETRY_COOLDOWN_DAYS = 10;
 
 const VALID_MERCHANT_TYPES = new Set<MerchantType>([
 	'MERCHANT',
@@ -39,6 +53,8 @@ interface MerchantMapping {
 export interface MerchantMappingResult {
 	candidate_count: number;
 	mapped_count: number;
+	unsure_skipped_count: number;
+	web_search_count: number;
 	alias_created_count: number;
 	category_backfill_candidate_count: number;
 	category_backfilled_count: number;
@@ -50,6 +66,8 @@ function createEmptyResult(): MerchantMappingResult {
 	return {
 		candidate_count: 0,
 		mapped_count: 0,
+		unsure_skipped_count: 0,
+		web_search_count: 0,
 		alias_created_count: 0,
 		category_backfill_candidate_count: 0,
 		category_backfilled_count: 0,
@@ -58,8 +76,99 @@ function createEmptyResult(): MerchantMappingResult {
 	};
 }
 
-function buildMappingPrompt(
+// Best-effort web context per unknown payee: legal-entity names ("BUNDL
+// TECHNOLOGIES") rarely resemble the consumer brand (Swiggy), and search
+// snippets close that gap. Queries carry only the payee string — never
+// amounts, users, or email content. Every failure (no key, quota exhausted,
+// network) degrades to the exact pre-search behavior.
+export async function searchMerchantWebContext(
+	env: Env,
 	candidates: Array<{ key: string; name: string }>,
+	fetcher: typeof fetch = fetch,
+): Promise<{ context: Map<string, string>; searches_performed: number }> {
+	const context = new Map<string, string>();
+	// Comma-separated keys rotate on quota exhaustion (free-tier stacking).
+	const apiKeys = (typeof env.TAVILY_API_KEY === 'string' ? env.TAVILY_API_KEY : '')
+		.split(',')
+		.map(key => key.trim())
+		.filter(key => key.length > 0);
+	let searchesPerformed = 0;
+	if (apiKeys.length === 0 || candidates.length === 0) {
+		return { context, searches_performed: searchesPerformed };
+	}
+
+	let keyIndex = 0;
+	for (const candidate of candidates.slice(0, MAX_WEB_SEARCHES_PER_RUN)) {
+		let answered = false;
+		while (!answered && keyIndex < apiKeys.length) {
+			const controller = new AbortController();
+			const timeoutId = setTimeout(() => controller.abort(), WEB_SEARCH_TIMEOUT_MS);
+			try {
+				const response = await fetcher('https://api.tavily.com/search', {
+					method: 'POST',
+					headers: {
+						Authorization: `Bearer ${apiKeys[keyIndex]}`,
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						query: `"${candidate.name}" India company brand`,
+						search_depth: 'basic',
+						max_results: WEB_SEARCH_MAX_RESULTS,
+					}),
+					signal: controller.signal,
+				});
+				if (
+					response.status === 429 ||
+					response.status === 432 ||
+					response.status === 402 ||
+					response.status === 401
+				) {
+					// Key exhausted (or revoked): rotate and retry this candidate.
+					console.warn('MERCHANT_MAPPER_WEB_SEARCH_KEY_EXHAUSTED', {
+						status: response.status,
+						keyIndex,
+					});
+					keyIndex += 1;
+					continue;
+				}
+				answered = true;
+				if (!response.ok) break;
+				searchesPerformed += 1;
+				const parsed = (await response.json()) as {
+					results?: Array<{ title?: string; content?: string }>;
+				};
+				const snippets = (parsed.results ?? [])
+					.map(result =>
+						[result.title, result.content]
+							.filter((part): part is string => typeof part === 'string' && part.length > 0)
+							.join(': ')
+							.slice(0, MAX_WEB_SNIPPET_LENGTH),
+					)
+					.filter(snippet => snippet.length > 0);
+				if (snippets.length > 0) {
+					context.set(candidate.key, snippets.join(' | '));
+				}
+			} catch {
+				// Timeout/network: skip this candidate, keep the key.
+				answered = true;
+			} finally {
+				clearTimeout(timeoutId);
+			}
+		}
+		if (keyIndex >= apiKeys.length) break;
+	}
+
+	console.info('MERCHANT_MAPPER_WEB_CONTEXT', {
+		requested: Math.min(candidates.length, MAX_WEB_SEARCHES_PER_RUN),
+		resolved: context.size,
+		searchesPerformed,
+		keysExhausted: keyIndex,
+	});
+	return { context, searches_performed: searchesPerformed };
+}
+
+function buildMappingPrompt(
+	candidates: Array<{ key: string; name: string; web_context?: string }>,
 	categoryNames: string[],
 ): Array<{ role: string; content: string }> {
 	return [
@@ -68,6 +177,8 @@ function buildMappingPrompt(
 			content: [
 				'You canonicalize payee strings extracted from Indian banking and UPI alerts.',
 				'Each input has a stable "key" and the raw payee "name" as it appeared in the alert.',
+				'Some inputs include "web_context": snippets from a web search about the raw name —',
+				'trust them over guesswork when identifying the real brand behind a legal entity.',
 				'For each input, return the real-world brand or entity behind the raw string:',
 				'- Corporate legal names map to their consumer brand ("FSN E-COMMERCE VENTURES" -> "Nykaa",',
 				'  "BUNDL TECHNOLOGIES" -> "Swiggy", "ZEPTO MARKETPLACE PRIVATE LIMITED" -> "Zepto").',
@@ -76,7 +187,11 @@ function buildMappingPrompt(
 				'- Payment gateways/aggregators (Razorpay, BillDesk, PayU, CCAvenue, Cashfree) -> type "AGGREGATOR".',
 				'- Banks/card issuers appearing as payees -> type "TRANSFER_INSTITUTION".',
 				'- Everything else -> type "MERCHANT".',
-				'- If unsure of the brand, return a cleaned title-cased version of the raw name.',
+				'- Every entry carries "sure": true when you are certain of the identification, false otherwise.',
+				'  A P2P person name used as-is and a cleaned title-cased raw name always count as sure.',
+				'  "sure": false is ONLY for brand identifications you are not fully certain of',
+				'  ("this legal entity is probably X") — those are skipped and retried later, so be honest.',
+				'- If unsure of the brand, prefer "sure": false over returning a guess or a cleaned name.',
 				'',
 				'For type "MERCHANT" also pick the single best default spending category',
 				'for the brand from this exact list (or null when none clearly fits):',
@@ -85,7 +200,7 @@ function buildMappingPrompt(
 				'(an aggregator masks the real merchant, so no category can be right).',
 				'',
 				'Return strict JSON only, no markdown, exactly:',
-				'{ "merchants": [ { "key": "<input key>", "canonical_name": "<brand>", "type": "MERCHANT"|"TRANSFER_INSTITUTION"|"AGGREGATOR"|"P2P", "category": "<name from list>"|null } ] }',
+				'{ "merchants": [ { "key": "<input key>", "canonical_name": "<brand>", "type": "MERCHANT"|"TRANSFER_INSTITUTION"|"AGGREGATOR"|"P2P", "category": "<name from list>"|null, "sure": true|false } ] }',
 				'Include every input key exactly once, unchanged.',
 			].join('\n'),
 		},
@@ -109,12 +224,17 @@ function resolveCategoryName(
 	return categoriesByName.get(trimmed) ?? categoriesByLowerName.get(trimmed.toLowerCase()) ?? null;
 }
 
+interface MappingCallOutcome {
+	mappings: MerchantMapping[];
+	unsure_count: number;
+}
+
 async function callMerchantMappingModel(
 	env: Env,
 	apiKey: string,
-	candidates: Array<{ key: string; name: string }>,
+	candidates: Array<{ key: string; name: string; web_context?: string }>,
 	categoriesByName: Map<string, UUID>,
-): Promise<MerchantMapping[] | null> {
+): Promise<MappingCallOutcome | null> {
 	const controller = new AbortController();
 	const providerConfig = resolveAiProviderConfig(env);
 	const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_TIMEOUT_MS);
@@ -192,12 +312,21 @@ async function callMerchantMappingModel(
 	);
 	const seen = new Set<string>();
 	const mappings: MerchantMapping[] = [];
+	let unsureCount = 0;
 	for (const entry of parsed.merchants) {
 		if (typeof entry !== 'object' || entry === null) continue;
 		const record = entry as Record<string, unknown>;
 
 		const key = typeof record.key === 'string' ? record.key.trim() : null;
 		if (!key || !candidateKeys.has(key) || seen.has(key)) continue;
+
+		// Sure-gate: an explicitly unsure identification is skipped rather
+		// than persisted — the cooldown table re-asks it in a few days.
+		if (record.sure === false) {
+			seen.add(key);
+			unsureCount += 1;
+			continue;
+		}
 
 		const canonicalName =
 			typeof record.canonical_name === 'string'
@@ -226,7 +355,51 @@ async function callMerchantMappingModel(
 			default_category_id: defaultCategoryId,
 		});
 	}
-	return mappings;
+	return { mappings, unsure_count: unsureCount };
+}
+
+// Day-bucketed operation counters (tavily_searches, merchant_ai_calls, ...)
+// so usage stays queryable after provider keys rotate. Best-effort: a
+// counter failure never fails the run.
+async function incrementUsageCounters(
+	sql: SqlClient,
+	counters: Record<string, number>,
+): Promise<void> {
+	for (const [counter, count] of Object.entries(counters)) {
+		if (count <= 0) continue;
+		try {
+			await sql`
+				insert into public.usage_counters (day, counter, count)
+				values (current_date, ${counter}, ${count})
+				on conflict (day, counter) do update
+				set count = public.usage_counters.count + excluded.count
+			`;
+		} catch (error) {
+			console.warn('MERCHANT_MAPPER_COUNTER_FAILED', {
+				counter,
+				message: error instanceof Error ? error.message : 'unknown',
+			});
+		}
+	}
+}
+
+// Marks every key that faced the model this run; unsure keys then rest for
+// the cooldown window (mapped keys gain an alias and drop out anyway).
+async function recordMappingAttempts(sql: SqlClient, keys: string[]): Promise<void> {
+	if (keys.length === 0) return;
+	try {
+		await sql`
+			insert into public.merchant_mapping_attempts (search_key)
+			select unnest(${keys}::text[])
+			on conflict (search_key) do update
+			set attempt_count = public.merchant_mapping_attempts.attempt_count + 1,
+				last_attempt_at = now()
+		`;
+	} catch (error) {
+		console.warn('MERCHANT_MAPPER_ATTEMPTS_FAILED', {
+			message: error instanceof Error ? error.message : 'unknown',
+		});
+	}
 }
 
 async function loadUnmappedCounterparties(
@@ -244,6 +417,12 @@ async function loadUnmappedCounterparties(
 				select 1
 				from public.global_merchant_aliases as gma
 				where gma.search_key = fe.search_key
+			)
+			and not exists (
+				select 1
+				from public.merchant_mapping_attempts as mma
+				where mma.search_key = fe.search_key
+					and mma.last_attempt_at > now() - (${MAPPING_RETRY_COOLDOWN_DAYS} || ' days')::interval
 			)
 		group by fe.search_key
 		limit ${MAX_MERCHANTS_PER_RUN}
@@ -273,8 +452,8 @@ async function persistMappings(
 		// Seed/manual categories are never overwritten (coalesce keeps the
 		// existing value); the AI only fills empty ones.
 		const merchantRows = await sql<MerchantUpsertRowRaw[]>`
-			insert into public.global_merchants (canonical_name, default_category_id, type)
-			values (${mapping.canonical_name}, ${mapping.default_category_id}, ${mapping.merchant_type})
+			insert into public.global_merchants (canonical_name, default_category_id, type, source, confirmed)
+			values (${mapping.canonical_name}, ${mapping.default_category_id}, ${mapping.merchant_type}, 'AI', false)
 			on conflict (canonical_name) do update
 			set default_category_id = coalesce(global_merchants.default_category_id, excluded.default_category_id),
 				updated_at = now()
@@ -357,13 +536,13 @@ async function backfillMerchantCategories(
 		return { candidateCount: 0, backfilledCount: 0 };
 	}
 
-	const mappings = await callMerchantMappingModel(env, apiKey, candidates, categoriesByName);
-	if (mappings === null) {
+	const outcome = await callMerchantMappingModel(env, apiKey, candidates, categoriesByName);
+	if (outcome === null) {
 		return { candidateCount: candidates.length, backfilledCount: 0 };
 	}
 
 	let backfilled = 0;
-	for (const mapping of mappings) {
+	for (const mapping of outcome.mappings) {
 		if (!mapping.default_category_id) continue;
 		const updated = await sql<Array<{ id: unknown }>>`
 			update public.global_merchants as gm
@@ -401,16 +580,41 @@ export async function runMerchantMappingJob(
 	result.candidate_count = candidates.length;
 
 	if (candidates.length > 0) {
-		const mappings = await callMerchantMappingModel(env, apiKey, candidates, categoriesByName);
-		if (mappings === null) {
-			result.skipped_reason = 'invalid model response';
-		} else {
-			result.mapped_count = mappings.length;
+		const webSearch = await searchMerchantWebContext(env, candidates);
+		result.web_search_count = webSearch.searches_performed;
+		const enriched = candidates.map(candidate => {
+			const snippet = webSearch.context.get(candidate.key);
+			return snippet ? { ...candidate, web_context: snippet } : candidate;
+		});
+		const allMappings: MerchantMapping[] = [];
+		const attemptedKeys: string[] = [];
+		let anyChunkSucceeded = false;
+		for (let i = 0; i < enriched.length; i += MAPPING_AI_CHUNK_SIZE) {
+			const chunk = enriched.slice(i, i + MAPPING_AI_CHUNK_SIZE);
+			const outcome = await callMerchantMappingModel(env, apiKey, chunk, categoriesByName);
+			if (outcome === null) {
+				// One malformed chunk answer must not discard the others.
+				result.skipped_reason = 'invalid model response';
+				continue;
+			}
+			anyChunkSucceeded = true;
+			allMappings.push(...outcome.mappings);
+			result.unsure_skipped_count += outcome.unsure_count;
+			attemptedKeys.push(...chunk.map(candidate => candidate.key));
+		}
 
-			const persisted = await persistMappings(sql, mappings);
+		if (anyChunkSucceeded) {
+			result.mapped_count = allMappings.length;
+
+			const persisted = await persistMappings(sql, allMappings);
 			result.alias_created_count = persisted.aliasCount;
 
 			result.relinked_transaction_count = await relinkTransactions(sql, persisted.mappedKeys);
+
+			// Cooldown bookkeeping only for keys whose chunk actually answered.
+			await recordMappingAttempts(sql, attemptedKeys);
+		} else if (result.skipped_reason === null) {
+			result.skipped_reason = 'invalid model response';
 		}
 	}
 
@@ -419,6 +623,15 @@ export async function runMerchantMappingJob(
 	const backfill = await backfillMerchantCategories(sql, env, apiKey, categoriesByName);
 	result.category_backfill_candidate_count = backfill.candidateCount;
 	result.category_backfilled_count = backfill.backfilledCount;
+
+	await incrementUsageCounters(sql, {
+		tavily_searches: result.web_search_count,
+		merchant_ai_calls:
+			Math.ceil(result.candidate_count / MAPPING_AI_CHUNK_SIZE) +
+			(backfill.candidateCount > 0 ? 1 : 0),
+		merchants_mapped: result.alias_created_count,
+		merchants_skipped_unsure: result.unsure_skipped_count,
+	});
 
 	return result;
 }

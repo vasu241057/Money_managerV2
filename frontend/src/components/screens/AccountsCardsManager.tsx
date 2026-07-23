@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
-	ChevronLeft, Trash2, Plus, Pencil, Loader2, Check, X,
+	ChevronDown, ChevronLeft, ChevronUp, Trash2, Plus, Pencil, Loader2, Check, X,
 } from 'lucide-react';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useAnalyticsSummary } from '../../hooks/useAnalyticsSummary';
@@ -184,7 +184,7 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 		return map;
 	}, [summary]);
 
-	const netWorth = visibleAccounts.reduce((acc, a) => acc + (deltaByAccount.get(a.id) ?? 0), 0);
+	const netActivity = visibleAccounts.reduce((acc, a) => acc + (deltaByAccount.get(a.id) ?? 0), 0);
 	const isLoading = accountsLoading || cardsLoading || summaryLoading;
 	const error = accountsError ?? cardsError;
 
@@ -372,87 +372,120 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 
 				{filter === 'accounts' && (
 					<>
-						<section className="mb-6">
-							<p
-								className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2"
-								style={{ color: 'var(--ledger-muted)' }}
-							>
-								Net across {visibleAccounts.length} account{visibleAccounts.length !== 1 ? 's' : ''}
-							</p>
-							{isLoading && accounts.length === 0 ? (
-								<div className="flex items-center gap-2 py-2">
-									<Loader2 size={16} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />
-									<span className="text-sm" style={{ color: 'var(--ledger-muted)' }}>Loading…</span>
+						<section
+							className="relative overflow-hidden rounded-[16px] mb-6"
+							style={{
+								...cardStyle,
+								borderLeft: '4px solid var(--ledger-accent)',
+								boxShadow: '0 12px 30px rgba(43, 38, 31, 0.05)',
+							}}
+						>
+							<div className="flex items-center justify-between px-4 pt-4 pb-3">
+								<div>
+									<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>
+										Account register
+									</p>
+									<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>
+										Recorded income less spending
+									</p>
 								</div>
-							) : (
-								<div className="flex items-baseline gap-1">
-									<span className="text-xl font-medium" style={{ color: 'var(--ledger-muted)' }}>₹</span>
-									<span
-										className="text-4xl font-bold tnum tracking-tight"
-										style={{ color: netWorth < 0 ? 'var(--ledger-negative)' : 'var(--ledger-fg)' }}
+								<span
+									className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] shrink-0"
+									style={{ background: 'var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+								>
+									{visibleAccounts.length} folio{visibleAccounts.length !== 1 ? 's' : ''}
+								</span>
+							</div>
+							<div className="px-4 py-4" style={{ borderTop: '1px solid var(--ledger-rule)' }}>
+								<p className="text-[9px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: 'var(--ledger-muted)' }}>
+									Net activity
+								</p>
+								{isLoading && accounts.length === 0 ? (
+									<div className="flex items-center gap-2 py-1">
+										<Loader2 size={16} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />
+										<span className="text-sm" style={{ color: 'var(--ledger-muted)' }}>Loading…</span>
+									</div>
+								) : (
+									<p
+										className="text-[34px] leading-none font-bold tnum tracking-tight"
+										style={{ color: netActivity < 0 ? 'var(--ledger-negative)' : 'var(--ledger-fg)' }}
 									>
-										{Math.floor(Math.round(Math.abs(netWorth) * 100) / 100).toLocaleString('en-IN')}
-									</span>
-									<span className="text-xl font-medium tnum" style={{ color: 'var(--ledger-muted)' }}>
-										.{(Math.round(Math.abs(netWorth) * 100) % 100).toString().padStart(2, '0')}
-									</span>
-								</div>
-							)}
+										{formatRupees(Math.round(netActivity * 100))}
+									</p>
+								)}
+							</div>
 						</section>
 
 						<p
 							className="text-[10px] font-bold uppercase tracking-[0.2em] mb-3"
 							style={{ color: 'var(--ledger-muted)' }}
 						>
-							Folios
+							Your folios
 						</p>
 
 						{visibleAccounts.length > 0 ? (
-							<div className="rounded-[10px] overflow-hidden mb-4" style={cardStyle}>
-								{visibleAccounts.map((account, index) => {
+							<div className="space-y-3 mb-4">
+								{visibleAccounts.map((account) => {
 									const isEditing = editingAccountId === account.id;
 									const balance = deltaByAccount.get(account.id) ?? 0;
 									const isNegative = balance < 0;
-									const isLast = index === visibleAccounts.length - 1;
-
-									const meta = [
-										TYPE_CODE[account.type],
-										account.instrument_last4 && `····${account.instrument_last4}`,
-									].filter(Boolean).join(' · ');
 
 									return (
 										<div
 											key={account.id}
+											className="overflow-hidden rounded-[14px]"
 											style={{
-												borderLeft: `3px solid ${TYPE_COLOR[account.type]}`,
-												...(!isLast ? { borderBottom: '1px solid var(--ledger-rule)' } : {}),
+												...cardStyle,
+												borderLeft: `4px solid ${TYPE_COLOR[account.type]}`,
 											}}
 										>
+											<div className="px-4 pt-3.5 pb-4">
+												<div className="flex items-center justify-between gap-3">
+													<p
+														className="text-[9px] font-bold uppercase tracking-[0.18em]"
+														style={{ color: TYPE_COLOR[account.type] }}
+													>
+														{TYPE_CODE[account.type]} folio
+													</p>
+													{account.instrument_last4 && (
+														<span
+															className="rounded-full px-2 py-0.5 text-[10px] font-bold tnum tracking-[0.12em]"
+															style={{ background: 'var(--ledger-bg)', color: 'var(--ledger-muted)' }}
+														>
+															···· {account.instrument_last4}
+														</span>
+													)}
+											</div>
+											<p className="text-lg font-bold leading-tight truncate mt-2" style={{ color: 'var(--ledger-fg)' }}>
+												{account.name}
+											</p>
+												<div className="flex items-end justify-between gap-4 mt-5 pt-3" style={{ borderTop: '1px solid var(--ledger-rule)' }}>
+													<p className="text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--ledger-muted)' }}>
+														Net activity
+													</p>
+													<p
+														className="text-xl leading-none font-bold tnum shrink-0"
+														style={{ color: isNegative ? 'var(--ledger-negative)' : 'var(--ledger-fg)' }}
+													>
+														{formatRupees(Math.round(balance * 100))}
+													</p>
+												</div>
+											</div>
+
 											<button
 												onClick={() => {
 													setEditingAccountId(isEditing ? null : account.id);
 													setEditAccountDraft(null);
 													setConfirmDeleteAccountId(null);
 												}}
-												className="w-full flex items-center justify-between px-4 py-3.5 text-left transition-colors"
+												className="w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+												style={{ borderTop: '1px solid var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+												aria-expanded={isEditing}
 											>
-												<div className="min-w-0">
-													<p className="text-sm font-semibold truncate" style={{ color: 'var(--ledger-fg)' }}>
-														{account.name}
-													</p>
-													<p
-														className="text-[10px] font-bold uppercase tracking-[0.15em] mt-1 tnum"
-														style={{ color: 'var(--ledger-muted)' }}
-													>
-														{meta}
-													</p>
-												</div>
-												<p
-													className="text-base font-bold tnum shrink-0 ml-3"
-													style={{ color: isNegative ? 'var(--ledger-negative)' : 'var(--ledger-fg)' }}
-												>
-													{formatRupees(Math.round(balance * 100))}
-												</p>
+												<span className="text-[10px] font-bold uppercase tracking-[0.14em]">
+													{isEditing ? 'Close' : 'Manage account'}
+												</span>
+												{isEditing ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
 											</button>
 
 											{isEditing && !editAccountDraft && confirmDeleteAccountId !== account.id && (
@@ -676,12 +709,12 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 								<span className="text-sm" style={{ color: 'var(--ledger-muted)' }}>Loading…</span>
 							</div>
 						) : creditCards.length > 0 ? (
-							<div className="space-y-3 mb-4">
+							<div className="space-y-5 mb-4">
 								{creditCards.map((card) => {
 									const isEditing = editingCardId === card.id;
 									const maskedNumber = card.first4 ? `${card.first4} ······ ${card.last4}` : `···· ······ ${card.last4}`;
 									const networkLabel = (card.network ?? 'other').toUpperCase();
-									const issuer = card.issuer_name ?? 'Unknown issuer';
+									const issuer = card.issuer_name ?? 'Issuer not set';
 									// Spend rides the card's backing account: expenses minus
 									// refunds/cashback, same transaction sums as the folio list.
 									const spentPaise = Math.round(-(deltaByAccount.get(card.account_id) ?? 0) * 100);
@@ -693,109 +726,135 @@ export function AccountsCardsManager({ onBack }: AccountsCardsManagerProps) {
 										trackedRupees !== null && statement?.total_due_in_paise != null
 											? Math.abs(rupeesToPaise(trackedRupees) - statement.total_due_in_paise) <= 10000
 											: null;
-
+									const hasBill = Boolean(
+										statement && (statement.total_due_in_paise != null || statement.due_date),
+									);
 									return (
 										<div key={card.id}>
-											{card.is_active ? (
-												<button
-													onClick={() => { setEditingCardId(isEditing ? null : card.id); setEditCardDraft(null); }}
-													className="w-full text-left rounded-[14px] p-5 transition-transform active:scale-[0.98]"
-													style={{
-														background: 'var(--ledger-accent)',
-														color: 'var(--ledger-bg)',
-														minHeight: '170px',
-														display: 'flex',
-														flexDirection: 'column',
-														justifyContent: 'space-between',
-													}}
-												>
-													<div className="flex items-start justify-between">
-														<span className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ opacity: 0.7 }}>
-															{issuer}
-														</span>
-														<span
-															className="text-[10px] font-bold tracking-[0.15em] px-2 py-0.5 rounded uppercase"
-															style={{ background: 'rgba(255,255,255,0.18)' }}
-														>
-															{networkLabel}
-														</span>
+											<div
+												className="relative w-full overflow-hidden rounded-[18px] p-5 flex flex-col justify-between"
+												style={{
+													aspectRatio: '1.586 / 1',
+													background: card.is_active
+														? 'var(--ledger-accent)'
+														: 'linear-gradient(145deg, var(--ledger-rule), var(--ledger-card))',
+													border: card.is_active ? 'none' : '1px dashed var(--ledger-muted)',
+													color: card.is_active ? 'var(--ledger-bg)' : 'var(--ledger-fg)',
+													boxShadow: card.is_active
+														? '0 18px 38px rgba(13, 92, 75, 0.18)'
+														: 'none',
+												}}
+											>
+												<div className="flex items-start justify-between gap-4">
+													<p className="text-[11px] font-bold uppercase tracking-[0.17em] truncate" style={{ opacity: 0.78 }}>
+														{issuer}
+													</p>
+													<p className="text-[11px] font-extrabold uppercase tracking-[0.13em] shrink-0">
+														{networkLabel}
+													</p>
+												</div>
+
+												<div>
+													<div
+														className="relative w-9 h-7 rounded-[6px] mb-4 overflow-hidden"
+														style={{
+															background: card.is_active ? '#D6BE7A' : 'var(--ledger-muted)',
+															opacity: card.is_active ? 0.9 : 0.55,
+														}}
+														aria-hidden="true"
+													>
+														<span className="absolute inset-x-0 top-1/2" style={{ borderTop: '1px solid rgba(43,38,31,0.35)' }} />
+														<span className="absolute inset-y-0 left-1/2" style={{ borderLeft: '1px solid rgba(43,38,31,0.35)' }} />
 													</div>
-													<p className="text-lg font-bold tnum tracking-[0.15em]" style={{ letterSpacing: '0.1em' }}>
+													<p className="text-[16px] font-bold tnum tracking-[0.13em]" style={{ opacity: 0.94 }}>
 														{maskedNumber}
 													</p>
-													{statement && (statement.total_due_in_paise != null || statement.due_date) && (
-														<div
-															className="flex items-center justify-between rounded-[8px] px-3 py-2 my-1"
-															style={{ background: 'rgba(255,255,255,0.14)' }}
-														>
-															<span className="text-[10px] font-bold uppercase tracking-wider tnum">
-																{statement.total_due_in_paise != null
-																	? `Bill ${formatRupees(statement.total_due_in_paise)}`
-																	: 'Bill —'}
-																{statement.due_date ? ` · due ${formatDueDate(statement.due_date)}` : ''}
-															</span>
-															{trackedRupees !== null && (
-																<span className="flex items-center gap-1.5 text-[10px] font-bold tnum shrink-0">
-																	<span
-																		className="w-1.5 h-1.5 rounded-full"
-																		style={{ background: billsMatch === false ? 'var(--ledger-amber)' : 'var(--ledger-bg)' }}
-																	/>
-																	Tracked {formatRupees(Math.round(trackedRupees * 100))}
-																</span>
+												</div>
+
+												<div className="flex items-end justify-between gap-4">
+													<p className="text-base font-bold leading-tight truncate">{card.card_label}</p>
+													<span className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.12em] shrink-0">
+														<span
+															className="w-1.5 h-1.5 rounded-full"
+															style={{ background: card.is_active ? 'var(--ledger-bg)' : 'var(--ledger-muted)' }}
+														/>
+														{card.is_active ? 'Active' : 'Inactive'}
+													</span>
+												</div>
+											</div>
+
+											<div className="mt-2 overflow-hidden rounded-[14px]" style={cardStyle}>
+												<div className="px-4 pt-4 pb-3.5">
+													<div className="grid grid-cols-[minmax(0,1fr)_auto] gap-5 items-start">
+														<div className="min-w-0">
+															<p className="text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--ledger-muted)' }}>
+																Current bill
+															</p>
+															{hasBill && statement ? (
+																<>
+																	<p className="text-[26px] leading-none font-bold tnum tracking-tight mt-2" style={{ color: 'var(--ledger-fg)' }}>
+																		{statement.total_due_in_paise != null
+																			? formatRupees(statement.total_due_in_paise)
+																			: '—'}
+																	</p>
+																	<p className="text-[11px] font-medium mt-2" style={{ color: 'var(--ledger-muted)' }}>
+																		{statement.due_date ? `Due ${formatDueDate(statement.due_date)}` : 'Due date unavailable'}
+																	</p>
+																</>
+															) : (
+																<>
+																	<p className="text-sm font-semibold mt-2" style={{ color: 'var(--ledger-fg)' }}>No bill yet</p>
+																	<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>Add one from Manage card</p>
+																</>
 															)}
 														</div>
-													)}
-													<div className="flex items-end justify-between">
-														<div className="min-w-0">
-															<p className="text-[9px] font-bold uppercase tracking-[0.2em]" style={{ opacity: 0.7 }}>
-																Total spent
+
+														<div className="text-right shrink-0">
+															<p className="text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--ledger-muted)' }}>
+																All-time spend
 															</p>
-															<p className="text-xl font-bold tnum">{formatRupees(spentPaise)}</p>
-															<p className="text-sm font-semibold mt-1.5 truncate">{card.card_label}</p>
+															<p className="text-sm font-bold tnum mt-2" style={{ color: 'var(--ledger-fg)' }}>
+																{formatRupees(spentPaise)}
+															</p>
 														</div>
-														<span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider shrink-0">
-															<span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--ledger-bg)' }} />
-															Active
-														</span>
 													</div>
-												</button>
-											) : (
-												<button
-													onClick={() => { setEditingCardId(isEditing ? null : card.id); setEditCardDraft(null); }}
-													className="w-full text-left rounded-[14px] p-5 transition-colors"
-													style={{
-														background: 'var(--ledger-card)',
-														border: '1px dashed var(--ledger-rule)',
-														color: 'var(--ledger-muted)',
-														minHeight: '170px',
-														display: 'flex',
-														flexDirection: 'column',
-														justifyContent: 'space-between',
-														opacity: 0.7,
-													}}
-												>
-													<div className="flex items-start justify-between">
-														<span className="text-[10px] font-bold uppercase tracking-[0.2em]">{issuer}</span>
-														<span
-															className="text-[10px] font-bold tracking-[0.15em] px-2 py-0.5 rounded uppercase"
-															style={{ border: '1px solid var(--ledger-rule)' }}
+
+													{trackedRupees !== null && (
+														<div
+															className="flex items-center justify-between gap-3 mt-4 pt-3"
+															style={{ borderTop: '1px solid var(--ledger-rule)' }}
 														>
-															{networkLabel}
-														</span>
-													</div>
-													<p className="text-lg font-bold tnum tracking-[0.1em]">{maskedNumber}</p>
-													<div className="flex items-end justify-between">
-														<div className="min-w-0">
-															<p className="text-[9px] font-bold uppercase tracking-[0.2em]" style={{ opacity: 0.7 }}>
-																Total spent
-															</p>
-															<p className="text-xl font-bold tnum">{formatRupees(spentPaise)}</p>
-															<p className="text-sm font-semibold mt-1.5 truncate">{card.card_label}</p>
+															<span className="flex items-center gap-1.5 text-[10px] font-medium" style={{ color: 'var(--ledger-muted)' }}>
+																<span
+																	className="w-1.5 h-1.5 rounded-full shrink-0"
+																	style={{ background: billsMatch === false ? 'var(--ledger-amber)' : 'var(--ledger-positive)' }}
+																/>
+																Statement-period activity
+															</span>
+															<span className="text-[11px] font-bold tnum" style={{ color: 'var(--ledger-fg)' }}>
+																{formatRupees(Math.round(trackedRupees * 100))}
+															</span>
 														</div>
-														<span className="text-[10px] font-bold uppercase tracking-wider shrink-0">Inactive</span>
-													</div>
+													)}
+												</div>
+
+												<button
+													onClick={() => {
+														setEditingCardId(isEditing ? null : card.id);
+														setEditCardDraft(null);
+														setBillEntryCardId(null);
+													}}
+													className="w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+													style={{ borderTop: '1px solid var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+													aria-expanded={isEditing}
+													aria-label={`${isEditing ? 'Close' : 'Manage'} ${card.card_label}`}
+												>
+													<span className="text-[10px] font-bold uppercase tracking-[0.14em]">
+														{isEditing ? 'Close' : 'Manage card'}
+													</span>
+													{isEditing ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
 												</button>
-											)}
+											</div>
 
 											{isEditing && !editCardDraft && billEntryCardId === card.id && (
 												<div className="rounded-[14px] p-4 mt-2 flex flex-col gap-3" style={cardStyle}>

@@ -1078,6 +1078,45 @@ export async function reviewTransaction(
 			throw notFound('TRANSACTION_NOT_FOUND', 'Transaction not found');
 		}
 
+		// Probation feedback for AI-created merchant mappings: a review that
+		// KEEPS the alias-suggested merchant confirms the mapping globally
+		// (auto-verify turns on for later hits); a review that replaces or
+		// clears it dissents — the mapping demotes back to probation.
+		// Threshold 1 while single-user; revisit as voting for multi-tenant.
+		const probationSearchKey = normalizeSearchKey(context.financial_event_search_key);
+		if (probationSearchKey) {
+			const aliasRows = await transactionSql<Array<{ merchant_id: unknown; source: unknown }>>`
+				select gma.merchant_id, gm.source
+				from public.global_merchant_aliases as gma
+				join public.global_merchants as gm on gm.id = gma.merchant_id
+				where gma.search_key = ${probationSearchKey}
+				limit 1
+			`;
+			const aliasRow = aliasRows[0];
+			// Only AI-sourced mappings live on probation; seed/manual are
+			// human-owned and never auto-demote.
+			if (aliasRow && aliasRow.source === 'AI') {
+				const aliasMerchantId = toRequiredString(
+					aliasRow.merchant_id,
+					'global_merchant_aliases.merchant_id',
+				);
+				if (nextMerchantId === aliasMerchantId) {
+					await transactionSql`
+						update public.global_merchants as gm
+						set confirmed = true, updated_at = now()
+						where gm.id = ${aliasMerchantId}
+							and gm.confirmed = false
+					`;
+				} else if (hasMerchantUpdate) {
+					await transactionSql`
+						update public.global_merchants as gm
+						set confirmed = false, dissent_count = gm.dissent_count + 1, updated_at = now()
+						where gm.id = ${aliasMerchantId}
+					`;
+				}
+			}
+		}
+
 		const shouldApplyRule = input.apply_rule === true;
 		if (!shouldApplyRule) {
 			return {

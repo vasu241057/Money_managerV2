@@ -160,6 +160,8 @@ export interface GlobalAliasResolution {
 	merchant_id: UUID;
 	default_category_id: UUID | null;
 	merchant_type: MerchantType;
+	// Probation: unconfirmed (fresh AI) mappings inform but never auto-verify.
+	confirmed: boolean;
 }
 
 export interface IdentityGraphLookup {
@@ -186,6 +188,7 @@ interface GlobalAliasLookupRowRaw {
 	merchant_id: unknown;
 	default_category_id: unknown;
 	merchant_type: unknown;
+	confirmed?: unknown;
 }
 
 // The per-type generic children (never the structural Income/Expense/Transfer
@@ -307,7 +310,8 @@ export async function loadGlobalAliasesForLookup(
 			gma.search_key,
 			gm.id as merchant_id,
 			gm.default_category_id,
-			gm.type as merchant_type
+			gm.type as merchant_type,
+			gm.confirmed
 		from public.global_merchant_aliases as gma
 		join public.global_merchants as gm
 			on gm.id = gma.merchant_id
@@ -327,6 +331,9 @@ export async function loadGlobalAliasesForLookup(
 				'global_merchants.default_category_id',
 			),
 			merchant_type: toRequiredString(row.merchant_type, 'global_merchants.type') as MerchantType,
+			// Missing column (spec harnesses) reads as confirmed so legacy
+			// fixtures keep their auto-verify semantics.
+			confirmed: row.confirmed !== false,
 		});
 	}
 
@@ -344,6 +351,9 @@ export interface IdentityResolution {
 	category_id: UUID | null;
 	user_rule_hit: boolean;
 	global_alias_hit: boolean;
+	// False while the hit alias's merchant is on probation (fresh AI mapping
+	// no human has accepted yet) — such hits inform but never auto-verify.
+	alias_confirmed: boolean;
 }
 
 export function resolveIdentityForSearchKeys(
@@ -357,6 +367,7 @@ export function resolveIdentityForSearchKeys(
 	let aliasCategoryId: UUID | null = null;
 	let userRuleHit = false;
 	let globalAliasHit = false;
+	let aliasConfirmed = false;
 
 	const userRules = lookup.user_rules.get(userId) ?? new Map<string, UserRuleResolution>();
 	for (const key of searchKeys) {
@@ -375,6 +386,7 @@ export function resolveIdentityForSearchKeys(
 			continue;
 		}
 		globalAliasHit = true;
+		aliasConfirmed = alias.confirmed;
 		merchantId = merchantId ?? alias.merchant_id;
 		merchantType = merchantType ?? alias.merchant_type;
 		aliasCategoryId = aliasCategoryId ?? alias.default_category_id;
@@ -389,5 +401,6 @@ export function resolveIdentityForSearchKeys(
 		category_id: ruleCategoryId ?? aliasCategoryId,
 		user_rule_hit: userRuleHit,
 		global_alias_hit: globalAliasHit,
+		alias_confirmed: aliasConfirmed,
 	};
 }

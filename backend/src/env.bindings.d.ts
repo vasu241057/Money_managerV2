@@ -38,6 +38,8 @@ declare namespace Cloudflare {
 		AI_NORMALIZER_BATCH_SIZE?: string;
 		EMAIL_SYNC_INITIAL_LOOKBACK_DAYS?: string;
 		TXN_DEDUP_WINDOW_MINUTES?: string;
+		/** Tavily key(s), comma-separated for quota rotation; absent = no searches. */
+		TAVILY_API_KEY?: string;
 	}
 }
 

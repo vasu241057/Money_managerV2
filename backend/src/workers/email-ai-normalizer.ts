@@ -460,8 +460,13 @@ function resolveAiItemsWithIdentityGraph(
 		// An AGGREGATOR alias is not an identity signal: recognizing Razorpay
 		// says nothing about the real merchant behind it, so only the user's
 		// own rule may verify such a transaction.
+		// An unconfirmed alias (fresh AI mapping on probation) informs but
+		// never verifies — the first human review that keeps it flips it
+		// confirmed for everyone.
 		const aliasIdentitySignal =
-			identity.global_alias_hit && identity.merchant_type !== 'AGGREGATOR';
+			identity.global_alias_hit &&
+			identity.alias_confirmed &&
+			identity.merchant_type !== 'AGGREGATOR';
 		const identityVerified =
 			(identity.user_rule_hit || aliasIdentitySignal) && resolvedCategoryId !== null;
 
