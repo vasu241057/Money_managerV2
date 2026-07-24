@@ -279,6 +279,7 @@ function paymentSourceLabel(transaction: Transaction): string | null {
 
 function transactionMetaLabel(transaction: Transaction, viewMode: 'daily' | 'monthly'): string {
 	const primaryLabel = transactionPrimaryLabel(transaction);
+	const noteLabel = transaction.description !== primaryLabel ? transaction.description : null;
 	const categoryLabel = transaction.subCategory ?? transaction.category;
 	const paymentSource = paymentSourceLabel(transaction);
 	const transactionDay = viewMode === 'monthly'
@@ -286,6 +287,7 @@ function transactionMetaLabel(transaction: Transaction, viewMode: 'daily' | 'mon
 		: null;
 
 	return [
+		noteLabel,
 		paymentSource,
 		categoryLabel !== primaryLabel ? categoryLabel : null,
 		transactionDay,

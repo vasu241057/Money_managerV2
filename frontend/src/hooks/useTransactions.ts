@@ -1,8 +1,15 @@
 import { useEffect, useMemo } from 'react';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import type {
   AccountRow,
   CategoryRow,
+  PaginatedResponse,
   PaymentMethod,
   ReviewTransactionRequest,
   TransactionFeedItem,
@@ -37,6 +44,7 @@ const ACCOUNTS_QUERY_KEY = ['accounts'] as const;
 const CATEGORIES_QUERY_KEY = ['categories'] as const;
 const ANALYTICS_SUMMARY_QUERY_KEY = ['analytics-summary'] as const;
 const FEED_STALE_TIME_MS = 30_000;
+type TransactionFeedCache = InfiniteData<PaginatedResponse<TransactionFeedItem>, number>;
 
 function mapFeedItemToUiTransaction(
   item: TransactionFeedItem,
@@ -124,6 +132,42 @@ const FEED_PAGE_LIMIT = 100;
 
 function useRemoteTransactions(): UseTransactionsResult {
   const queryClient = useQueryClient();
+
+  const updateCachedTransaction = (
+    transactionId: string,
+    update: (current: TransactionFeedItem) => TransactionFeedItem,
+  ): TransactionFeedItem | null => {
+    let previous: TransactionFeedItem | null = null;
+
+    queryClient.setQueryData<TransactionFeedCache>(TRANSACTIONS_QUERY_KEY, current => {
+      if (!current) {
+        return current;
+      }
+
+      const pages = current.pages.map(page => {
+        let pageChanged = false;
+        const data = page.data.map(item => {
+          if (item.transaction.id !== transactionId) {
+            return item;
+          }
+
+          previous = item;
+          pageChanged = true;
+          return update(item);
+        });
+
+        return pageChanged ? { ...page, data } : page;
+      });
+
+      return previous ? { ...current, pages } : current;
+    });
+
+    return previous;
+  };
+
+  const replaceCachedTransaction = (updated: TransactionFeedItem): boolean => {
+    return updateCachedTransaction(updated.transaction.id, () => updated) !== null;
+  };
 
   const accountsQuery = useQuery({
     queryKey: ACCOUNTS_QUERY_KEY,
@@ -241,7 +285,7 @@ function useRemoteTransactions(): UseTransactionsResult {
             );
           }
 
-          return mapFeedItemToUiTransaction(recreated, accountsById, categoriesById);
+          return recreated;
         }
 
         const updated = await apiClient.updateTransaction(transactionInput.id, {
@@ -250,7 +294,7 @@ function useRemoteTransactions(): UseTransactionsResult {
           user_note: normalizeOptionalText(transactionInput.description),
         });
 
-        return mapFeedItemToUiTransaction(updated, accountsById, categoriesById);
+        return updated;
       }
 
       const categoryIdToPersist = resolvePersistedCategoryId(transactionInput);
@@ -263,11 +307,60 @@ function useRemoteTransactions(): UseTransactionsResult {
         user_note: normalizeOptionalText(transactionInput.description),
       });
 
-      return mapFeedItemToUiTransaction(created, accountsById, categoriesById);
+      return created;
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+    onMutate: async transactionInput => {
+      if (!('id' in transactionInput) || !transactionInput.id) {
+        return { previous: null };
+      }
+
+      const existing = transactionsById.get(transactionInput.id);
+      if (!existing || areImmutableFieldsChanged(existing, transactionInput)) {
+        return { previous: null };
+      }
+
+      await queryClient.cancelQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+
+      const accountId = normalizeOptionalId(transactionInput.accountId);
+      const categoryId = resolvePersistedCategoryId(transactionInput);
+      const userNote = normalizeOptionalText(transactionInput.description);
+      const previous = updateCachedTransaction(transactionInput.id, item => ({
+        ...item,
+        transaction: {
+          ...item.transaction,
+          account_id: accountId,
+          category_id: categoryId,
+          user_note: userNote,
+        },
+        account:
+          accountId === item.account?.id
+            ? item.account
+            : null,
+        category:
+          categoryId === item.category?.id
+            ? item.category
+            : null,
+      }));
+
+      return { previous };
+    },
+    onSuccess: updated => {
+      // The mutation response already contains the fully joined feed row.
+      // Patch that one cached row instead of blocking on a sequential refetch
+      // of every loaded infinite-query page. New/recreated rows are uncommon;
+      // refresh those feeds in the background because their page position may
+      // have changed.
+      if (!replaceCachedTransaction(updated)) {
+        void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      }
+      void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+    },
+    onError: (_error, _transactionInput, context) => {
+      if (context?.previous) {
+        replaceCachedTransaction(context.previous);
+      }
+      void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
     },
   });
 
@@ -275,9 +368,9 @@ function useRemoteTransactions(): UseTransactionsResult {
     mutationFn: async (transactionId: string) => {
       return apiClient.deleteTransaction(transactionId);
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
     },
   });
 
@@ -290,15 +383,59 @@ function useRemoteTransactions(): UseTransactionsResult {
       payload: ReviewTransactionRequest;
     }) => {
       const reviewed = await apiClient.reviewTransaction(transactionId, payload);
-      return mapFeedItemToUiTransaction(reviewed.transaction, accountsById, categoriesById);
+      return reviewed.transaction;
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+    onMutate: async ({ transactionId, payload }) => {
+      await queryClient.cancelQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+
+      const previous = updateCachedTransaction(transactionId, item => {
+        const categoryId =
+          payload.category_id === undefined
+            ? item.transaction.category_id
+            : payload.category_id;
+        const merchantId =
+          payload.merchant_id === undefined
+            ? item.transaction.merchant_id
+            : payload.merchant_id;
+
+        return {
+          ...item,
+          transaction: {
+            ...item.transaction,
+            category_id: categoryId,
+            merchant_id: merchantId,
+            user_note:
+              payload.user_note === undefined
+                ? item.transaction.user_note
+                : payload.user_note,
+            status: 'VERIFIED',
+            classification_source: 'USER',
+          },
+          category:
+            categoryId === item.category?.id
+              ? item.category
+              : null,
+          merchant:
+            merchantId === item.merchant?.id
+              ? item.merchant
+              : null,
+        };
+      });
+
+      return { previous };
     },
-    onError: async () => {
-      await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+    onSuccess: reviewed => {
+      if (!replaceCachedTransaction(reviewed)) {
+        void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      }
+      void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previous) {
+        replaceCachedTransaction(context.previous);
+      }
+      void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
     },
   });
 
@@ -314,8 +451,14 @@ function useRemoteTransactions(): UseTransactionsResult {
     transactions,
     isFeedComplete: transactionsQuery.isSuccess && !transactionsQuery.hasNextPage,
     reviewInbox,
-    addTransaction: async transaction => upsertTransactionMutation.mutateAsync(transaction),
-    reviewTransaction: async params => reviewTransactionMutation.mutateAsync(params),
+    addTransaction: async transaction => {
+      const saved = await upsertTransactionMutation.mutateAsync(transaction);
+      return mapFeedItemToUiTransaction(saved, accountsById, categoriesById);
+    },
+    reviewTransaction: async params => {
+      const reviewed = await reviewTransactionMutation.mutateAsync(params);
+      return mapFeedItemToUiTransaction(reviewed, accountsById, categoriesById);
+    },
     deleteTransaction: async id => {
       await deleteTransactionMutation.mutateAsync(id);
     },
