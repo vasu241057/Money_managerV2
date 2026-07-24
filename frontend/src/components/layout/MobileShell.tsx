@@ -7,7 +7,7 @@ interface MobileShellProps {
 export function MobileShell({ children }: MobileShellProps) {
 	return (
 		<div
-			className="pt-safe w-full max-w-[375px] h-[100dvh] flex flex-col relative overflow-hidden mx-auto"
+			className="app-shell pt-safe w-full h-[100dvh] min-h-[100dvh] flex flex-col relative overflow-hidden"
 			style={{ background: 'var(--ledger-bg)', color: 'var(--ledger-fg)' }}
 		>
 			{children}

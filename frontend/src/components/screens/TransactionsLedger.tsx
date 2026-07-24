@@ -823,7 +823,7 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 
 			<button
 				onClick={() => onNavigate('add')}
-				className="absolute bottom-[80px] right-5 w-14 h-14 rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-all z-20"
+				className="absolute bottom-5 right-5 w-14 h-14 rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-all z-20"
 				style={{
 					background: 'var(--ledger-accent)',
 					color: 'var(--ledger-bg)',
@@ -861,7 +861,7 @@ export function EmptyTransactionsLedger({ onNavigate }: TransactionsLedgerProps)
 
 			<button
 				onClick={() => onNavigate('add')}
-				className="absolute bottom-[80px] right-5 w-14 h-14 rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-all z-20"
+				className="absolute bottom-5 right-5 w-14 h-14 rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-all z-20"
 				style={{
 					background: 'var(--ledger-accent)',
 					color: 'var(--ledger-bg)',

@@ -17,29 +17,23 @@ const TABS: { id: ScreenId; label: string; icon: typeof Home }[] = [
 
 export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
 	return (
-		<nav
-			className="h-[64px] pb-safe shrink-0 flex items-center justify-around px-2 z-10"
-			style={{
-				background: 'var(--ledger-card)',
-				borderTop: '1px solid var(--ledger-rule)',
-			}}
-		>
+		<nav className="ledger-bottom-nav shrink-0" aria-label="Primary navigation">
 			{TABS.map(({ id, label, icon: Icon }) => {
 				const isActive = activeTab === id;
 				return (
 					<button
 						key={id}
+						type="button"
 						onClick={() => onTabChange(id)}
-						className="flex flex-col items-center justify-center w-16 h-full gap-1 transition-colors"
-						style={{
-							color: isActive ? 'var(--ledger-accent)' : 'var(--ledger-muted)',
-						}}
+						aria-current={isActive ? 'page' : undefined}
+						className={`ledger-bottom-nav__item${isActive ? ' ledger-bottom-nav__item--active' : ''}`}
 					>
 						<Icon
-							size={22}
-							style={isActive ? { fill: 'rgba(13, 92, 75, 0.15)' } : undefined}
+							className="ledger-bottom-nav__icon"
+							size={24}
+							strokeWidth={isActive ? 2.4 : 2}
 						/>
-						<span className="text-[10px] font-medium">{label}</span>
+						<span className="ledger-bottom-nav__label">{label}</span>
 					</button>
 				);
 			})}
