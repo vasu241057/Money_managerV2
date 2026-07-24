@@ -1,6 +1,6 @@
 # Money Manager — Context Transfer
 
-> Last updated: July 10, 2026
+> Last updated: July 24, 2026
 
 ---
 
@@ -50,12 +50,14 @@ Cron triggers (wrangler.jsonc): `*/10 * * * *` (email sync dispatch) and `30 21 
 | `users` | App users, synced from Clerk | `id` = UUIDv5 from Clerk `sub` |
 | `oauth_connections` | Google OAuth tokens | Tokens AES-GCM encrypted at rest. Status: ACTIVE/DORMANT/AUTH_REVOKED/ERROR_PAUSED |
 | `accounts` | User bank/card accounts | Types: cash/bank/card/other |
-| `categories` | Income/expense categories | `user_id` null = system category. Parent-child tree, RESTRICT delete. Exhaustive three-level system taxonomy: structural roots → parents (Food, Transport, Housing, Investments, …) → subcategories (Groceries, Fuel, Rent, Crypto, … ~85 nodes total) incl. per-type generics Miscellaneous/Other Income/Other Transfer. Roots are structural only — the engine never assigns them. Names unique per type (the mapper enum + AI prompt rely on it). No per-user category is auto-created at signup anymore |
+| `categories` | Income/expense categories | `user_id` null = system category. Parent-child tree, RESTRICT delete. Exhaustive three-level system taxonomy: structural roots → parents (Food, Transport, Housing, Investments, …) → optional subcategories (Groceries, Food Delivery, Fuel, Rent, Crypto, …) incl. per-type generics Miscellaneous/Other Income/Other Transfer. A transaction or merchant stores one `category_id`: it may point directly to a parent such as Food (no subcategory selected) or to one of its children. The UI derives the displayed parent/subcategory from the tree. Roots are structural only — the engine never assigns them. Names are unique per type (the mapper enum + AI prompt rely on this). No per-user category is auto-created at signup anymore |
 | `user_credit_cards` | Card identity (first4 + last4 + label + issuer) | Links to `card` account (NOT NULL). POST `/credit-cards` may omit `account_id`: the sole unregistered same-last4 card account is adopted, else a backing account (name = card label, type card) is created automatically. The engine links transactions to cards by last4 (issuer tie-break); a DB trigger keeps `transactions.credit_card_id`/`account_id` consistent. Also carries `billing_cycle_day` (auto-derived from captured statement periods) and `pdf_password` (encrypted; statement-PDF fallback) |
 | `card_statements` | One row per card billing cycle (total due, min due, due date, period) | Harvested from statement emails by the normalizer (AI flags `statement` in its answer; fields resolved locally from masked tokens — see `lib/statements.ts`). Missing fields fall back to the statement PDF: attachment fetched from Gmail via the email's own connection, decrypted with the card's stored `pdf_password`, coordinate-label-matched in pure code (`lib/pdf-statement.ts` + `services/statement-pdf.service.ts`, unpdf) — the PDF is never persisted and never reaches any AI. Card match by last4 among active cards; ambiguous/missing → parked (`credit_card_id` null), linked at card registration via the relink path. `source='USER'` rows are never overwritten by email harvests. Statement emails never learn templates and are marked PROCESSED |
-| `global_merchants` | Canonical merchant name + type + default category | Types: MERCHANT/TRANSFER_INSTITUTION/AGGREGATOR/P2P. Grown by the daily merchant-mapping job, which also assigns `default_category_id` from the system expense taxonomy (MERCHANT type only — aggregators/P2P never get one; seed/manual values never overwritten) |
+| `global_merchants` | Canonical merchant name + type + default category | Types: MERCHANT/TRANSFER_INSTITUTION/AGGREGATOR/P2P. `source` is SEED/MANUAL/AI; `confirmed` and `dissent_count` implement probation for AI mappings. Unconfirmed mappings may name transactions and suggest a category, but their aliases cannot auto-verify. A human review that keeps the suggestion confirms it globally; a contradictory review increments dissent and demotes it. The daily mapper may assign `default_category_id` only for MERCHANT rows; seed/manual values are never overwritten |
 | `global_merchant_aliases` | Search key → merchant mapping | `search_key` is PK, canonical uppercase-alphanumeric format |
-| `user_merchant_rules` | Per-user classification overrides | Unique per `(user_id, search_key)`. Written on review with `apply_rule`; consulted by BOTH extraction engines |
+| `merchant_mapping_attempts` | Merchant-mapper retry cooldown | One row per attempted unknown search key. Unresolved keys wait 10 days before another paid lookup instead of being retried every day |
+| `usage_counters` | Daily mapper observability | Per-day counters such as `tavily_searches`, `merchant_ai_calls`, `merchants_mapped`, and `merchants_skipped_unsure` |
+| `user_merchant_rules` | Per-user classification overrides | Unique per `(user_id, search_key)`. Written on review with `apply_rule`; consulted by both the template and AI paths |
 | `sender_rules` | **Exhaustive** sender allowlist | pattern + ALLOW/DENY + BANK/FINTECH/WALLET/OTHER + SEED/AI/USER. Seeded by migration; grown by daily AI job. **No inline fallback in code** — a load failure retries the sync |
 | `raw_emails` | Gmail email metadata + (gated) text | Unique per `(user_id, source_id)`. Has `from_address` + `subject`. Status: PENDING_EXTRACTION/PROCESSED/IGNORED/UNRECOGNIZED/FAILED. Sender-gated rows are metadata-only (`clean_text=''`, IGNORED) |
 | `financial_events` | **Immutable** transaction facts | Linked to raw_email. Status: ACTIVE/REVERSED |
@@ -100,8 +102,33 @@ All routes under `/api/*`, authenticated via Clerk JWT (`Authorization: Bearer <
 | GET | `/transactions` | List with filters (date range, type, status, account, category) |
 | POST | `/transactions` | Create manual transaction |
 | PATCH | `/transactions/:id` | Update transaction |
-| POST | `/transactions/:id/review` | Review + classify. `apply_rule: true` writes a `user_merchant_rules` row that teaches both extraction engines |
+| POST | `/transactions/:id/review` | Review + classify. `apply_rule: true` writes a `user_merchant_rules` row used by both the template and AI paths |
 | DELETE | `/transactions/:id` | Soft delete (status change) |
+
+### Frontend transaction cache
+
+The ledger uses a TanStack infinite query with 100-row pages. The first page
+renders immediately and the remaining pages load in the background. Its
+30-second `staleTime` is a freshness threshold, not polling: it does not
+discard local edits or refetch every 30 seconds by itself.
+
+Ordinary edits and reviews use an optimistic row-level update:
+
+1. Cancel an in-flight transaction-feed fetch and snapshot the affected item.
+2. Patch that item in every loaded page so account, category, note, merchant,
+   and review status appear immediately.
+3. Send the mutation to the backend, which remains the source of truth.
+4. Replace the optimistic item with the fully joined transaction returned by
+   the backend.
+5. On failure, restore the snapshot and refetch in the background.
+
+Analytics invalidation is also background-only; saving a transaction does not
+wait for the analytics request. Creation, deletion, and edits that recreate a
+manual transaction still refresh the feed because row ordering and pagination
+may change. Edits to different transactions patch independent items in the same
+cache, so several consecutive saves remain visible together. In the ledger, the
+canonical merchant remains the primary label and a saved user note appears in
+the secondary metadata line.
 
 ### OAuth (Google)
 | Method | Route | Purpose |
@@ -239,7 +266,7 @@ Pending emails are grouped per user and sent up to `AI_NORMALIZER_BATCH_SIZE` (d
 
 ### Identity graph (`lib/identity.ts`, shared by template + AI paths and review)
 
-Search keys are canonical uppercase-alphanumeric (`toSearchKey`), identical across the template path, the AI path, and the review service — so `user_merchant_rules` and `global_merchant_aliases` written anywhere resolve everywhere. Category precedence: user rule > AI's per-email pick (validated against the user's + system category IDs; a hallucinated/missing pick resolves to null — never masqueraded as Miscellaneous) > global-alias default > system per-type generic (Miscellaneous / Other Income / Other Transfer — never a bare root). The AI prompt offers the system taxonomy as parents with their subcategories alongside the user's own (roots excluded), so fresh users with no custom categories classify correctly down to subcategory level.
+Search keys are canonical uppercase-alphanumeric (`toSearchKey`), identical across the template path, the AI path, and the review service — so `user_merchant_rules` and `global_merchant_aliases` written anywhere resolve everywhere. Category precedence: user rule > AI's per-email pick (validated against the user's + system category IDs; a hallucinated/missing pick resolves to null — never masqueraded as Miscellaneous) > global-alias default > system per-type generic (Miscellaneous / Other Income / Other Transfer — never a bare root). A selected category may be a parent or a child; selecting Food directly intentionally means "Food, with no subcategory." The AI prompt offers the system taxonomy as parents with their subcategories alongside the user's own (roots excluded), so fresh users with no custom categories can classify at either level.
 
 ### Instrument linking (`resolveInstrumentLink` in `lib/identity.ts`)
 
@@ -266,7 +293,7 @@ user's registered instruments, locally, with nothing sent to the model:
 
 ### Auto-verify: identity-based, NOT confidence-based
 
-A transaction auto-verifies only when BOTH hold: an identity signal (a `user_merchant_rules` hit or a **non-AGGREGATOR** `global_merchant_aliases` hit) AND a genuinely resolved category — from the rule, a real AI pick, or the alias default. **The system fallback never verifies**: a known merchant without a real category stays NEEDS_REVIEW so the user still gets to categorize it. **An AGGREGATOR alias is never an identity signal** — recognizing Razorpay says nothing about the real merchant behind it; only the user's own rule can verify such transactions. An AI pick equal to the per-type generic counts as fallback, not as a pick. A category the user has **hidden** resolves as null for them no matter who proposed it (rule, AI, or alias default) — a deleted category never lands on their transactions; the chain falls through to the fallback and the transaction reaches review. **Amounts over ₹10,00,000 always face review** — the threshold is a review trigger, never a validity cap: large amounts are persisted and forced NEEDS_REVIEW (even on a rule hit), and a big amount is not a template defect (it no longer strikes/disables templates). Model self-reported confidence is stored (`ai_confidence_score`) for review-inbox triage ordering only. `TRANSFER_INSTITUTION` alias hits flip the type to `transfer`.
+A transaction auto-verifies only when BOTH hold: an identity signal (a `user_merchant_rules` hit or a **confirmed, non-AGGREGATOR** `global_merchant_aliases` hit) AND a genuinely resolved category — from the rule, a real AI pick, or the alias default. A fresh AI merchant mapping is on probation (`confirmed=false`): it can supply the display name and suggested category, but its alias is not an identity signal until a human accepts it. **The system fallback never verifies**: a known merchant without a real category stays NEEDS_REVIEW so the user still gets to categorize it. **An AGGREGATOR alias is never an identity signal** — recognizing Razorpay says nothing about the real merchant behind it; only the user's own rule can verify such transactions. An AI pick equal to the per-type generic counts as fallback, not as a pick. A category the user has **hidden** resolves as null for them no matter who proposed it (rule, AI, or alias default) — a deleted category never lands on their transactions; the chain falls through to the fallback and the transaction reaches review. **Amounts over ₹10,00,000 always face review** — the threshold is a review trigger, never a validity cap: large amounts are persisted and forced NEEDS_REVIEW (even on a rule hit), and a big amount is not a template defect (it no longer strikes/disables templates). Model self-reported confidence is stored (`ai_confidence_score`) for review-inbox triage ordering only. `TRANSFER_INSTITUTION` alias hits flip the type to `transfer`.
 
 ### Cross-email dedup (`lib/txn-dedup.ts`)
 
@@ -285,9 +312,11 @@ Pattern: batch the day's unknowns into ONE AI call each, persist results, self-h
 - For newly ALLOWed senders — including a re-ask flip — enqueues `SENDER_BACKFILL` jobs: refetches full bodies by stored Gmail ID **only via each row's original connection** (Gmail ids are per-mailbox; a row whose connection is gone is skipped with a `SENDER_BACKFILL_CONNECTION_UNRESOLVABLE` warn and stays promotable later), flips rows to PENDING_EXTRACTION, enqueues normalization. A missed bank heals in ≤24h; a mis-denied one within the 30-day window
 
 ### Merchant mapping (`merchant-mapper.ts`)
-- Collects distinct `financial_events.search_key`s (last 14 days, max 200) with no `global_merchant_aliases` entry
+- Collects distinct `financial_events.search_key`s (last 14 days, max 200) with no `global_merchant_aliases` entry and no mapper attempt inside the 10-day cooldown
 - Sends `{key, name}` pairs (names only, no amounts) → canonical brand + type ("FSN E-COMMERCE VENTURES" → Nykaa, "BUNDL TECHNOLOGIES" → Swiggy) **+ a default spending category picked from the system expense taxonomy sent as a fixed enum** (validated on return; hallucinated names dropped; MERCHANT type only — aggregators/P2P always null)
-- Upserts `global_merchants` (+ `default_category_id`, never overwriting seed/manual values) + aliases, then **relinks** recent merchant-less transactions so yesterday's extractions get named too (merchant link only; user-chosen merchants are excluded by the `merchant_id is null` guard, not by classification_source)
+- Records every attempted key in `merchant_mapping_attempts` and increments daily `usage_counters` for search/model usage, successful mappings, and unsure skips
+- Upserts new merchants as `source='AI', confirmed=false` (+ `default_category_id`, never overwriting seed/manual values) and creates aliases, then **relinks** recent merchant-less transactions so yesterday's extractions get named too (merchant link only; user-chosen merchants are excluded by the `merchant_id is null` guard, not by classification_source)
+- A human review that retains an unconfirmed alias's merchant confirms the mapping for everyone. Choosing a different merchant records dissent and demotes the proposed mapping; the current threshold is one dissent while usage is effectively single-user
 - **Category backfill:** each run also collects up to 100 MERCHANT-type rows with null `default_category_id` (merchants mapped before categorization existed) and categorizes them in one extra call; shrinks to zero once the backlog drains
 
 ---
@@ -400,6 +429,13 @@ cd backend && npm run typecheck
 | `backend/src/lib/http/json-body.ts` | JSON body middleware (limitBytes, INVALID_JSON/PAYLOAD_TOO_LARGE HttpErrors) |
 | `backend/src/lib/infra.ts` | Queue names + cron constants |
 
+### Frontend
+
+| File | Purpose |
+|------|---------|
+| `frontend/src/hooks/useTransactions.ts` | Paged transaction feed, optimistic edit/review cache patches, server-response reconciliation, rollback, and background analytics/feed invalidation |
+| `frontend/src/components/screens/TransactionsLedger.tsx` | Daily/monthly ledger presentation; merchant primary label, account/category/note secondary metadata, review tag, category-specific icons |
+
 ### Database Migrations (apply in order; the seed is load-bearing)
 | File | Purpose |
 |------|---------|
@@ -415,6 +451,10 @@ cd backend && npm run typecheck
 | `20260710090000_email_templates.sql` | Self-learning template store (sender-keyed skeletons + slot maps) |
 | `20260712090000_exhaustive_system_categories.sql` | Exhaustive three-level system taxonomy (16 new parents + 62 subcategories incl. per-type generics Miscellaneous/Other Income/Other Transfer) — **load-bearing**: the engine's fallback categories and the mapper's category enum come from it |
 | `20260718090000_user_hidden_categories.sql` | Per-user hiding of system categories ("delete" UX without touching the shared taxonomy) |
+| `20260718110000_optional_card_first4.sql` | Makes card `first4` optional and preserves duplicate protection with a `coalesce(first4, '')` unique index |
+| `20260719120000_card_statements.sql` | Card billing-cycle metadata plus idempotent email/user statement storage; unmatched last4 rows park until card registration |
+| `20260719150000_merchant_provenance.sql` | Adds SEED/MANUAL/AI provenance, confirmation probation, and dissent tracking to global merchants. Its final blanket update is a **one-time historical backfill; never rerun after AI mappings exist** |
+| `20260720090000_mapper_usage_and_cooldown.sql` | Adds daily mapper usage counters and per-search-key retry cooldown state |
 
 ---
 
@@ -434,9 +474,15 @@ cd backend && npm run typecheck
 
 7. **No rate limit dashboard** — queue monitoring logs exist but no dashboard (see `docs/OPERATIONS.md`).
 
+8. **The provenance migration is not safely rerunnable.** The final statement in `20260719150000_merchant_provenance.sql` promotes every then-unconfirmed AI row to `source='SEED', confirmed=true`; it exists only to backfill merchants that predate provenance. Never execute the entire file after the mapper has created real AI rows. A future hardening migration should make legacy-row selection explicit, and the live provenance labels should be audited because this file was rerun during the July 24 investigation.
+
+9. **Pooler-driven migration execution needs explicit bookkeeping.** During the July 24 investigation, the application pooler did not expose a usable `supabase_migrations.schema_migrations` history. Treat `psql -f` as an untracked operation unless the deployment process records it elsewhere; inspect schema/data effects before replaying any migration, especially a data backfill.
+
+10. **Some July 24 merchant/category corrections are live data, not reproducible migrations.** The production database currently maps the CTRLX aliases to the confirmed MANUAL merchant **Ownly**, with a direct parent-category assignment to **Food** (no subcategory): all 48 linked rows display Ownly; 46 debit rows use Food and the two credit/refund rows retain their existing category semantics. **Restaurants** was removed from the live taxonomy and its references moved to Food; **District** intentionally has no merchant default category. Historical migration files still describe their original state, so a fresh database will not reproduce these curation choices until they are captured in a forward migration or seed update.
+
 ---
 
-## 13. Change Log (July 4–10, 2026 overhaul)
+## 13. Change Log (July 4–24, 2026)
 
 1. **Correctness:** hybrid engine no-op fixed (deferred terminal statuses); 429 → immediate tier rotation; AI category IDs validated against the user's real categories.
 2. **Privacy/cost:** sender gate with metadata-first two-phase fetch (personal bodies never downloaded); `sender_rules` DB-exhaustive allowlist; content logging removed; `<N#>` placeholder masking (no digits reach the provider); masked-mode batching (default 4 emails/call).
@@ -452,6 +498,10 @@ cd backend && npm run typecheck
 12. **Audit criticals, batch 1 (July 18):** (a) the ₹10L amount cap is now a review trigger, not a validity cap — over-threshold transactions are persisted and forced NEEDS_REVIEW (even on a rule hit) instead of being silently dropped, and no longer strike/disable templates; (b) `AI_NORMALIZER_MAX_RETRIES` defaults to rotate × tier-count (9) — the fixed default of 6 made the third tier unreachable; (c) AGGREGATOR alias hits no longer count as an identity signal for auto-verify. Suite: 197 tests green.
 13. **Audit criticals, batch 2 (July 18):** (a) subject/body truncation is surrogate-safe — a split emoji at the cut produced a lone surrogate Postgres rejects, aborting the page's persist transaction and wedging the connection in an endless refetch loop; (b) sender backfill never falls back to another mailbox — rows whose original connection is gone are skipped visibly and stay promotable; (c) the `x-user-email` header path was removed from auth — `users.email` now comes only from the verified Clerk token (synthetic fallback otherwise). Suite: 200 tests green.
 14. **System-category hide (July 18):** DELETE `/categories/:id` on a system category now writes a per-user hide (`user_hidden_categories`) instead of deleting the shared row — it disappears from that user's list and AI prompt (direct system children cascade); `/restore` undoes it; the three fallback generics are protected. User-owned categories keep real delete. Follow-up same day: **hidden categories degrade to null at resolve time too** — a global-alias default (or stale rule) pointing at a category the user hid falls through to the fallback + NEEDS_REVIEW instead of assigning the deleted category. Suite: 205 tests green.
+15. **Cards and statements (July 18–19):** card `first4` became optional; statement-cycle storage, billing day, encrypted PDF password support, parked unmatched statements, and email-cycle idempotency were added.
+16. **Merchant probation and mapper controls (July 19–20):** global merchants gained provenance, confirmation, and dissent. Fresh AI aliases may name/categorize but cannot auto-verify until human confirmation. Unknown-key retries now cool down for 10 days and daily usage counters expose mapper/search activity.
+17. **Ledger hierarchy and data curation (July 20–24):** the ledger now separates merchant, payment account/card, category, review tag, amount, and note; daily groups and collapsible month navigation remove the prior spacing/navigation problems; category icons are selected from category/subcategory semantics. Live curation removed Restaurants in favor of Food, left District uncategorized, and mapped CTRLX aliases/48 linked transactions to Ownly with direct parent Food.
+18. **Optimistic transaction editing (July 24, commit `7748a5d`):** ordinary edits and reviews patch the affected cached row immediately, reconcile it with the backend response, roll back on failure, and refresh analytics in the background. The old full-feed blocking refetch was removed from this path. User notes render as secondary ledger metadata while the merchant stays primary.
 
 ---
 
@@ -471,10 +521,13 @@ cd backend && npm run typecheck
    misses go to the model (masked, batched) and each single-transaction
    answer teaches a self-verified template for next time;
    financial_events + transactions created
-10. Auto-verify on user-rule/alias hits; everything else NEEDS_REVIEW
-    (cross-email duplicates always NEEDS_REVIEW)
-11. User reviews; apply_rule teaches user_merchant_rules (both engines)
+10. Auto-verify on user-rule or confirmed non-aggregator alias hits with a
+    real category; everything else NEEDS_REVIEW
+    (cross-email duplicates and unconfirmed AI aliases always NEEDS_REVIEW)
+11. User reviews; apply_rule teaches user_merchant_rules, while accepting or
+    contradicting a probationary AI merchant confirms or demotes it
 12. 03:00 IST: sender classifier widens the allowlist (+ backfills missed mail);
     merchant mapper names unknown counterparties (+ relinks recent transactions)
-13. User sees transactions in dashboard
+13. User sees transactions in the dashboard; edits/reviews patch the cached
+    ledger row immediately, then reconcile with the backend response
 ```

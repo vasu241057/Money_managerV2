@@ -1,5 +1,6 @@
 import { getAppConfig } from '../lib/config';
 import { runWithSqlClientLifecycle } from '../lib/db/client';
+import { isMerchantMappingEnabled } from '../lib/feature-flags';
 import { QUEUE_NAMES } from '../lib/infra';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
 import { runEmailSyncDispatchJob } from './email-sync-dispatcher';
@@ -252,6 +253,11 @@ async function processMessage(queueName: string, body: unknown, env: Env): Promi
 			}
 
 			if (jobType === 'MERCHANT_MAPPING') {
+				if (!isMerchantMappingEnabled(env)) {
+					console.warn('Skipping MERCHANT_MAPPING queue job because the mapper is disabled');
+					return;
+				}
+
 				await handleMerchantMapping(body, env);
 				return;
 			}

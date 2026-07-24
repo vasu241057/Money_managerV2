@@ -38,6 +38,11 @@ declare namespace Cloudflare {
 		AI_NORMALIZER_BATCH_SIZE?: string;
 		EMAIL_SYNC_INITIAL_LOOKBACK_DAYS?: string;
 		TXN_DEDUP_WINDOW_MINUTES?: string;
+		/**
+		 * Fail-closed merchant mapper switch. Only 1/on/true/yes enable it;
+		 * absent or any other value keeps the mapper disabled.
+		 */
+		MERCHANT_MAPPING_ENABLED?: string;
 		/** Tavily key(s), comma-separated for quota rotation; absent = no searches. */
 		TAVILY_API_KEY?: string;
 	}

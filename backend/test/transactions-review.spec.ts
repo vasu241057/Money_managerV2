@@ -83,6 +83,8 @@ function transactionFeedRow(overrides?: Partial<Record<string, unknown>>): Recor
 		merchant_id: null,
 		merchant_canonical_name: null,
 		merchant_type: null,
+		merchant_logo_public_url: null,
+		merchant_logo_brand_color: null,
 		raw_email_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
 		raw_email_source_id: 'gmail-msg-1',
 		raw_email_internal_date: '2026-03-11T09:00:00.000Z',
@@ -241,14 +243,21 @@ describe('reviewTransaction', () => {
 				},
 			],
 			() => [],
-			() => [transactionFeedRow({ transaction_merchant_id: MERCHANT, merchant_id: MERCHANT, merchant_canonical_name: 'Swiggy', merchant_type: 'MERCHANT' })],
+			() => [transactionFeedRow({
+				transaction_merchant_id: MERCHANT,
+				merchant_id: MERCHANT,
+				merchant_canonical_name: 'Swiggy',
+				merchant_type: 'MERCHANT',
+				merchant_logo_public_url: 'https://example.supabase.co/storage/v1/object/public/merchant-logos/swiggy.svg',
+				merchant_logo_brand_color: '#FC8019',
+			})],
 			// probation lookup: AI-sourced alias pointing at the kept merchant
 			() => [{ merchant_id: MERCHANT, source: 'AI' }],
 			// confirm update
 			() => [],
 		]);
 
-		await reviewTransaction(
+		const result = await reviewTransaction(
 			sql,
 			'11111111-1111-4111-8111-111111111111',
 			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -258,6 +267,10 @@ describe('reviewTransaction', () => {
 		const confirm = queries[4] ?? '';
 		expect(confirm).toContain('set confirmed = true');
 		expect(confirm).toContain('confirmed = false');
+		expect(result.transaction.merchant?.logo).toEqual({
+			public_url: 'https://example.supabase.co/storage/v1/object/public/merchant-logos/swiggy.svg',
+			brand_color: '#FC8019',
+		});
 	});
 
 	it('dissents (demotes) an AI mapping when the review replaces its merchant', async () => {

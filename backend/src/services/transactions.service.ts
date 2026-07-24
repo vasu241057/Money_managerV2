@@ -102,6 +102,8 @@ interface TransactionFeedRowRaw {
 	merchant_id: unknown;
 	merchant_canonical_name: unknown;
 	merchant_type: unknown;
+	merchant_logo_public_url: unknown;
+	merchant_logo_brand_color: unknown;
 
 	raw_email_id: unknown;
 	raw_email_source_id: unknown;
@@ -312,6 +314,10 @@ function mapTransactionFeedRow(row: TransactionFeedRowRaw): TransactionFeedItem 
 	const accountId = toNullableString(row.account_id, 'accounts.id');
 	const categoryId = toNullableString(row.category_id, 'categories.id');
 	const merchantId = toNullableString(row.merchant_id, 'global_merchants.id');
+	const merchantLogoPublicUrl = toNullableString(
+		row.merchant_logo_public_url,
+		'merchant_logos.public_url',
+	);
 	const creditCardId = toNullableString(row.credit_card_id, 'user_credit_cards.id');
 	const rawEmailId = toNullableString(row.raw_email_id, 'raw_emails.id');
 
@@ -360,6 +366,16 @@ function mapTransactionFeedRow(row: TransactionFeedRowRaw): TransactionFeedItem 
 							row.merchant_type,
 							'global_merchants.type',
 						) as GlobalMerchantRow['type'],
+						logo:
+							merchantLogoPublicUrl === null
+								? null
+								: {
+										public_url: merchantLogoPublicUrl,
+										brand_color: toNullableString(
+											row.merchant_logo_brand_color,
+											'merchant_logos.brand_color',
+										),
+									},
 					},
 		raw_email:
 			rawEmailId === null
@@ -443,6 +459,8 @@ async function getTransactionFeedItemById(
 			gm.id as merchant_id,
 			gm.canonical_name as merchant_canonical_name,
 			gm.type as merchant_type,
+			ml.public_url as merchant_logo_public_url,
+			ml.brand_color as merchant_logo_brand_color,
 
 			re.id as raw_email_id,
 			re.source_id as raw_email_source_id,
@@ -462,6 +480,12 @@ async function getTransactionFeedItemById(
 			on c.id = t.category_id
 		left join public.global_merchants as gm
 			on gm.id = t.merchant_id
+		left join public.merchant_logo_aliases as mla
+			on mla.search_key = public.normalize_merchant_logo_key(gm.canonical_name)
+		left join public.merchant_logos as ml
+			on ml.id = mla.merchant_logo_id
+			and ml.is_active = true
+			and ml.public_url is not null
 		left join public.raw_emails as re
 			on re.id = fe.raw_email_id
 			and re.user_id = fe.user_id
@@ -758,6 +782,8 @@ export async function listTransactions(
 			gm.id as merchant_id,
 			gm.canonical_name as merchant_canonical_name,
 			gm.type as merchant_type,
+			ml.public_url as merchant_logo_public_url,
+			ml.brand_color as merchant_logo_brand_color,
 
 			re.id as raw_email_id,
 			re.source_id as raw_email_source_id,
@@ -777,6 +803,12 @@ export async function listTransactions(
 			on c.id = t.category_id
 		left join public.global_merchants as gm
 			on gm.id = t.merchant_id
+		left join public.merchant_logo_aliases as mla
+			on mla.search_key = public.normalize_merchant_logo_key(gm.canonical_name)
+		left join public.merchant_logos as ml
+			on ml.id = mla.merchant_logo_id
+			and ml.is_active = true
+			and ml.public_url is not null
 		left join public.raw_emails as re
 			on re.id = fe.raw_email_id
 			and re.user_id = fe.user_id

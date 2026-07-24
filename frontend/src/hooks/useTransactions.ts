@@ -77,7 +77,10 @@ function mapFeedItemToUiTransaction(
         categoryId = parent.id;
         subCategory = matchedCategory.name;
         subCategoryId = matchedCategory.id;
-        categoryIcon = matchedCategory.icon ?? parent.icon;
+        // Ledger artwork intentionally follows the parent category. A
+        // subcategory still appears in metadata, but does not multiply the
+        // visual vocabulary until explicitly curated in a future pass.
+        categoryIcon = parent.icon;
       } else {
         categoryName = matchedCategory.name;
         categoryId = matchedCategory.id;
@@ -116,6 +119,8 @@ function mapFeedItemToUiTransaction(
     merchantId: transaction.merchant_id,
     merchantName: item.merchant?.canonical_name ?? null,
     merchantType: item.merchant?.type ?? null,
+    merchantLogoUrl: item.merchant?.logo?.public_url ?? null,
+    merchantBrandColor: item.merchant?.logo?.brand_color ?? null,
     searchKey: item.financial_event.search_key,
     counterpartyRaw: item.financial_event.counterparty_raw,
     paymentMethod: item.financial_event.payment_method,

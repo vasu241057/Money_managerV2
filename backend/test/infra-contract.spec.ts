@@ -18,9 +18,61 @@ interface WranglerConfig {
 }
 
 function parseJsonc(content: string): WranglerConfig {
-	const withoutBlockComments = content.replace(/\/\*[\s\S]*?\*\//g, '');
-	const withoutLineComments = withoutBlockComments.replace(/^\s*\/\/.*$/gm, '');
-	return JSON.parse(withoutLineComments) as WranglerConfig;
+	let output = '';
+	let inString = false;
+	let escaping = false;
+	let inLineComment = false;
+	let inBlockComment = false;
+
+	for (let index = 0; index < content.length; index += 1) {
+		const character = content[index];
+		const nextCharacter = content[index + 1];
+
+		if (inLineComment) {
+			if (character === '\n') {
+				inLineComment = false;
+				output += character;
+			}
+			continue;
+		}
+
+		if (inBlockComment) {
+			if (character === '*' && nextCharacter === '/') {
+				inBlockComment = false;
+				index += 1;
+			} else if (character === '\n') {
+				output += character;
+			}
+			continue;
+		}
+
+		if (inString) {
+			output += character;
+			if (escaping) {
+				escaping = false;
+			} else if (character === '\\') {
+				escaping = true;
+			} else if (character === '"') {
+				inString = false;
+			}
+			continue;
+		}
+
+		if (character === '"') {
+			inString = true;
+			output += character;
+		} else if (character === '/' && nextCharacter === '/') {
+			inLineComment = true;
+			index += 1;
+		} else if (character === '/' && nextCharacter === '*') {
+			inBlockComment = true;
+			index += 1;
+		} else {
+			output += character;
+		}
+	}
+
+	return JSON.parse(output) as WranglerConfig;
 }
 
 describe('infra contract', () => {

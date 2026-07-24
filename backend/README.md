@@ -66,6 +66,16 @@ npx wrangler secret put AI_REQUIRES_WEBHOOK_SECRET
 
 For local development, create `backend/.dev.vars` from `backend/.dev.vars.example`.
 
+Merchant mapping is disabled unless `MERCHANT_MAPPING_ENABLED` is explicitly
+set to `1`, `on`, `true`, or `yes`. The scheduler will not enqueue mapper jobs
+while disabled, and the queue consumer acknowledges any previously queued
+mapper job without running it.
+
+The root `npm run deploy:cloudflare` command builds the frontend and deploys it
+with the API Worker as same-origin static assets. `keep_vars` is enabled, so
+deployments preserve Cloudflare dashboard variables. The deploy command does
+not upload `backend/.dev.vars`; secrets and variables are managed separately.
+
 Optional queue alert threshold vars (can be plain vars or secrets):
 
 - `QUEUE_ALERT_RETRY_RATE_PERCENT` (default `15`)

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
 	runEmailSyncDispatchJobMock,
 	runEmailSyncUserJobMock,
+	runMerchantMappingJobMock,
 	runNormalizeRawEmailsJobMock,
 } = vi.hoisted(() => ({
 	runEmailSyncDispatchJobMock: vi.fn().mockResolvedValue({
@@ -36,6 +37,13 @@ const {
 		template_matched_count: 0,
 		template_learned_count: 0,
 	}),
+	runMerchantMappingJobMock: vi.fn().mockResolvedValue({
+		candidate_count: 0,
+		mapped_count: 0,
+		alias_created_count: 0,
+		relinked_transaction_count: 0,
+		skipped_reason: null,
+	}),
 }));
 
 vi.mock('../src/workers/email-sync-dispatcher', () => ({
@@ -48,6 +56,10 @@ vi.mock('../src/workers/email-sync-fetcher', () => ({
 
 vi.mock('../src/workers/email-ai-normalizer', () => ({
 	runNormalizeRawEmailsJob: runNormalizeRawEmailsJobMock,
+}));
+
+vi.mock('../src/workers/merchant-mapper', () => ({
+	runMerchantMappingJob: runMerchantMappingJobMock,
 }));
 
 import { QUEUE_NAMES } from '../src/lib/infra';
@@ -188,6 +200,56 @@ describe('queue.worker', () => {
 		expect(harness.ack).toHaveBeenCalledTimes(1);
 		expect(harness.retry).not.toHaveBeenCalled();
 		expect(runNormalizeRawEmailsJobMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('acks queued merchant mapping work without running it when the flag is absent', async () => {
+		const harness = createMessage(
+			{
+				job_type: 'MERCHANT_MAPPING',
+				triggered_at: new Date().toISOString(),
+			},
+			1,
+		);
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		expect(runMerchantMappingJobMock).not.toHaveBeenCalled();
+		expect(harness.ack).toHaveBeenCalledTimes(1);
+		expect(harness.retry).not.toHaveBeenCalled();
+	});
+
+	it('runs queued merchant mapping work only when the flag is explicitly enabled', async () => {
+		const harness = createMessage(
+			{
+				job_type: 'MERCHANT_MAPPING',
+				triggered_at: new Date().toISOString(),
+			},
+			1,
+		);
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{ MERCHANT_MAPPING_ENABLED: 'yes' } as Env,
+			{} as ExecutionContext,
+		);
+
+		expect(runMerchantMappingJobMock).toHaveBeenCalledTimes(1);
+		expect(harness.ack).toHaveBeenCalledTimes(1);
+		expect(harness.retry).not.toHaveBeenCalled();
 	});
 
 	it('acks poison messages instead of retrying forever', async () => {

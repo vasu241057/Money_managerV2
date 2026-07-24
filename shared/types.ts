@@ -161,6 +161,11 @@ export interface GlobalMerchantAliasRow {
   updated_at: ISODateTimeString;
 }
 
+export interface MerchantLogoAsset {
+  public_url: string;
+  brand_color: string | null;
+}
+
 export interface UserMerchantRuleRow {
   id: UUID;
   user_id: UUID;
@@ -319,7 +324,11 @@ export interface TransactionFeedItem {
   account: Pick<AccountRow, 'id' | 'name' | 'type'> | null;
   credit_card: Pick<UserCreditCardRow, 'id' | 'card_label' | 'first4' | 'last4'> | null;
   category: Pick<CategoryRow, 'id' | 'name' | 'type' | 'icon'> | null;
-  merchant: Pick<GlobalMerchantRow, 'id' | 'canonical_name' | 'type'> | null;
+  merchant:
+    | (Pick<GlobalMerchantRow, 'id' | 'canonical_name' | 'type'> & {
+        logo: MerchantLogoAsset | null;
+      })
+    | null;
   raw_email: Pick<RawEmailRow, 'id' | 'source_id' | 'internal_date' | 'status'> | null;
 }
 

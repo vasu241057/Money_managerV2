@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useGmailConnection } from '../../hooks/useGmailConnection';
 import { SettingsSkeleton } from '../ui/Skeleton';
+import { InstallAppCard } from '../ui/InstallAppCard';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useCreditCards } from '../../hooks/useCreditCards';
 import { useCategories } from '../../hooks/useCategories';
@@ -717,6 +718,16 @@ export function SettingsHub({
 							style={{ color: 'var(--ledger-muted)', transform: 'translateY(-1px)' }}
 						/>
 					</button>
+				</section>
+
+				<section className="mb-8">
+					<p
+						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4"
+						style={{ color: 'var(--ledger-muted)' }}
+					>
+						App
+					</p>
+					<InstallAppCard />
 				</section>
 
 				<div

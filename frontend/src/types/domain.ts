@@ -38,6 +38,8 @@ export interface Transaction {
   merchantId?: string | null;
   merchantName?: string | null;
   merchantType?: MerchantType | null;
+  merchantLogoUrl?: string | null;
+  merchantBrandColor?: string | null;
   searchKey?: string | null;
   counterpartyRaw?: string | null;
   paymentMethod?: string | null;

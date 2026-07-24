@@ -13,6 +13,10 @@
 # First sync of a connection fetches at most this many days of history (default 90).
 # EMAIL_SYNC_INITIAL_LOOKBACK_DAYS=90
 
+# Merchant mapping is fail-closed and defaults to off. Only 1/on/true/yes
+# enable the daily mapper. Keep this off until the mapping pipeline is refined.
+# MERCHANT_MAPPING_ENABLED=false
+
 # AI provider (default: opencode). "openrouter" switches the whole stack —
 # chat URL, API key var, and model defaults (free-tier ":free" models).
 # Configure both keys and flip this one var to switch providers.
