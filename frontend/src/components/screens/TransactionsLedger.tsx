@@ -241,12 +241,30 @@ function categoryIconFor(transaction: Transaction): LucideIcon {
 		?? Circle;
 }
 
-function useMerchantArtworkPhase(mode: ArtworkMode): boolean {
-	const [showMerchantLogos, setShowMerchantLogos] = useState(false);
+interface MerchantArtworkPhase {
+	showMerchantLogos: boolean;
+	rotationDegrees: number;
+}
+
+function useMerchantArtworkPhase(mode: ArtworkMode): MerchantArtworkPhase {
+	const [phase, setPhase] = useState<MerchantArtworkPhase>({
+		showMerchantLogos: false,
+		rotationDegrees: 0,
+	});
 
 	useEffect(() => {
 		const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 		let intervalId: ReturnType<typeof setInterval> | null = null;
+
+		const showFace = (showMerchantLogos: boolean) => {
+			setPhase((current) => {
+				if (current.showMerchantLogos === showMerchantLogos) return current;
+				return {
+					showMerchantLogos,
+					rotationDegrees: current.rotationDegrees + 180,
+				};
+			});
+		};
 
 		const restart = () => {
 			if (intervalId) {
@@ -255,16 +273,19 @@ function useMerchantArtworkPhase(mode: ArtworkMode): boolean {
 			}
 
 			if (mode !== 'auto') {
-				setShowMerchantLogos(mode === 'merchant');
+				showFace(mode === 'merchant');
 				return;
 			}
 
 			// Every Ledger visit begins with the category face. People who
 			// request reduced motion keep that stable, authoritative face.
-			setShowMerchantLogos(false);
+			showFace(false);
 			if (!reducedMotion.matches) {
 				intervalId = setInterval(() => {
-					setShowMerchantLogos((current) => !current);
+					setPhase((current) => ({
+						showMerchantLogos: !current.showMerchantLogos,
+						rotationDegrees: current.rotationDegrees + 180,
+					}));
 				}, 10_000);
 			}
 		};
@@ -277,7 +298,7 @@ function useMerchantArtworkPhase(mode: ArtworkMode): boolean {
 		};
 	}, [mode]);
 
-	return showMerchantLogos;
+	return phase;
 }
 
 function categoryColorFor(transaction: Transaction): string {
@@ -376,6 +397,7 @@ interface LedgerTransactionRowProps {
 	isLast: boolean;
 	viewMode: 'daily' | 'monthly';
 	showMerchantLogos: boolean;
+	artworkRotationDegrees: number;
 	onEditTransaction?: (transaction: Transaction) => void;
 }
 
@@ -384,6 +406,7 @@ function LedgerTransactionRow({
 	isLast,
 	viewMode,
 	showMerchantLogos,
+	artworkRotationDegrees,
 	onEditTransaction,
 }: LedgerTransactionRowProps) {
 	const isIncome = transaction.type === 'income';
@@ -394,9 +417,10 @@ function LedgerTransactionRow({
 	const metaLabel = transactionMetaLabel(transaction, viewMode);
 	const [failedMerchantLogoUrl, setFailedMerchantLogoUrl] = useState<string | null>(null);
 	const merchantLogoUrl = transaction.merchantLogoUrl ?? null;
-	const showMerchantFace = showMerchantLogos
-		&& merchantLogoUrl !== null
+	const hasUsableMerchantLogo = merchantLogoUrl !== null
 		&& merchantLogoUrl !== failedMerchantLogoUrl;
+	const showMerchantFace = showMerchantLogos && hasUsableMerchantLogo;
+	const rowRotationDegrees = hasUsableMerchantLogo ? artworkRotationDegrees : 0;
 
 	return (
 		<button
@@ -406,11 +430,15 @@ function LedgerTransactionRow({
 		>
 			<div className="flex items-center gap-3 min-w-0 flex-1">
 				<div
-					className={`ledger-artwork${showMerchantFace ? ' ledger-artwork--merchant' : ''}`}
+					className="ledger-artwork"
+					data-artwork-face={showMerchantFace ? 'merchant' : 'category'}
 					role="img"
 					aria-label={`${transaction.category} category${transaction.merchantName ? `, ${transaction.merchantName} merchant` : ''}`}
 				>
-					<div className="ledger-artwork__rotor">
+					<div
+						className="ledger-artwork__rotor"
+						style={{ transform: `rotateY(${rowRotationDegrees}deg)` }}
+					>
 						<span
 							className="ledger-artwork__face ledger-artwork__face--category"
 							style={{
@@ -484,7 +512,10 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 	const [artworkMode, setArtworkMode] = useState<ArtworkMode>('auto');
 	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [expandedMonthKey, setExpandedMonthKey] = useState('');
-	const showMerchantLogos = useMerchantArtworkPhase(artworkMode);
+	const {
+		showMerchantLogos,
+		rotationDegrees: artworkRotationDegrees,
+	} = useMerchantArtworkPhase(artworkMode);
 	const hasActiveControls = filterChip !== 'all' || artworkMode !== 'auto';
 
 	useEffect(() => {
@@ -778,6 +809,7 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 													isLast={index === group.transactions.length - 1}
 													viewMode="monthly"
 													showMerchantLogos={showMerchantLogos}
+													artworkRotationDegrees={artworkRotationDegrees}
 													onEditTransaction={onEditTransaction}
 												/>
 											))}
@@ -811,6 +843,7 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 											isLast={index === group.transactions.length - 1}
 											viewMode="daily"
 											showMerchantLogos={showMerchantLogos}
+											artworkRotationDegrees={artworkRotationDegrees}
 											onEditTransaction={onEditTransaction}
 										/>
 									))}
