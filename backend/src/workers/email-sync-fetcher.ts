@@ -21,6 +21,11 @@ import {
 	parseFromAddress,
 	resolveSenderGateConfig,
 } from '../lib/sender-gate';
+import {
+	executeGmailBatch,
+	GMAIL_BATCH_MAX_CALLS,
+	GmailBatchProtocolError,
+} from './gmail-batch';
 import { TransientMessageError } from './queue.errors';
 import { buildEmailSyncUserJob } from './queue.messages';
 
@@ -30,10 +35,10 @@ const GMAIL_API_MESSAGES_LIST_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/
 const GMAIL_API_MESSAGES_GET_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/users/me/messages';
 export const ENCRYPTED_TOKEN_PREFIX = 'enc:v1:';
 const GMAIL_QUERY_OVERLAP_MS = 15 * 60 * 1000;
-const GMAIL_LIST_MAX_RESULTS = 100;
-const GMAIL_LIST_MAX_PAGES = 1000;
+const GMAIL_LIST_MAX_RESULTS = GMAIL_BATCH_MAX_CALLS;
 const TOKEN_REFRESH_OCC_MAX_ATTEMPTS = 3;
 const CONTINUATION_ENQUEUE_MAX_ATTEMPTS = 3;
+const EMAIL_SYNC_LEASE_MINUTES = 20;
 const MAX_CLEAN_TEXT_LENGTH = 50_000;
 // First sync of a connection is capped to a bounded lookback instead of
 // walking the entire mailbox history.
@@ -66,6 +71,7 @@ interface OAuthConnectionFetchRowRaw {
 }
 
 interface ExistingRawEmailRowRaw {
+	id: unknown;
 	source_id: unknown;
 	status: unknown;
 	internal_date: unknown;
@@ -125,6 +131,7 @@ interface RawEmailUpsertRecord {
 }
 
 interface ExistingRawEmailStatus {
+	id: UUID | null;
 	status: RawEmailStatus;
 	internal_date_timestamp: number;
 }
@@ -146,6 +153,7 @@ interface EmailSyncContinuationState {
 	page_token: string;
 	after_seconds: number;
 	max_internal_timestamp_seen: number;
+	sync_run_id: UUID | null;
 }
 
 export interface EmailSyncUserResult {
@@ -522,6 +530,7 @@ function getJobContinuationStateForConnection(
 		page_token: job.continuation_page_token,
 		after_seconds: job.continuation_after_seconds,
 		max_internal_timestamp_seen: maxSeen,
+		sync_run_id: job.sync_run_id ?? null,
 	};
 }
 
@@ -534,13 +543,18 @@ async function enqueueEmailSyncContinuation(
 	for (let attempt = 1; attempt <= CONTINUATION_ENQUEUE_MAX_ATTEMPTS; attempt += 1) {
 		try {
 			await queue.send(
-				buildEmailSyncUserJob(userId, lastSyncTimestamp, {
-					continuation_connection_id: continuation.connection_id,
-					continuation_page_token: continuation.page_token,
-					continuation_after_seconds: continuation.after_seconds,
-					continuation_max_internal_timestamp_seen:
-						continuation.max_internal_timestamp_seen,
-				}),
+				buildEmailSyncUserJob(
+					userId,
+					lastSyncTimestamp,
+					continuation.sync_run_id ?? undefined,
+					{
+						continuation_connection_id: continuation.connection_id,
+						continuation_page_token: continuation.page_token,
+						continuation_after_seconds: continuation.after_seconds,
+						continuation_max_internal_timestamp_seen:
+							continuation.max_internal_timestamp_seen,
+					},
+				),
 				{ contentType: 'json' },
 			);
 			return;
@@ -556,6 +570,48 @@ async function enqueueEmailSyncContinuation(
 	}
 
 	throw new TransientMessageError('Failed to enqueue EMAIL_SYNC_USER continuation');
+}
+
+async function claimEmailSyncLease(
+	sql: SqlClient,
+	connectionId: UUID,
+	userId: UUID,
+	syncRunId: UUID,
+): Promise<boolean> {
+	const rows = await sql<{ id: UUID }[]>`
+		update public.oauth_connections as oc
+		set
+			email_sync_lease_id = ${syncRunId},
+			email_sync_lease_expires_at =
+				now() + make_interval(mins => ${EMAIL_SYNC_LEASE_MINUTES})
+		where oc.id = ${connectionId}
+			and oc.user_id = ${userId}
+			and oc.sync_status in ('ACTIVE', 'ERROR_PAUSED')
+			and (
+				oc.email_sync_lease_id = ${syncRunId}
+				or oc.email_sync_lease_expires_at is null
+				or oc.email_sync_lease_expires_at <= now()
+			)
+		returning oc.id
+	`;
+	return rows.length > 0;
+}
+
+async function releaseEmailSyncLease(
+	sql: SqlClient,
+	connectionId: UUID,
+	userId: UUID,
+	syncRunId: UUID,
+): Promise<void> {
+	await sql`
+		update public.oauth_connections as oc
+		set
+			email_sync_lease_id = null,
+			email_sync_lease_expires_at = null
+		where oc.id = ${connectionId}
+			and oc.user_id = ${userId}
+			and oc.email_sync_lease_id = ${syncRunId}
+	`;
 }
 
 async function enqueueNormalizeRawEmailsJobs(queue: Queue, rawEmailIds: UUID[]): Promise<void> {
@@ -1081,6 +1137,137 @@ export async function gmailGetMessage(
 	}
 }
 
+interface GmailBatchGetMessagesResult {
+	revoked: boolean;
+	paused: boolean;
+	messages: Map<string, GmailMessageResponse | null>;
+}
+
+function buildGmailMessageBatchPath(
+	messageId: string,
+	format: 'metadata' | 'full',
+): string {
+	const params = new URLSearchParams({ format });
+	if (format === 'metadata') {
+		params.append('metadataHeaders', 'From');
+		params.append('metadataHeaders', 'Subject');
+	}
+	return `/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?${params.toString()}`;
+}
+
+function toBatchErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+	return typeof error === 'string' ? error : 'Unknown error';
+}
+
+async function gmailBatchGetMessages(
+	accessToken: string,
+	messageIds: string[],
+	fetcher: FetchLike,
+	format: 'metadata' | 'full',
+): Promise<GmailBatchGetMessagesResult> {
+	if (messageIds.length === 0) {
+		return {
+			revoked: false,
+			paused: false,
+			messages: new Map(),
+		};
+	}
+
+	let batchResponse;
+	try {
+		batchResponse = await executeGmailBatch(
+			accessToken,
+			messageIds.map(messageId => ({
+				id: messageId,
+				path: buildGmailMessageBatchPath(messageId, format),
+			})),
+			fetcher,
+		);
+	} catch (error) {
+		const prefix =
+			error instanceof GmailBatchProtocolError
+				? 'Gmail message batch protocol failure'
+				: 'Failed to reach Gmail message batch API';
+		throw new TransientMessageError(`${prefix}: ${toBatchErrorMessage(error)}`);
+	}
+
+	if (batchResponse.status === 401) {
+		return { revoked: true, paused: false, messages: new Map() };
+	}
+	if (batchResponse.status === 429 || batchResponse.status >= 500) {
+		throw new TransientMessageError(
+			`Gmail message batch API retryable status ${batchResponse.status}`,
+		);
+	}
+	if (batchResponse.status === 403) {
+		const reason = parseGoogleApiErrorReason(batchResponse.body);
+		const classification = classifyGoogle403Reason(reason);
+		if (classification === 'pause') {
+			return { revoked: false, paused: true, messages: new Map() };
+		}
+		throw new TransientMessageError(
+			`Gmail message batch API retryable 403 (${reason ?? 'unknown_reason'})`,
+		);
+	}
+	if (batchResponse.status < 200 || batchResponse.status >= 300) {
+		throw new TransientMessageError(
+			`Gmail message batch API failed with status ${batchResponse.status}`,
+		);
+	}
+
+	const messages = new Map<string, GmailMessageResponse | null>();
+	for (const part of batchResponse.parts) {
+		if (part.status === 401) {
+			return { revoked: true, paused: false, messages: new Map() };
+		}
+		if (part.status === 404) {
+			messages.set(part.id, null);
+			continue;
+		}
+		if (part.status === 429 || part.status >= 500) {
+			throw new TransientMessageError(
+				`Gmail message batch part retryable status ${part.status} for ${part.id}`,
+			);
+		}
+		if (part.status === 403) {
+			const reason = parseGoogleApiErrorReason(part.body);
+			const classification = classifyGoogle403Reason(reason);
+			if (classification === 'pause') {
+				return { revoked: false, paused: true, messages: new Map() };
+			}
+			throw new TransientMessageError(
+				`Gmail message batch part retryable 403 (${reason ?? 'unknown_reason'}) for ${part.id}`,
+			);
+		}
+		if (part.status < 200 || part.status >= 300) {
+			throw new TransientMessageError(
+				`Gmail message batch part failed with status ${part.status} for ${part.id}`,
+			);
+		}
+
+		const message = asRecord(part.body);
+		if (!message) {
+			throw new TransientMessageError(
+				`Gmail message batch part returned invalid JSON for ${part.id}`,
+			);
+		}
+		messages.set(part.id, message as GmailMessageResponse);
+	}
+
+	for (const messageId of messageIds) {
+		if (!messages.has(messageId)) {
+			throw new TransientMessageError(
+				`Gmail message batch response omitted ${messageId}`,
+			);
+		}
+	}
+
+	return { revoked: false, paused: false, messages };
+}
+
 async function listExistingRawEmailStatuses(
 	sql: SqlClient,
 	userId: UUID,
@@ -1092,6 +1279,7 @@ async function listExistingRawEmailStatuses(
 
 	const rows = await sql<ExistingRawEmailRowRaw[]>`
 		select
+			re.id,
 			re.source_id,
 			re.status,
 			re.internal_date
@@ -1104,9 +1292,19 @@ async function listExistingRawEmailStatuses(
 	for (const row of rows) {
 		const sourceId = toRequiredString(row.source_id, 'raw_emails.source_id');
 		const status = toRequiredString(row.status, 'raw_emails.status') as RawEmailStatus;
+		const id =
+			typeof row.id === 'string' && row.id.length > 0
+				? (row.id as UUID)
+				: null;
+		if (status === 'PENDING_EXTRACTION' && !id) {
+			throw new TransientMessageError(
+				`Existing PENDING raw email ${sourceId} is missing its id`,
+			);
+		}
 		const internalDateIso = toIsoDateTime(row.internal_date, 'raw_emails.internal_date');
 		const internalDateTimestamp = Date.parse(internalDateIso);
 		map.set(sourceId, {
+			id,
 			status,
 			internal_date_timestamp: Number.isFinite(internalDateTimestamp)
 				? internalDateTimestamp
@@ -1274,16 +1472,12 @@ async function processConnection(
 	let fetchedMessageCount = 0;
 	let insertedOrRetriedCount = 0;
 	let skippedExistingCount = 0;
-	const allInsertedRawEmailIds: UUID[] = [];
-	let pageToken: string | null = jobContinuation?.page_token ?? null;
+	const pageToken = jobContinuation?.page_token ?? null;
 	let maxInternalTimestampSeen = Math.max(
 		baseCursor,
 		jobContinuation?.max_internal_timestamp_seen ?? 0,
 	);
-	let pageCount = 0;
 	const searchFilterApplied = afterSeconds > 0;
-	let hitPageCap = false;
-	let continuationPageToken: string | null = null;
 
 	const buildInterruptedResult = (
 		revoked: boolean,
@@ -1300,232 +1494,229 @@ async function processConnection(
 		continuation_enqueued: false,
 	});
 
-	while (true) {
-		pageCount += 1;
-		const listResult = await gmailListMessages(
-			accessToken,
+	const listResult = await gmailListMessages(
+		accessToken,
+		afterSeconds,
+		pageToken,
+		searchFilterApplied,
+		fetcher,
+	);
+	console.info('EMAIL_SYNC_GMAIL_LIST_PAGE', {
+		connectionId: connection.id,
+		userId: connection.user_id,
+		afterSeconds,
+		pageTokenPresent: Boolean(pageToken),
+		messageIdCount: listResult.messageIds.length,
+		nextPageTokenPresent: Boolean(listResult.nextPageToken),
+		resultSizeEstimate: listResult.resultSizeEstimate,
+		searchFilterApplied,
+	});
+	if (listResult.messageIds.length === 0 && !listResult.nextPageToken) {
+		console.warn('EMAIL_SYNC_GMAIL_EMPTY_RESULT', {
+			connectionId: connection.id,
+			userId: connection.user_id,
 			afterSeconds,
-			pageToken,
-			searchFilterApplied,
-			fetcher,
-		);
-		if (pageCount === 1) {
-			console.info('EMAIL_SYNC_GMAIL_LIST_PAGE', {
-				connectionId: connection.id,
-				userId: connection.user_id,
-				afterSeconds,
-				pageCount,
-				pageTokenPresent: Boolean(pageToken),
-				messageIdCount: listResult.messageIds.length,
-				nextPageTokenPresent: Boolean(listResult.nextPageToken),
-				resultSizeEstimate: listResult.resultSizeEstimate,
-				searchFilterApplied,
-			});
-		}
-		if (pageCount === 1 && listResult.messageIds.length === 0 && !listResult.nextPageToken) {
-			console.warn('EMAIL_SYNC_GMAIL_EMPTY_RESULT', {
-				connectionId: connection.id,
-				userId: connection.user_id,
-				afterSeconds,
-			});
-		}
-		if (listResult.revoked) {
-			await markConnectionRevoked(sql, connection.id, connection.user_id, 'gmail_list_unauthorized');
-			return {
-				connection_id: connection.id,
-				email_address: connection.email_address,
-				fetched_message_count: fetchedMessageCount,
-				inserted_or_retried_raw_email_count: insertedOrRetriedCount,
-				skipped_existing_raw_email_count: skippedExistingCount,
-				sender_gated_raw_email_count: senderGatedCount,
-				revoked: true,
-				paused: false,
-				continuation_enqueued: false,
-			};
-		}
-		if (listResult.paused) {
-			await markConnectionErrorPaused(
-				sql,
-				connection.id,
-				connection.user_id,
-				'gmail_list_permission_denied',
-			);
-			return {
-				connection_id: connection.id,
-				email_address: connection.email_address,
-				fetched_message_count: fetchedMessageCount,
-				inserted_or_retried_raw_email_count: insertedOrRetriedCount,
-				skipped_existing_raw_email_count: skippedExistingCount,
-				sender_gated_raw_email_count: senderGatedCount,
-				revoked: false,
-				paused: true,
-				continuation_enqueued: false,
-			};
-		}
-
-		const existingStatusMap = await listExistingRawEmailStatuses(
+		});
+	}
+	if (listResult.revoked) {
+		await markConnectionRevoked(sql, connection.id, connection.user_id, 'gmail_list_unauthorized');
+		return buildInterruptedResult(true, false);
+	}
+	if (listResult.paused) {
+		await markConnectionErrorPaused(
 			sql,
-			job.user_id,
-			listResult.messageIds,
+			connection.id,
+			connection.user_id,
+			'gmail_list_permission_denied',
 		);
-		const idsToFetch: string[] = [];
-		for (const messageId of listResult.messageIds) {
-			const existing = existingStatusMap.get(messageId);
-			if (existing && existing.status !== 'FAILED') {
-				skippedExistingCount += 1;
-				maxInternalTimestampSeen = Math.max(
-					maxInternalTimestampSeen,
-					existing.internal_date_timestamp,
-				);
-				continue;
-			}
+		return buildInterruptedResult(false, true);
+	}
 
-			idsToFetch.push(messageId);
+	const existingStatusMap = await listExistingRawEmailStatuses(
+		sql,
+		job.user_id,
+		listResult.messageIds,
+	);
+	const idsToFetch: string[] = [];
+	const normalizationIds = new Set<UUID>();
+	for (const messageId of listResult.messageIds) {
+		const existing = existingStatusMap.get(messageId);
+		if (existing && existing.status !== 'FAILED') {
+			skippedExistingCount += 1;
+			maxInternalTimestampSeen = Math.max(
+				maxInternalTimestampSeen,
+				existing.internal_date_timestamp,
+			);
+			if (existing.status === 'PENDING_EXTRACTION' && existing.id) {
+				// Re-enqueueing is intentional. It repairs the case where a prior
+				// attempt committed raw rows but failed before sending normalize jobs.
+				normalizationIds.add(existing.id);
+			}
+			continue;
 		}
 
-		const recordsToPersist: RawEmailUpsertRecord[] = [];
-		let fetchedMessagesThisPage = 0;
-		for (const messageId of idsToFetch) {
-			// Phase 1: headers only. The body is fetched (phase 2) solely for
-			// allowlisted senders, so gated mail's body never leaves Gmail.
-			const metaResult = await gmailGetMessage(accessToken, messageId, fetcher, 'metadata');
-			if (metaResult.revoked) {
-				await markConnectionRevoked(sql, connection.id, connection.user_id, 'gmail_unauthorized');
-				return buildInterruptedResult(true, false);
-			}
-			if (metaResult.paused) {
-				await markConnectionErrorPaused(
-					sql,
-					connection.id,
-					connection.user_id,
-					'gmail_get_permission_denied',
-				);
-				return buildInterruptedResult(false, true);
-			}
-			const metaMessage = metaResult.message;
-			if (!metaMessage) {
-				continue;
-			}
-			fetchedMessagesThisPage += 1;
+		idsToFetch.push(messageId);
+	}
 
-			const sourceId = typeof metaMessage.id === 'string' ? metaMessage.id : messageId;
-			const internalTimestamp = parseMessageInternalTimestamp(metaMessage.internalDate);
-			if (internalTimestamp === null) {
-				continue;
-			}
+	// One multipart request returns headers for the whole page. We deliberately
+	// fetch bodies only after the sender gate passes, preserving the privacy
+	// property that denied email bodies never leave Gmail.
+	const metadataBatch = await gmailBatchGetMessages(
+		accessToken,
+		idsToFetch,
+		fetcher,
+		'metadata',
+	);
+	if (metadataBatch.revoked) {
+		await markConnectionRevoked(sql, connection.id, connection.user_id, 'gmail_unauthorized');
+		return buildInterruptedResult(true, false);
+	}
+	if (metadataBatch.paused) {
+		await markConnectionErrorPaused(
+			sql,
+			connection.id,
+			connection.user_id,
+			'gmail_get_permission_denied',
+		);
+		return buildInterruptedResult(false, true);
+	}
 
-			maxInternalTimestampSeen = Math.max(maxInternalTimestampSeen, internalTimestamp);
+	const recordsToPersist: RawEmailUpsertRecord[] = [];
+	const allowedMessageState = new Map<
+		string,
+		{
+			sourceId: string;
+			internalDateIso: string;
+			fromAddress: string | null;
+			subject: string | null;
+		}
+	>();
+	for (const messageId of idsToFetch) {
+		const metaMessage = metadataBatch.messages.get(messageId);
+		if (!metaMessage) {
+			continue;
+		}
+		fetchedMessageCount += 1;
 
-			const fromHeader = extractMessageHeader(metaMessage, 'From');
-			const subjectHeader = extractMessageHeader(metaMessage, 'Subject');
-			const fromAddress = parseFromAddress(fromHeader);
-			const senderAllowed =
-				!senderGate.enabled || isAllowedSender(fromHeader, fromAddress, senderGateEntries);
-			const internalDateIso = new Date(internalTimestamp).toISOString();
-			const subject = subjectHeader
-				? truncateWithoutSplittingSurrogates(subjectHeader, MAX_SUBJECT_LENGTH)
-				: null;
+		const sourceId = typeof metaMessage.id === 'string' ? metaMessage.id : messageId;
+		const internalTimestamp = parseMessageInternalTimestamp(metaMessage.internalDate);
+		if (internalTimestamp === null) {
+			continue;
+		}
 
-			if (!senderAllowed) {
-				senderGatedCount += 1;
-				// Metadata-only row: keeps dedupe + an audit trail of gated
-				// senders while entering terminally IGNORED, so it can never
-				// reach a normalizer or an AI call.
-				recordsToPersist.push({
-					source_id: sourceId,
-					internal_date_iso: internalDateIso,
-					clean_text: '',
-					from_address: fromAddress,
-					subject,
-					status: 'IGNORED',
-				});
-				continue;
-			}
+		maxInternalTimestampSeen = Math.max(maxInternalTimestampSeen, internalTimestamp);
 
-			// Phase 2: full body, allowlisted senders only.
-			const fullResult = await gmailGetMessage(accessToken, messageId, fetcher, 'full');
-			if (fullResult.revoked) {
-				await markConnectionRevoked(sql, connection.id, connection.user_id, 'gmail_unauthorized');
-				return buildInterruptedResult(true, false);
-			}
-			if (fullResult.paused) {
-				await markConnectionErrorPaused(
-					sql,
-					connection.id,
-					connection.user_id,
-					'gmail_get_permission_denied',
-				);
-				return buildInterruptedResult(false, true);
-			}
-			const fullMessage = fullResult.message;
-			if (!fullMessage) {
-				continue;
-			}
+		const fromHeader = extractMessageHeader(metaMessage, 'From');
+		const subjectHeader = extractMessageHeader(metaMessage, 'Subject');
+		const fromAddress = parseFromAddress(fromHeader);
+		const senderAllowed =
+			!senderGate.enabled || isAllowedSender(fromHeader, fromAddress, senderGateEntries);
+		const internalDateIso = new Date(internalTimestamp).toISOString();
+		const subject = subjectHeader
+			? truncateWithoutSplittingSurrogates(subjectHeader, MAX_SUBJECT_LENGTH)
+			: null;
 
+		if (!senderAllowed) {
+			senderGatedCount += 1;
 			recordsToPersist.push({
 				source_id: sourceId,
 				internal_date_iso: internalDateIso,
-				clean_text: buildSanitizedEmailText(fullMessage),
+				clean_text: '',
 				from_address: fromAddress,
 				subject,
-				status: 'PENDING_EXTRACTION',
+				status: 'IGNORED',
 			});
-		}
-		fetchedMessageCount += fetchedMessagesThisPage;
-
-		if (recordsToPersist.length > 0) {
-			const insertedIds = await persistRawEmailsAndCursor(
-				sql,
-				connection.id,
-				job.user_id,
-				recordsToPersist,
-				maxInternalTimestampSeen,
-				false,
-			);
-
-			allInsertedRawEmailIds.push(...insertedIds);
-			insertedOrRetriedCount += recordsToPersist.length;
+			continue;
 		}
 
-		if (!listResult.nextPageToken) {
-			break;
-		}
-		if (pageCount >= GMAIL_LIST_MAX_PAGES) {
-			hitPageCap = true;
-			continuationPageToken = listResult.nextPageToken;
-			break;
-		}
-
-		pageToken = listResult.nextPageToken;
+		allowedMessageState.set(messageId, {
+			sourceId,
+			internalDateIso,
+			fromAddress,
+			subject,
+		});
 	}
 
-	if (hitPageCap) {
-		if (!continuationPageToken) {
-			throw new TransientMessageError('Gmail pagination cap reached without continuation token');
-		}
+	const fullBatch = await gmailBatchGetMessages(
+		accessToken,
+		[...allowedMessageState.keys()],
+		fetcher,
+		'full',
+	);
+	if (fullBatch.revoked) {
+		await markConnectionRevoked(sql, connection.id, connection.user_id, 'gmail_unauthorized');
+		return buildInterruptedResult(true, false);
+	}
+	if (fullBatch.paused) {
+		await markConnectionErrorPaused(
+			sql,
+			connection.id,
+			connection.user_id,
+			'gmail_get_permission_denied',
+		);
+		return buildInterruptedResult(false, true);
+	}
 
-		const continuation: EmailSyncContinuationState = {
-			connection_id: connection.id,
-			page_token: continuationPageToken,
-			after_seconds: afterSeconds,
-			max_internal_timestamp_seen: maxInternalTimestampSeen,
-		};
+	for (const [messageId, messageState] of allowedMessageState) {
+		const fullMessage = fullBatch.messages.get(messageId);
+		if (!fullMessage) {
+			continue;
+		}
+		recordsToPersist.push({
+			source_id: messageState.sourceId,
+			internal_date_iso: messageState.internalDateIso,
+			clean_text: buildSanitizedEmailText(fullMessage),
+			from_address: messageState.fromAddress,
+			subject: messageState.subject,
+			status: 'PENDING_EXTRACTION',
+		});
+	}
+
+	if (recordsToPersist.length > 0) {
+		const insertedIds = await persistRawEmailsAndCursor(
+			sql,
+			connection.id,
+			job.user_id,
+			recordsToPersist,
+			maxInternalTimestampSeen,
+			false,
+		);
+		for (const insertedId of insertedIds) {
+			normalizationIds.add(insertedId);
+		}
+		insertedOrRetriedCount += recordsToPersist.length;
+	}
+
+	// Queue all downstream work before moving either pagination or timestamp
+	// pointers. If this send fails, the queue retries the same page; existing
+	// PENDING rows above are deliberately re-enqueued on that retry.
+	if (normalizationIds.size > 0) {
+		await enqueueNormalizeRawEmailsJobs(env.EMAIL_SYNC_QUEUE, [...normalizationIds]);
+	}
+
+	const continuationEnqueued = listResult.nextPageToken !== null;
+	if (listResult.nextPageToken) {
 		await enqueueEmailSyncContinuation(
 			env.EMAIL_SYNC_QUEUE,
 			job.user_id,
 			baseCursor,
-			continuation,
+			{
+				connection_id: connection.id,
+				page_token: listResult.nextPageToken,
+				after_seconds: afterSeconds,
+				max_internal_timestamp_seen: maxInternalTimestampSeen,
+				sync_run_id: job.sync_run_id ?? null,
+			},
 		);
-
-		console.warn('EMAIL_SYNC_USER reached Gmail pagination cap; enqueued continuation', {
+		console.info('EMAIL_SYNC_GMAIL_PAGE_COMMITTED', {
 			connectionId: connection.id,
 			userId: job.user_id,
-			pageCount,
-			pageCap: GMAIL_LIST_MAX_PAGES,
-			afterSeconds,
+			messageIdCount: listResult.messageIds.length,
 			nextPageTokenPresent: true,
 		});
 	} else {
+		// The durable timestamp watermark moves only after the final page has
+		// been fetched, stored, and handed to downstream normalization.
 		await persistRawEmailsAndCursor(
 			sql,
 			connection.id,
@@ -1534,10 +1725,6 @@ async function processConnection(
 			maxInternalTimestampSeen,
 			true,
 		);
-	}
-
-	if (allInsertedRawEmailIds.length > 0) {
-		await enqueueNormalizeRawEmailsJobs(env.EMAIL_SYNC_QUEUE, allInsertedRawEmailIds);
 	}
 
 	return {
@@ -1549,7 +1736,7 @@ async function processConnection(
 		sender_gated_raw_email_count: senderGatedCount,
 		revoked: false,
 		paused: false,
-		continuation_enqueued: hitPageCap,
+		continuation_enqueued: continuationEnqueued,
 	};
 }
 
@@ -2160,7 +2347,32 @@ export async function runEmailSyncUserJob(
 	};
 
 	for (const connection of connections) {
+		const syncRunId = job.sync_run_id;
+		if (syncRunId) {
+			const leaseAcquired = await claimEmailSyncLease(
+				sql,
+				connection.id,
+				job.user_id,
+				syncRunId,
+			);
+			if (!leaseAcquired) {
+				console.info('EMAIL_SYNC_CONNECTION_LEASE_BUSY', {
+					connectionId: connection.id,
+					userId: job.user_id,
+					syncRunId,
+				});
+				continue;
+			}
+		}
+
+		// If processing throws, keep this chain's lease while Cloudflare retries
+		// the same queue message. A later cron cannot overlap it, and the expiry
+		// still provides crash/DLQ recovery if no retry completes the chain.
 		const connectionResult = await processConnection(sql, job, connection, env, fetcher);
+
+		if (syncRunId && !connectionResult.continuation_enqueued) {
+			await releaseEmailSyncLease(sql, connection.id, job.user_id, syncRunId);
+		}
 
 		result.processed_connection_count += 1;
 		result.fetched_message_count += connectionResult.fetched_message_count;

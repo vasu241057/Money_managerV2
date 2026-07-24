@@ -120,6 +120,7 @@ export function isEmailSyncUserJob(value: unknown): value is EmailSyncUserJob {
 		value.job_type === 'EMAIL_SYNC_USER' &&
 		isUuidString(value.user_id) &&
 		isNonNegativeSafeInteger(value.last_sync_timestamp) &&
+		isOptionalUuidString(value.sync_run_id) &&
 		isOptionalUuidString(value.continuation_connection_id) &&
 		isOptionalNonEmptyString(value.continuation_page_token) &&
 		isOptionalNonNegativeInteger(value.continuation_after_seconds) &&
@@ -223,6 +224,7 @@ export function buildEmailSyncDispatchJob(controller: ScheduledController): Emai
 export function buildEmailSyncUserJob(
 	userId: UUID,
 	lastSyncTimestamp: number,
+	syncRunId?: UUID,
 	continuation?: Pick<
 		EmailSyncUserJob,
 		| 'continuation_connection_id'
@@ -235,6 +237,7 @@ export function buildEmailSyncUserJob(
 		job_type: 'EMAIL_SYNC_USER',
 		user_id: userId,
 		last_sync_timestamp: lastSyncTimestamp,
+		...(syncRunId ? { sync_run_id: syncRunId } : {}),
 		...(continuation ?? {}),
 	};
 }

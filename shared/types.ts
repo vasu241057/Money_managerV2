@@ -470,6 +470,11 @@ export interface EmailSyncUserJobPayload {
   user_id: UUID;
   last_sync_timestamp: number;
   /**
+   * Stable id for one connection-sync chain. Queue retries and Gmail page
+   * continuations retain it so a later cron cannot overlap the same mailbox.
+   */
+  sync_run_id?: UUID;
+  /**
    * Optional continuation fields used when Phase 2 fetcher slices a deep Gmail
    * pagination chain across multiple queue jobs.
    */

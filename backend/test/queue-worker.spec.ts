@@ -453,6 +453,32 @@ describe('queue.worker', () => {
 		expect(harness.retry).not.toHaveBeenCalled();
 	});
 
+	it('acks poison messages when EMAIL_SYNC_USER has invalid sync_run_id', async () => {
+		const harness = createMessage(
+			{
+				job_type: 'EMAIL_SYNC_USER',
+				user_id: '00000000-0000-4000-8000-000000000001',
+				last_sync_timestamp: 1_700_000_000,
+				sync_run_id: 'not-a-uuid',
+			},
+			1,
+		);
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		expect(harness.ack).toHaveBeenCalledTimes(1);
+		expect(harness.retry).not.toHaveBeenCalled();
+	});
+
 	it('acks poison messages when EMAIL_SYNC_USER continuation shape is partial/invalid', async () => {
 		const harness = createMessage(
 			{

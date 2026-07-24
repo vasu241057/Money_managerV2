@@ -11,6 +11,7 @@ import {
 	truncateWithoutSplittingSurrogates,
 } from '../src/workers/email-sync-fetcher';
 import { TransientMessageError } from '../src/workers/queue.errors';
+import { withGmailBatchSupport } from './helpers/gmail-batch';
 
 const { getAppConfigMock, getSqlClientMock } = vi.hoisted(() => ({
 	getAppConfigMock: vi.fn(),
@@ -142,13 +143,92 @@ describe('email-sync-fetcher', () => {
 				last_sync_timestamp: 1_700_000_000_000,
 			},
 			createEnv(),
-			fetcher,
+			withGmailBatchSupport(fetcher),
 		);
 
 		expect(result.processed_connection_count).toBe(1);
 		expect(result.revoked_connection_count).toBe(1);
 		expect(result.inserted_or_retried_raw_email_count).toBe(0);
 		expect(queries.some(query => query.includes("sync_status = 'AUTH_REVOKED'"))).toBe(true);
+	});
+
+	it('skips a Gmail connection when another cron chain owns its active lease', async () => {
+		const sql = createSqlMock((query) => {
+			if (
+				query.includes('from public.oauth_connections as oc') &&
+				query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")
+			) {
+				return [buildConnectionRow()];
+			}
+			if (query.includes('set email_sync_lease_id =') && query.includes('returning oc.id')) {
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		const fetcher = vi.fn();
+		getAppConfigMock.mockReturnValue(appConfig);
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runEmailSyncUserJob(
+			{
+				job_type: 'EMAIL_SYNC_USER',
+				user_id: '00000000-0000-4000-8000-000000000001',
+				last_sync_timestamp: 1_700_000_000_000,
+				sync_run_id: '00000000-0000-4000-8000-0000000000f0',
+			},
+			createEnv(),
+			withGmailBatchSupport(fetcher),
+		);
+
+		expect(result.connection_count).toBe(1);
+		expect(result.processed_connection_count).toBe(0);
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+
+	it('keeps its Gmail connection lease while Cloudflare retries a transient failure', async () => {
+		let leaseReleaseCount = 0;
+		const sql = createSqlMock((query) => {
+			if (
+				query.includes('from public.oauth_connections as oc') &&
+				query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")
+			) {
+				return [buildConnectionRow()];
+			}
+			if (query.includes('set email_sync_lease_id =') && query.includes('returning oc.id')) {
+				return [{ id: '00000000-0000-4000-8000-0000000000aa' }];
+			}
+			if (query.includes('set email_sync_lease_id = null')) {
+				leaseReleaseCount += 1;
+				return [];
+			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		const fetcher = vi.fn().mockResolvedValue(
+			new Response('temporary Google outage', {
+				status: 503,
+				headers: { 'content-type': 'text/plain' },
+			}),
+		);
+		getAppConfigMock.mockReturnValue(appConfig);
+		getSqlClientMock.mockReturnValue(sql);
+
+		await expect(
+			runEmailSyncUserJob(
+				{
+					job_type: 'EMAIL_SYNC_USER',
+					user_id: '00000000-0000-4000-8000-000000000001',
+					last_sync_timestamp: 1_700_000_000_000,
+					sync_run_id: '00000000-0000-4000-8000-0000000000f0',
+				},
+				createEnv(),
+				withGmailBatchSupport(fetcher),
+			),
+		).rejects.toThrow('Google OAuth token refresh failed with retryable status 503');
+
+		expect(leaseReleaseCount).toBe(0);
 	});
 
 	it('persists only new/FAILED raw emails and advances cursor transactionally', async () => {
@@ -255,7 +335,7 @@ describe('email-sync-fetcher', () => {
 				last_sync_timestamp: 1_700_000_000_000,
 			},
 			createEnv(),
-			fetcher,
+			withGmailBatchSupport(fetcher),
 		);
 
 		expect(insertedSourceIds).toEqual(['m1', 'm3']);
@@ -265,6 +345,112 @@ describe('email-sync-fetcher', () => {
 			expect(result.skipped_existing_raw_email_count).toBe(1);
 			expect(result.revoked_connection_count).toBe(0);
 		});
+
+	it('does not move the cursor when normalize enqueue fails and repairs it on retry', async () => {
+		const rawEmailId = '00000000-0000-4000-8000-0000000000e1';
+		let rawEmailPersisted = false;
+		let cursorUpdateCount = 0;
+		const queueSend = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('normalize unavailable'))
+			.mockResolvedValue(undefined);
+		const sql = createSqlMock((query, values) => {
+			if (
+				query.includes('from public.oauth_connections as oc') &&
+				query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")
+			) {
+				return [buildConnectionRow()];
+			}
+			if (
+				query.includes('and oc.refresh_token is not distinct from') &&
+				query.includes('set access_token =')
+			) {
+				return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z' })];
+			}
+			if (query.includes('from public.raw_emails as re')) {
+				return rawEmailPersisted
+					? [{
+							id: rawEmailId,
+							source_id: 'retry-m1',
+							status: 'PENDING_EXTRACTION',
+							internal_date: new Date(1_700_000_500_000).toISOString(),
+						}]
+					: [];
+			}
+			if (query.includes('insert into public.raw_emails')) {
+				rawEmailPersisted = true;
+				return [{ id: rawEmailId }];
+			}
+			if (query.includes('last_sync_timestamp = greatest')) {
+				expect(values[0]).toBe(1_700_000_500_000);
+				cursorUpdateCount += 1;
+				return [];
+			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'hdfc' }];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+			const url = normalizeGmailGetUrl(
+				typeof input === 'string' ? input : input.toString(),
+			);
+			if (url.includes('oauth2.googleapis.com/token')) {
+				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.includes('/gmail/v1/users/me/messages?')) {
+				return new Response(JSON.stringify({ messages: [{ id: 'retry-m1' }] }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.endsWith('/retry-m1?format=full')) {
+				return new Response(
+					JSON.stringify({
+						id: 'retry-m1',
+						internalDate: '1700000500000',
+						snippet: '₹500 debited',
+						payload: {
+							headers: [{
+								name: 'From',
+								value: 'HDFC Bank <alerts@hdfcbank.net>',
+							}],
+						},
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+		getAppConfigMock.mockReturnValue(appConfig);
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv({
+			EMAIL_SYNC_QUEUE: { send: queueSend } as unknown as Queue,
+		});
+		const job = {
+			job_type: 'EMAIL_SYNC_USER' as const,
+			user_id: '00000000-0000-4000-8000-000000000001',
+			last_sync_timestamp: 1_700_000_000_000,
+		};
+
+		await expect(
+			runEmailSyncUserJob(job, env, withGmailBatchSupport(fetcher)),
+		).rejects.toThrow('normalize unavailable');
+		expect(rawEmailPersisted).toBe(true);
+		expect(cursorUpdateCount).toBe(0);
+
+		await runEmailSyncUserJob(job, env, withGmailBatchSupport(fetcher));
+
+		expect(queueSend).toHaveBeenCalledTimes(2);
+		expect(queueSend.mock.calls[1]?.[0]).toEqual({
+			job_type: 'NORMALIZE_RAW_EMAILS',
+			raw_email_ids: [rawEmailId],
+		});
+		expect(cursorUpdateCount).toBe(1);
+	});
 
 	it('caps the initial sync to the lookback window when cursor is zero', async () => {
 		const listUrls: string[] = [];
@@ -337,7 +523,7 @@ describe('email-sync-fetcher', () => {
 				last_sync_timestamp: 0,
 			},
 			createEnv(),
-			fetcher,
+			withGmailBatchSupport(fetcher),
 		);
 
 		expect(listUrls).toHaveLength(1);
@@ -350,6 +536,7 @@ describe('email-sync-fetcher', () => {
 		const expectedSeconds = Math.floor((Date.now() - 90 * 24 * 60 * 60 * 1000) / 1000);
 		expect(Math.abs(afterSeconds - expectedSeconds)).toBeLessThan(24 * 60 * 60);
 		expect(listUrls[0]).toContain('includeSpamTrash=true');
+		expect(listUrls[0]).toContain('maxResults=50');
 		expect(insertedSourceIds).toEqual(['bootstrap-broad-1']);
 		expect(cursorUpdateValue).toBe(1_700_000_500_000);
 		expect(result.fetched_message_count).toBe(1);
@@ -413,7 +600,7 @@ describe('email-sync-fetcher', () => {
 				last_sync_timestamp: 1_700_000_000_000,
 			},
 			createEnv(),
-			fetcher,
+			withGmailBatchSupport(fetcher),
 		);
 
 			expect(refreshUpdateAttempt).toBe(2);
@@ -460,7 +647,7 @@ describe('email-sync-fetcher', () => {
 					last_sync_timestamp: 1_700_000_000_000,
 				},
 				createEnv(),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(refreshUpdateAttempt).toBe(1);
@@ -535,7 +722,7 @@ describe('email-sync-fetcher', () => {
 					last_sync_timestamp: 1_700_000_000_000,
 				},
 				createEnv(),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(insertedTexts).toHaveLength(1);
@@ -637,7 +824,7 @@ describe('email-sync-fetcher', () => {
 					last_sync_timestamp: 1_700_000_000_000,
 				},
 				createEnv(),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(insertedRows).toHaveLength(2);
@@ -717,7 +904,7 @@ describe('email-sync-fetcher', () => {
 					raw_email_ids: [rawEmailId],
 				},
 				createEnv({ EMAIL_SYNC_QUEUE: { send: queueSend } as unknown as Queue }),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(result.refetched_count).toBe(1);
@@ -772,7 +959,7 @@ describe('email-sync-fetcher', () => {
 					raw_email_ids: [orphanRowId],
 				},
 				createEnv({ EMAIL_SYNC_QUEUE: { send: queueSend } as unknown as Queue }),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(result.refetched_count).toBe(0);
@@ -829,7 +1016,7 @@ describe('email-sync-fetcher', () => {
 					last_sync_timestamp: 1_700_000_000_000,
 				},
 				createEnv(),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(result.processed_connection_count).toBe(1);
@@ -837,9 +1024,10 @@ describe('email-sync-fetcher', () => {
 			expect(queries.some(query => query.includes("set sync_status = 'ERROR_PAUSED'"))).toBe(true);
 		});
 
-		it('does not truncate ingestion after 10 pages when Gmail keeps returning nextPageToken', async () => {
+		it('processes one Gmail page per invocation and continues without advancing the cursor', async () => {
 			let listCalls = 0;
 			let cursorUpdateCalled = 0;
+			const continuationSend = vi.fn().mockResolvedValue(undefined);
 			const sql = createSqlMock((query) => {
 				if (query.includes("from public.oauth_connections as oc") && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
 					return [buildConnectionRow()];
@@ -894,12 +1082,21 @@ describe('email-sync-fetcher', () => {
 					user_id: '00000000-0000-4000-8000-000000000001',
 					last_sync_timestamp: 1_700_000_000_000,
 				},
-				createEnv(),
-				fetcher,
+				createEnv({
+					EMAIL_SYNC_QUEUE: {
+						send: continuationSend,
+					} as unknown as Queue,
+				}),
+				withGmailBatchSupport(fetcher),
 			);
 
-			expect(listCalls).toBe(12);
-			expect(cursorUpdateCalled).toBe(1);
+			expect(listCalls).toBe(1);
+			expect(cursorUpdateCalled).toBe(0);
+			expect(continuationSend).toHaveBeenCalledTimes(1);
+			expect(continuationSend.mock.calls[0]?.[0]).toMatchObject({
+				job_type: 'EMAIL_SYNC_USER',
+				continuation_page_token: 'p1',
+			});
 		});
 
 		it('acks path on permission-denied 403 from gmail.get by pausing connection', async () => {
@@ -958,7 +1155,7 @@ describe('email-sync-fetcher', () => {
 					last_sync_timestamp: 1_700_000_000_000,
 				},
 				createEnv(),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(result.processed_connection_count).toBe(1);
@@ -966,14 +1163,19 @@ describe('email-sync-fetcher', () => {
 			expect(queries.some(query => query.includes("set sync_status = 'ERROR_PAUSED'"))).toBe(true);
 		});
 
-		it('stops at page cap without transient failure and keeps cursor unchanged', async () => {
+		it('commits one page, enqueues its continuation, and keeps cursor unchanged', async () => {
 			let listCalls = 0;
 			let cursorUpdateValue: number | null = null;
 			const insertedSourceIds: string[] = [];
 			const continuationSend = vi.fn().mockResolvedValue(undefined);
+			const syncRunId = '00000000-0000-4000-8000-0000000000f1';
 			const sql = createSqlMock((query, values) => {
 				if (query.includes("from public.oauth_connections as oc") && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
 					return [buildConnectionRow({ last_sync_timestamp: 0 })];
+				}
+				if (query.includes('set email_sync_lease_id =') && query.includes('returning oc.id')) {
+					expect(values[0]).toBe(syncRunId);
+					return [{ id: '00000000-0000-4000-8000-0000000000aa' }];
 				}
 				if (query.includes('and oc.access_token is not distinct from') && query.includes("set access_token =")) {
 					return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z', last_sync_timestamp: 0 })];
@@ -1043,20 +1245,21 @@ describe('email-sync-fetcher', () => {
 					job_type: 'EMAIL_SYNC_USER',
 					user_id: '00000000-0000-4000-8000-000000000001',
 					last_sync_timestamp: 0,
+					sync_run_id: syncRunId,
 				},
 				createEnv({
 					EMAIL_SYNC_QUEUE: {
 						send: continuationSend,
 					} as unknown as Queue,
 				}),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(result.processed_connection_count).toBe(1);
 			expect(result.inserted_or_retried_raw_email_count).toBe(1);
 			expect(result.fetched_message_count).toBe(1);
 			expect(insertedSourceIds).toEqual(['first-page-message']);
-			expect(listCalls).toBe(1000);
+			expect(listCalls).toBe(1);
 			expect(cursorUpdateValue).toBeNull();
 			expect(continuationSend).toHaveBeenCalledTimes(1);
 			const continuationPayload = continuationSend.mock.calls[0]?.[0] as
@@ -1066,6 +1269,7 @@ describe('email-sync-fetcher', () => {
 			expect(continuationPayload?.continuation_connection_id).toBe(
 				'00000000-0000-4000-8000-0000000000aa',
 			);
+			expect(continuationPayload?.sync_run_id).toBe(syncRunId);
 			// Zero cursor is capped to the initial lookback window, and the
 			// continuation carries that same capped query window forward.
 			const continuationAfterSeconds = continuationPayload?.continuation_after_seconds ?? 0;
@@ -1075,7 +1279,7 @@ describe('email-sync-fetcher', () => {
 			expect(Math.abs(continuationAfterSeconds - expectedLookbackSeconds)).toBeLessThan(
 				24 * 60 * 60,
 			);
-			expect(continuationPayload?.continuation_page_token).toBe('p1000');
+			expect(continuationPayload?.continuation_page_token).toBe('p1');
 			expect(continuationPayload?.continuation_max_internal_timestamp_seen).toBe(
 				maxSeenTimestamp,
 			);
@@ -1191,14 +1395,14 @@ describe('email-sync-fetcher', () => {
 						send: continuationSend,
 					} as unknown as Queue,
 				}),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(result.connection_count).toBe(2);
 			expect(result.processed_connection_count).toBe(1);
 			expect(result.inserted_or_retried_raw_email_count).toBe(1);
 			expect(result.fetched_message_count).toBe(1);
-			expect(listCalls).toBe(1000);
+			expect(listCalls).toBe(1);
 			expect(refreshUpdateCalls).toBe(1);
 			expect(continuationSend).toHaveBeenCalledTimes(1);
 		});
@@ -1206,9 +1410,19 @@ describe('email-sync-fetcher', () => {
 		it('continues from continuation page token and preserves max cursor watermark', async () => {
 			let cursorUpdateValue: number | null = null;
 			let listUrl: string | null = null;
+			let leaseReleaseCount = 0;
+			const syncRunId = '00000000-0000-4000-8000-0000000000f2';
 			const sql = createSqlMock((query, values) => {
 				if (query.includes("from public.oauth_connections as oc") && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
 					return [buildConnectionRow({ last_sync_timestamp: 0 })];
+				}
+				if (query.includes('set email_sync_lease_id =') && query.includes('returning oc.id')) {
+					expect(values[0]).toBe(syncRunId);
+					return [{ id: '00000000-0000-4000-8000-0000000000aa' }];
+				}
+				if (query.includes('set email_sync_lease_id = null')) {
+					leaseReleaseCount += 1;
+					return [];
 				}
 				if (query.includes('and oc.access_token is not distinct from') && query.includes("set access_token =")) {
 					return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z', last_sync_timestamp: 0 })];
@@ -1266,13 +1480,14 @@ describe('email-sync-fetcher', () => {
 					job_type: 'EMAIL_SYNC_USER',
 					user_id: '00000000-0000-4000-8000-000000000001',
 					last_sync_timestamp: 0,
+					sync_run_id: syncRunId,
 					continuation_connection_id: '00000000-0000-4000-8000-0000000000aa',
 					continuation_page_token: 'p1000',
 					continuation_after_seconds: 0,
 					continuation_max_internal_timestamp_seen: 1_700_000_400_000,
 				},
 				createEnv(),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(result.processed_connection_count).toBe(1);
@@ -1280,6 +1495,7 @@ describe('email-sync-fetcher', () => {
 			expect(result.fetched_message_count).toBe(1);
 			expect(listUrl).toContain('pageToken=p1000');
 			expect(cursorUpdateValue).toBe(1_700_000_400_000);
+			expect(leaseReleaseCount).toBe(1);
 		});
 
 		it('counts fetched_message_count from successful gmail.get responses only', async () => {
@@ -1354,7 +1570,7 @@ describe('email-sync-fetcher', () => {
 					last_sync_timestamp: 1_700_000_000_000,
 				},
 				createEnv(),
-				fetcher,
+				withGmailBatchSupport(fetcher),
 			);
 
 			expect(result.fetched_message_count).toBe(2);
@@ -1415,7 +1631,7 @@ describe('email-sync-fetcher', () => {
 						last_sync_timestamp: 1_700_000_000_000,
 					},
 					createEnv(),
-					fetcher,
+					withGmailBatchSupport(fetcher),
 				),
 			).rejects.toBeInstanceOf(TransientMessageError);
 
@@ -1647,7 +1863,7 @@ describe('internal ops: sender-metadata backfill + sync probe', () => {
 		const result = await runEmailSyncProbe(
 			10,
 			createEnv({ EMAIL_SYNC_QUEUE: { send: queueSend } as unknown as Queue }),
-			fetcher,
+			withGmailBatchSupport(fetcher),
 		);
 
 		expect(result.listed_count).toBe(3);

@@ -17,6 +17,7 @@ import type { SqlClient } from '../src/lib/db/client';
 import { runNormalizeRawEmailsJob } from '../src/workers/email-ai-normalizer';
 import { dispatchEmailSyncUsers } from '../src/workers/email-sync-dispatcher';
 import { runEmailSyncUserJob } from '../src/workers/email-sync-fetcher';
+import { withGmailBatchSupport } from './helpers/gmail-batch';
 
 const { getAppConfigMock, getSqlClientMock } = vi.hoisted(() => ({
 	getAppConfigMock: vi.fn(),
@@ -363,6 +364,21 @@ function createSqlHarness(state: PipelineState): SqlMock {
 		}
 
 		if (
+			query.includes('set email_sync_lease_id =') &&
+			query.includes('email_sync_lease_expires_at =') &&
+			query.includes('returning oc.id')
+		) {
+			return [{ id: state.connection.id }];
+		}
+
+		if (
+			query.includes('set email_sync_lease_id = null') &&
+			query.includes('email_sync_lease_expires_at = null')
+		) {
+			return [];
+		}
+
+		if (
 			query.includes('set access_token =') &&
 			query.includes('refresh_token =') &&
 			query.includes('oc.access_token is not distinct from')
@@ -430,12 +446,18 @@ function createSqlHarness(state: PipelineState): SqlMock {
 					}
 
 					return {
+						id: rawEmail.id,
 						source_id: rawEmail.source_id,
 						status: rawEmail.status,
 						internal_date: rawEmail.internal_date,
 					};
 				})
-				.filter((row): row is { source_id: string; status: RawEmailStatus; internal_date: string } => Boolean(row));
+				.filter((row): row is {
+					id: UUID;
+					source_id: string;
+					status: RawEmailStatus;
+					internal_date: string;
+				} => Boolean(row));
 		}
 
 		if (query.includes('insert into public.raw_emails')) {
@@ -868,7 +890,7 @@ async function syncEmail(
 	await runEmailSyncUserJob(
 		userJobs[0] as EmailSyncUserJobPayload,
 		env,
-		createGoogleFetcher(fixture),
+		withGmailBatchSupport(createGoogleFetcher(fixture)),
 	);
 
 	const rawEmailId = state.raw_email_id_by_user_source.get(

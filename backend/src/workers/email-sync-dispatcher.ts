@@ -412,6 +412,7 @@ export async function dispatchEmailSyncUsers(
 				buildEmailSyncUserJob(
 					candidate.user_id,
 					normalizeLastSyncTimestamp(candidate.user_id, candidate.last_sync_timestamp),
+					crypto.randomUUID() as UUID,
 				),
 			);
 		}

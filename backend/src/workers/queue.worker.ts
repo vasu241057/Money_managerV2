@@ -140,7 +140,10 @@ async function handleEmailSyncUser(body: unknown, env: Env): Promise<void> {
 
 	console.info('Processing EMAIL_SYNC_USER queue job', {
 		userId: syncJob.user_id,
+		syncRunId: syncJob.sync_run_id ?? null,
 		lastSyncTimestamp: syncJob.last_sync_timestamp,
+		continuationConnectionId: syncJob.continuation_connection_id ?? null,
+		continuationPageTokenPresent: Boolean(syncJob.continuation_page_token),
 		connectionCount: result.connection_count,
 		processedConnectionCount: result.processed_connection_count,
 		revokedConnectionCount: result.revoked_connection_count,

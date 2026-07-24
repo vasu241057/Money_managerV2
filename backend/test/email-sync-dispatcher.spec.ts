@@ -144,8 +144,13 @@ describe('email-sync-dispatcher', () => {
 		expect(chunkSizes[0]).toBe(100);
 		expect(chunkSizes[12]).toBe(50);
 
-		const firstBatch = sendBatch.mock.calls[0]?.[0] as Array<{ body: { job_type: string } }>;
+		const firstBatch = sendBatch.mock.calls[0]?.[0] as Array<{
+			body: { job_type: string; sync_run_id?: string };
+		}>;
 		expect(firstBatch[0]?.body.job_type).toBe('EMAIL_SYNC_USER');
+		expect(firstBatch[0]?.body.sync_run_id).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+		);
 
 		expect(result).toEqual({
 			page_count: 2,
