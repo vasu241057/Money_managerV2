@@ -536,7 +536,7 @@ describe('email-sync-fetcher', () => {
 		const expectedSeconds = Math.floor((Date.now() - 90 * 24 * 60 * 60 * 1000) / 1000);
 		expect(Math.abs(afterSeconds - expectedSeconds)).toBeLessThan(24 * 60 * 60);
 		expect(listUrls[0]).toContain('includeSpamTrash=true');
-		expect(listUrls[0]).toContain('maxResults=50');
+		expect(listUrls[0]).toContain('maxResults=25');
 		expect(insertedSourceIds).toEqual(['bootstrap-broad-1']);
 		expect(cursorUpdateValue).toBe(1_700_000_500_000);
 		expect(result.fetched_message_count).toBe(1);
@@ -1405,6 +1405,13 @@ describe('email-sync-fetcher', () => {
 			expect(listCalls).toBe(1);
 			expect(refreshUpdateCalls).toBe(1);
 			expect(continuationSend).toHaveBeenCalledTimes(1);
+			expect(continuationSend).toHaveBeenCalledWith(
+				expect.objectContaining({
+					job_type: 'EMAIL_SYNC_USER',
+					continuation_page_token: 'p1',
+				}),
+				{ contentType: 'json', delaySeconds: 30 },
+			);
 		});
 
 		it('continues from continuation page token and preserves max cursor watermark', async () => {
@@ -1636,6 +1643,81 @@ describe('email-sync-fetcher', () => {
 			).rejects.toBeInstanceOf(TransientMessageError);
 
 			expect(queries.some(query => query.includes("set sync_status = 'ERROR_PAUSED'"))).toBe(false);
+		});
+
+		it('preserves Gmail batch-part 429 details and requests a minute-window retry', async () => {
+			const sql = createSqlMock((query) => {
+				if (query.includes("from public.oauth_connections as oc") && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+					return [buildConnectionRow()];
+				}
+				if (query.includes('and oc.access_token is not distinct from') && query.includes("set access_token =")) {
+					return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z' })];
+				}
+				if (query.includes('from public.raw_emails as re')) {
+					return [];
+				}
+				if (query.includes('from public.sender_rules')) {
+					return [{ pattern: 'hdfc' }, { pattern: 'icici' }];
+				}
+				throw new Error(`Unexpected query: ${query}`);
+			});
+			const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+				const url = normalizeGmailGetUrl(
+					typeof input === 'string' ? input : input.toString(),
+				);
+				if (url.includes('oauth2.googleapis.com/token')) {
+					return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					});
+				}
+				if (url.includes('/gmail/v1/users/me/messages?')) {
+					return new Response(JSON.stringify({ messages: [{ id: 'gmail-limited' }] }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					});
+				}
+				if (url.endsWith('/gmail-limited?format=full')) {
+					return new Response(
+						JSON.stringify({
+							error: {
+								status: 'RESOURCE_EXHAUSTED',
+								message: 'User-rate limit exceeded',
+							},
+						}),
+						{ status: 429, headers: { 'content-type': 'application/json' } },
+					);
+				}
+				throw new Error(`Unexpected URL: ${url}`);
+			});
+			getAppConfigMock.mockReturnValue(appConfig);
+			getSqlClientMock.mockReturnValue(sql);
+
+			let caught: unknown;
+			try {
+				await runEmailSyncUserJob(
+					{
+						job_type: 'EMAIL_SYNC_USER',
+						user_id: '00000000-0000-4000-8000-000000000001',
+						last_sync_timestamp: 1_700_000_000_000,
+					},
+					createEnv(),
+					withGmailBatchSupport(fetcher),
+				);
+			} catch (error) {
+				caught = error;
+			}
+
+			expect(caught).toBeInstanceOf(TransientMessageError);
+			expect(caught).toMatchObject({
+				retryAfterSeconds: 65,
+				retryJitterSeconds: 5,
+			});
+			expect((caught as Error).message).toContain(
+				'Gmail message batch part for gmail-limited',
+			);
+			expect((caught as Error).message).toContain('reason=RESOURCE_EXHAUSTED');
+			expect((caught as Error).message).toContain('message=User-rate limit exceeded');
 		});
 	});
 

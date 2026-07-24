@@ -23,7 +23,6 @@ import {
 } from '../lib/sender-gate';
 import {
 	executeGmailBatch,
-	GMAIL_BATCH_MAX_CALLS,
 	GmailBatchProtocolError,
 } from './gmail-batch';
 import { TransientMessageError } from './queue.errors';
@@ -35,7 +34,13 @@ const GMAIL_API_MESSAGES_LIST_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/
 const GMAIL_API_MESSAGES_GET_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/users/me/messages';
 export const ENCRYPTED_TOKEN_PREFIX = 'enc:v1:';
 const GMAIL_QUERY_OVERLAP_MS = 15 * 60 * 1000;
-const GMAIL_LIST_MAX_RESULTS = GMAIL_BATCH_MAX_CALLS;
+// A worst-case page makes one list call plus one metadata and one full-message
+// call per item. At Gmail's documented costs, 25 items consume about 1,005
+// quota units and leave enough room inside the 6,000 units/minute/user limit.
+const GMAIL_LIST_MAX_RESULTS = 25;
+const GMAIL_CONTINUATION_DELAY_SECONDS = 30;
+const GMAIL_RATE_LIMIT_RETRY_SECONDS = 65;
+const GMAIL_RATE_LIMIT_RETRY_JITTER_SECONDS = 5;
 const TOKEN_REFRESH_OCC_MAX_ATTEMPTS = 3;
 const CONTINUATION_ENQUEUE_MAX_ATTEMPTS = 3;
 const EMAIL_SYNC_LEASE_MINUTES = 20;
@@ -114,7 +119,10 @@ interface GoogleApiErrorResponse {
 	error?: {
 		errors?: Array<{
 			reason?: unknown;
+			message?: unknown;
 		}>;
+		message?: unknown;
+		code?: unknown;
 		status?: unknown;
 	} | null;
 }
@@ -449,22 +457,60 @@ function parseRefreshErrorCode(payload: unknown): string | null {
 	return typeof code === 'string' && code.length > 0 ? code : null;
 }
 
-function parseGoogleApiErrorReason(payload: unknown): string | null {
+interface GoogleApiErrorDetails {
+	reason: string | null;
+	message: string | null;
+}
+
+function normalizeGoogleApiErrorText(value: unknown): string | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+	const normalized = value.replace(/\s+/g, ' ').trim();
+	if (normalized.length === 0) {
+		return null;
+	}
+	return normalized.length <= 300 ? normalized : `${normalized.slice(0, 297)}...`;
+}
+
+function parseGoogleApiErrorDetails(payload: unknown): GoogleApiErrorDetails {
 	const record = asRecord(payload) as GoogleApiErrorResponse | null;
 	const errors = record?.error?.errors;
+	let reason: string | null = null;
+	let message: string | null = null;
 	if (Array.isArray(errors) && errors.length > 0) {
-		const reason = errors[0]?.reason;
-		if (typeof reason === 'string' && reason.length > 0) {
-			return reason;
-		}
+		reason = normalizeGoogleApiErrorText(errors[0]?.reason);
+		message = normalizeGoogleApiErrorText(errors[0]?.message);
 	}
 
 	const status = record?.error?.status;
-	if (typeof status === 'string' && status.length > 0) {
-		return status;
-	}
+	reason ??= normalizeGoogleApiErrorText(status);
+	message ??= normalizeGoogleApiErrorText(record?.error?.message);
 
-	return null;
+	return { reason, message };
+}
+
+function parseGoogleApiErrorReason(payload: unknown): string | null {
+	return parseGoogleApiErrorDetails(payload).reason;
+}
+
+function formatGoogleApiErrorDetails(payload: unknown): string {
+	const details = parseGoogleApiErrorDetails(payload);
+	return `reason=${details.reason ?? 'unknown_reason'}, message=${details.message ?? 'unknown_message'}`;
+}
+
+function createGmailRateLimitError(
+	scope: string,
+	status: number,
+	payload: unknown,
+): TransientMessageError {
+	return new TransientMessageError(
+		`${scope} retryable status ${status} (${formatGoogleApiErrorDetails(payload)})`,
+		{
+			retryAfterSeconds: GMAIL_RATE_LIMIT_RETRY_SECONDS,
+			retryJitterSeconds: GMAIL_RATE_LIMIT_RETRY_JITTER_SECONDS,
+		},
+	);
 }
 
 function classifyGoogle403Reason(reason: string | null): 'retry' | 'pause' | 'unknown' {
@@ -555,7 +601,10 @@ async function enqueueEmailSyncContinuation(
 							continuation.max_internal_timestamp_seen,
 					},
 				),
-				{ contentType: 'json' },
+				{
+					contentType: 'json',
+					delaySeconds: GMAIL_CONTINUATION_DELAY_SECONDS,
+				},
 			);
 			return;
 		} catch (error) {
@@ -603,7 +652,7 @@ async function releaseEmailSyncLease(
 	userId: UUID,
 	syncRunId: UUID,
 ): Promise<void> {
-	await sql`
+	const rows = await sql<{ id: UUID }[]>`
 		update public.oauth_connections as oc
 		set
 			email_sync_lease_id = null,
@@ -611,7 +660,15 @@ async function releaseEmailSyncLease(
 		where oc.id = ${connectionId}
 			and oc.user_id = ${userId}
 			and oc.email_sync_lease_id = ${syncRunId}
+		returning id
 	`;
+	if (rows.length > 0) {
+		console.info('EMAIL_SYNC_CONNECTION_LEASE_RELEASED', {
+			connectionId,
+			userId,
+			syncRunId,
+		});
+	}
 }
 
 async function enqueueNormalizeRawEmailsJobs(queue: Queue, rawEmailIds: UUID[]): Promise<void> {
@@ -833,9 +890,6 @@ async function gmailListMessages(
 			paused: false,
 		};
 	}
-	if (response.status === 429 || response.status >= 500) {
-		throw new TransientMessageError(`Gmail list API retryable status ${response.status}`);
-	}
 	let parsedError: GoogleApiErrorResponse | null = null;
 	if (!response.ok) {
 		try {
@@ -843,6 +897,12 @@ async function gmailListMessages(
 		} catch {
 			parsedError = null;
 		}
+	}
+	if (response.status === 429) {
+		throw createGmailRateLimitError('Gmail list API', response.status, parsedError);
+	}
+	if (response.status >= 500) {
+		throw new TransientMessageError(`Gmail list API retryable status ${response.status}`);
 	}
 	if (response.status === 403) {
 		const reason = parseGoogleApiErrorReason(parsedError);
@@ -1049,8 +1109,19 @@ export async function gmailGetAttachment(
 	if (response.status === 404) {
 		return { revoked: false, paused: false, data: null };
 	}
-	if (response.status === 429 || response.status >= 500) {
-		throw new TransientMessageError(`Gmail attachment API retryable status ${response.status}`);
+	if (response.status === 429) {
+		let parsedError: GoogleApiErrorResponse | null = null;
+		try {
+			parsedError = (await response.json()) as GoogleApiErrorResponse;
+		} catch {
+			parsedError = null;
+		}
+		throw createGmailRateLimitError('Gmail attachment API', response.status, parsedError);
+	}
+	if (response.status >= 500) {
+		throw new TransientMessageError(
+			`Gmail attachment API retryable status ${response.status}`,
+		);
 	}
 	if (response.status === 403) {
 		return { revoked: false, paused: true, data: null };
@@ -1101,9 +1172,6 @@ export async function gmailGetMessage(
 	if (response.status === 404) {
 		return { revoked: false, paused: false, message: null };
 	}
-	if (response.status === 429 || response.status >= 500) {
-		throw new TransientMessageError(`Gmail message API retryable status ${response.status}`);
-	}
 	let parsedError: GoogleApiErrorResponse | null = null;
 	if (!response.ok) {
 		try {
@@ -1111,6 +1179,12 @@ export async function gmailGetMessage(
 		} catch {
 			parsedError = null;
 		}
+	}
+	if (response.status === 429) {
+		throw createGmailRateLimitError('Gmail message API', response.status, parsedError);
+	}
+	if (response.status >= 500) {
+		throw new TransientMessageError(`Gmail message API retryable status ${response.status}`);
 	}
 	if (response.status === 403) {
 		const reason = parseGoogleApiErrorReason(parsedError);
@@ -1197,7 +1271,14 @@ async function gmailBatchGetMessages(
 	if (batchResponse.status === 401) {
 		return { revoked: true, paused: false, messages: new Map() };
 	}
-	if (batchResponse.status === 429 || batchResponse.status >= 500) {
+	if (batchResponse.status === 429) {
+		throw createGmailRateLimitError(
+			'Gmail message batch API',
+			batchResponse.status,
+			batchResponse.body,
+		);
+	}
+	if (batchResponse.status >= 500) {
 		throw new TransientMessageError(
 			`Gmail message batch API retryable status ${batchResponse.status}`,
 		);
@@ -1227,7 +1308,14 @@ async function gmailBatchGetMessages(
 			messages.set(part.id, null);
 			continue;
 		}
-		if (part.status === 429 || part.status >= 500) {
+		if (part.status === 429) {
+			throw createGmailRateLimitError(
+				`Gmail message batch part for ${part.id}`,
+				part.status,
+				part.body,
+			);
+		}
+		if (part.status >= 500) {
 			throw new TransientMessageError(
 				`Gmail message batch part retryable status ${part.status} for ${part.id}`,
 			);
@@ -2363,6 +2451,13 @@ export async function runEmailSyncUserJob(
 				});
 				continue;
 			}
+			console.info('EMAIL_SYNC_CONNECTION_LEASE_CLAIMED_OR_RENEWED', {
+				connectionId: connection.id,
+				userId: job.user_id,
+				syncRunId,
+				continuation: Boolean(job.continuation_page_token),
+				leaseMinutes: EMAIL_SYNC_LEASE_MINUTES,
+			});
 		}
 
 		// If processing throws, keep this chain's lease while Cloudflare retries
@@ -2389,6 +2484,34 @@ export async function runEmailSyncUserJob(
 	}
 
 	return result;
+}
+
+export async function releaseEmailSyncJobLeases(
+	job: EmailSyncUserJobPayload,
+	env: Env,
+): Promise<number> {
+	if (!job.sync_run_id) {
+		return 0;
+	}
+
+	const config = getAppConfig(env);
+	const sql = getSqlClient(config);
+	const rows = await sql<{ id: UUID }[]>`
+		update public.oauth_connections as oc
+		set
+			email_sync_lease_id = null,
+			email_sync_lease_expires_at = null
+		where oc.user_id = ${job.user_id}
+			and oc.email_sync_lease_id = ${job.sync_run_id}
+		returning id
+	`;
+
+	console.info('EMAIL_SYNC_JOB_LEASES_RELEASED_FOR_DLQ', {
+		userId: job.user_id,
+		syncRunId: job.sync_run_id,
+		releasedConnectionCount: rows.length,
+	});
+	return rows.length;
 }
 
 export interface StatementHarvestResult {

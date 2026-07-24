@@ -4,11 +4,16 @@ import { isMerchantMappingEnabled } from '../lib/feature-flags';
 import { QUEUE_NAMES } from '../lib/infra';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
 import { runEmailSyncDispatchJob } from './email-sync-dispatcher';
-import { runEmailSyncUserJob, runSenderBackfillJob } from './email-sync-fetcher';
+import {
+	releaseEmailSyncJobLeases,
+	runEmailSyncUserJob,
+	runSenderBackfillJob,
+} from './email-sync-fetcher';
 import { runNormalizeRawEmailsJob } from './email-ai-normalizer';
 import { runMerchantMappingJob } from './merchant-mapper';
 import { runSenderClassificationJob } from './sender-classifier';
 import {
+	isEmailSyncUserJob,
 	parseEmailSyncDispatchJob,
 	parseEmailSyncUserJob,
 	parseMerchantMappingJob,
@@ -17,7 +22,8 @@ import {
 	parseSenderClassificationJob,
 } from './queue.messages';
 
-const MAX_PROCESSING_ATTEMPTS = 5;
+// Cloudflare's max_retries=5 means one initial delivery plus five retries.
+const MAX_PROCESSING_ATTEMPTS = 6;
 const DEFAULT_QUEUE_ALERT_RETRY_RATE_PERCENT = 15;
 const DEFAULT_QUEUE_ALERT_POISON_ACK_COUNT = 3;
 const DEFAULT_QUEUE_ALERT_FINAL_RETRY_COUNT = 1;
@@ -39,6 +45,21 @@ interface QueueBatchMetrics {
 
 function retryDelaySeconds(attempts: number): number {
 	return Math.min(60, 2 ** Math.max(0, attempts));
+}
+
+function resolveRetryDelaySeconds(error: unknown, attempts: number): number {
+	if (
+		error instanceof TransientMessageError &&
+		error.retryAfterSeconds !== null
+	) {
+		const jitter =
+			error.retryJitterSeconds > 0
+				? Math.floor(Math.random() * (error.retryJitterSeconds + 1))
+				: 0;
+		return error.retryAfterSeconds + jitter;
+	}
+
+	return retryDelaySeconds(attempts);
 }
 
 function parseNonNegativeNumber(value: unknown, fallback: number): number {
@@ -306,6 +327,25 @@ export async function handleQueue(
 
 				const exhaustedRetries = message.attempts >= MAX_PROCESSING_ATTEMPTS;
 				if (exhaustedRetries) {
+					if (
+						batch.queue === QUEUE_NAMES.EMAIL_SYNC &&
+						isEmailSyncUserJob(message.body)
+					) {
+						try {
+							await releaseEmailSyncJobLeases(message.body, env);
+						} catch (releaseError) {
+							console.error('Failed to release EMAIL_SYNC_USER leases before DLQ handoff', {
+								queue: batch.queue,
+								messageId: message.id,
+								userId: message.body.user_id,
+								syncRunId: message.body.sync_run_id ?? null,
+								error:
+									releaseError instanceof Error
+										? releaseError.message
+										: 'Unknown lease release error',
+							});
+						}
+					}
 					console.error('Final retry attempt failed; delegating dead-letter routing to Cloudflare', {
 						queue: batch.queue,
 						messageId: message.id,
@@ -318,7 +358,7 @@ export async function handleQueue(
 					continue;
 				}
 
-				const delaySeconds = retryDelaySeconds(message.attempts);
+				const delaySeconds = resolveRetryDelaySeconds(error, message.attempts);
 				console.warn('Retrying queue message after transient handler error', {
 					queue: batch.queue,
 					messageId: message.id,

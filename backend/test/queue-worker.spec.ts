@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
 	runEmailSyncDispatchJobMock,
+	releaseEmailSyncJobLeasesMock,
 	runEmailSyncUserJobMock,
 	runMerchantMappingJobMock,
 	runNormalizeRawEmailsJobMock,
@@ -17,6 +18,7 @@ const {
 		continuation_offset: null,
 		scan_upper_user_id: null,
 	}),
+	releaseEmailSyncJobLeasesMock: vi.fn().mockResolvedValue(1),
 	runEmailSyncUserJobMock: vi.fn().mockResolvedValue({
 		user_id: '00000000-0000-4000-8000-000000000001',
 		connection_count: 1,
@@ -51,6 +53,7 @@ vi.mock('../src/workers/email-sync-dispatcher', () => ({
 }));
 
 vi.mock('../src/workers/email-sync-fetcher', () => ({
+	releaseEmailSyncJobLeases: releaseEmailSyncJobLeasesMock,
 	runEmailSyncUserJob: runEmailSyncUserJobMock,
 }));
 
@@ -63,6 +66,7 @@ vi.mock('../src/workers/merchant-mapper', () => ({
 }));
 
 import { QUEUE_NAMES } from '../src/lib/infra';
+import { TransientMessageError } from '../src/workers/queue.errors';
 import { handleQueue } from '../src/workers/queue.worker';
 
 interface MessageHarness {
@@ -578,7 +582,7 @@ describe('queue.worker', () => {
 	});
 
 	it('retries exhausted transient failures to hand off to DLQ', async () => {
-		const harness = createMessage({ job_type: 'EMAIL_SYNC_DISPATCH' }, 5);
+		const harness = createMessage({ job_type: 'EMAIL_SYNC_DISPATCH' }, 6);
 
 		await handleQueue(
 			{
@@ -593,6 +597,81 @@ describe('queue.worker', () => {
 
 		expect(harness.ack).not.toHaveBeenCalled();
 		expect(harness.retry).toHaveBeenCalledTimes(1);
+		expect(harness.retry).toHaveBeenCalledWith();
+	});
+
+	it('uses the sixth delivery as final because max_retries is five', async () => {
+		const harness = createMessage({ job_type: 'EMAIL_SYNC_DISPATCH' }, 5);
+
+		await handleQueue(
+			{
+				queue: 'unsupported-queue',
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		expect(harness.retry).toHaveBeenCalledWith({ delaySeconds: 32 });
+	});
+
+	it('honors Gmail rate-limit retry delay with bounded jitter', async () => {
+		runEmailSyncUserJobMock.mockRejectedValueOnce(
+			new TransientMessageError('Gmail rate limit', {
+				retryAfterSeconds: 65,
+				retryJitterSeconds: 5,
+			}),
+		);
+		const harness = createMessage(
+			{
+				job_type: 'EMAIL_SYNC_USER',
+				user_id: '00000000-0000-4000-8000-000000000001',
+				last_sync_timestamp: 1_700_000_000,
+			},
+			1,
+		);
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		const delaySeconds = harness.retry.mock.calls[0]?.[0]?.delaySeconds as number;
+		expect(delaySeconds).toBeGreaterThanOrEqual(65);
+		expect(delaySeconds).toBeLessThanOrEqual(70);
+	});
+
+	it('releases a failed sync run lease before final DLQ handoff', async () => {
+		runEmailSyncUserJobMock.mockRejectedValueOnce(new Error('Gmail still rate limited'));
+		const body = {
+			job_type: 'EMAIL_SYNC_USER',
+			user_id: '00000000-0000-4000-8000-000000000001',
+			last_sync_timestamp: 1_700_000_000,
+			sync_run_id: '00000000-0000-4000-8000-0000000000f0',
+		};
+		const harness = createMessage(body, 6);
+		const env = {} as Env;
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			env,
+			{} as ExecutionContext,
+		);
+
+		expect(releaseEmailSyncJobLeasesMock).toHaveBeenCalledWith(body, env);
 		expect(harness.retry).toHaveBeenCalledWith();
 	});
 
