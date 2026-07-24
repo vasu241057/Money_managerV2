@@ -64,16 +64,21 @@
 }
 
 .ledger-bottom-nav {
+  --ledger-bottom-nav-bottom-inset: max(
+    8px,
+    calc(env(safe-area-inset-bottom, 0px) - 17px)
+  );
+
   position: relative;
   z-index: 30;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: start;
-  min-height: calc(72px + env(safe-area-inset-bottom, 0px));
+  min-height: calc(72px + var(--ledger-bottom-nav-bottom-inset));
   padding:
     6px
     max(8px, env(safe-area-inset-right, 0px))
-    env(safe-area-inset-bottom, 0px)
+    var(--ledger-bottom-nav-bottom-inset)
     max(8px, env(safe-area-inset-left, 0px));
   background: var(--ledger-card);
   border-top: 1px solid var(--ledger-rule);
