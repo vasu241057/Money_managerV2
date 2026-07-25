@@ -9,6 +9,10 @@ import {
 	type ArtworkMode,
 	type MerchantArtworkPhase,
 } from '../../hooks/useMerchantArtworkPhase';
+import {
+	transactionMetaLabel,
+	transactionPrimaryLabel,
+} from '../../lib/transaction-display';
 
 interface TransactionsLedgerProps {
 	onNavigate: (screen: ScreenId) => void;
@@ -16,41 +20,6 @@ interface TransactionsLedgerProps {
 }
 
 type FilterChip = 'all' | 'income' | 'expense' | 'review';
-
-function transactionPrimaryLabel(transaction: Transaction): string {
-	return transaction.merchantName
-		?? transaction.description
-		?? transaction.counterpartyRaw
-		?? transaction.subCategory
-		?? transaction.category
-		?? 'Transaction';
-}
-
-function paymentSourceLabel(transaction: Transaction): string | null {
-	if (transaction.creditCardLabel) {
-		return transaction.instrumentLast4
-			? `${transaction.creditCardLabel} ·· ${transaction.instrumentLast4}`
-			: transaction.creditCardLabel;
-	}
-	return transaction.accountName ?? null;
-}
-
-function transactionMetaLabel(transaction: Transaction, viewMode: 'daily' | 'monthly'): string {
-	const primaryLabel = transactionPrimaryLabel(transaction);
-	const noteLabel = transaction.description !== primaryLabel ? transaction.description : null;
-	const categoryLabel = transaction.subCategory ?? transaction.category;
-	const paymentSource = paymentSourceLabel(transaction);
-	const transactionDay = viewMode === 'monthly'
-		? transaction.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
-		: null;
-
-	return [
-		noteLabel,
-		paymentSource,
-		categoryLabel !== primaryLabel ? categoryLabel : null,
-		transactionDay,
-	].filter(Boolean).join(' · ');
-}
 
 function formatSignedRupees(amount: number, type: string): string {
 	const sign = type === 'income' ? '+' : type === 'expense' ? '−' : '↔';

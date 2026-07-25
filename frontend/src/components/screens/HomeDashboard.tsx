@@ -8,6 +8,10 @@ import { paiseToRupees } from '../../lib/money';
 import { HomeSkeleton, SkeletonTxnRow } from '../ui/Skeleton';
 import { TransactionArtwork } from '../ui/TransactionArtwork';
 import { useMerchantArtworkPhase } from '../../hooks/useMerchantArtworkPhase';
+import {
+	transactionIdentityName,
+	transactionPrimaryLabel,
+} from '../../lib/transaction-display';
 
 interface HomeDashboardProps {
 	onNavigate: (screen: ScreenId) => void;
@@ -321,8 +325,11 @@ export function HomeDashboard({ onNavigate, onOpenReview, onEditTransaction }: H
 								const isLast = i === recent.length - 1;
 								const isIncome = t.type === 'income';
 								const isExpense = t.type === 'expense';
-								const label = t.merchantName ?? t.category;
-								const subLabel = [t.accountName, relativeDate(t.date)].filter(Boolean).join(' · ');
+								const label = transactionPrimaryLabel(t);
+								const merchantContext = t.description ? transactionIdentityName(t) : null;
+								const subLabel = [merchantContext, t.accountName, relativeDate(t.date)]
+									.filter(Boolean)
+									.join(' · ');
 
 								return (
 									<button

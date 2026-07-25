@@ -9,13 +9,13 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       proxy: {
-        // Single catch-all: every /api/* path goes to the backend. Never
-        // enumerate routes here — a missing entry makes Vite serve
-        // index.html for that API call ("<!doctype is not valid JSON").
+        // Keep /api intact when forwarding to Wrangler. Its asset routing
+        // runs the Worker first for /api/*, then toBackendRequest removes the
+        // prefix before Express routing. Stripping it here makes Wrangler
+        // treat /transactions etc. as SPA navigations and return index.html.
         '/api': {
           target: backendTarget,
           changeOrigin: true,
-          rewrite: path => path.replace(/^\/api/, ''),
         },
       },
     },

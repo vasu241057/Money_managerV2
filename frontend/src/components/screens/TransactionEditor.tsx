@@ -1,5 +1,13 @@
 import { useMemo, useState } from 'react';
-import { ChevronLeft, Calendar, Lock, Loader2, Trash2 } from 'lucide-react';
+import {
+	Calendar,
+	ChevronLeft,
+	Lock,
+	Loader2,
+	Store,
+	Trash2,
+	UserRound,
+} from 'lucide-react';
 import { useCategories } from '../../hooks/useCategories';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
@@ -38,6 +46,101 @@ function parseAmountInput(value: string): number | null {
 	return isNaN(num) ? null : num;
 }
 
+function MerchantIdentityCard({ transaction }: { transaction: Transaction }) {
+	const detectedName = transaction.counterpartyRaw?.trim() || null;
+	const isP2P = transaction.merchantType === 'P2P';
+	const normalizedName = transaction.merchantName?.trim()
+		|| (isP2P ? detectedName : null);
+	const displayName = normalizedName ?? detectedName ?? 'Not identified';
+	const identityLabel = isP2P ? 'Payee' : 'Merchant';
+	const displayCaption = normalizedName
+		? isP2P ? 'Normalized payee' : 'Normalized merchant'
+		: 'Detected merchant';
+	const [logoFailed, setLogoFailed] = useState(false);
+	const showLogo = Boolean(transaction.merchantLogoUrl) && !logoFailed;
+
+	return (
+		<section aria-labelledby="transaction-merchant-heading">
+			<p
+				id="transaction-merchant-heading"
+				className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2 px-1"
+				style={{ color: 'var(--ledger-muted)' }}
+			>
+				{identityLabel}
+			</p>
+			<div
+				className="rounded-[10px] overflow-hidden"
+				style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+			>
+				<div className="flex items-center gap-3 px-3.5 py-3">
+					<div
+						className="w-11 h-11 shrink-0 rounded-[10px] flex items-center justify-center overflow-hidden"
+						style={{
+							background: showLogo ? '#fff' : 'var(--ledger-rule)',
+							color: 'var(--ledger-accent)',
+							border: '1px solid var(--ledger-rule)',
+						}}
+					>
+						{showLogo ? (
+							<img
+								src={transaction.merchantLogoUrl ?? undefined}
+								alt=""
+								className="w-full h-full object-contain p-1.5"
+								onError={() => setLogoFailed(true)}
+							/>
+						) : isP2P ? (
+							<UserRound size={20} strokeWidth={1.8} />
+						) : (
+							<Store size={20} strokeWidth={1.8} />
+						)}
+					</div>
+					<div className="min-w-0 flex-1">
+						<p
+							className="text-[9px] font-bold uppercase tracking-[0.15em] mb-0.5"
+							style={{ color: 'var(--ledger-muted)' }}
+						>
+							{displayCaption}
+						</p>
+						<p
+							className="text-base font-bold truncate"
+							title={displayName}
+							style={{ color: 'var(--ledger-fg)' }}
+						>
+							{displayName}
+						</p>
+					</div>
+					{transaction.merchantType && (
+						<span
+							className="shrink-0 rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[0.1em]"
+							style={{
+								background: 'var(--ledger-nav-active)',
+								color: 'var(--ledger-accent)',
+							}}
+						>
+							{isP2P ? 'Person' : transaction.merchantType.toLowerCase().replace('_', ' ')}
+						</span>
+					)}
+				</div>
+				<div
+					className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 px-3.5 py-2.5"
+					style={{ borderTop: '1px solid var(--ledger-rule)' }}
+				>
+					<span className="text-[10px] font-semibold" style={{ color: 'var(--ledger-muted)' }}>
+						Detected name
+					</span>
+					<span
+						className="text-xs font-medium text-right truncate"
+						title={detectedName ?? 'Not available'}
+						style={{ color: 'var(--ledger-fg)' }}
+					>
+						{detectedName ?? 'Not available'}
+					</span>
+				</div>
+			</div>
+		</section>
+	);
+}
+
 export function TransactionEditor({
 	mode,
 	editingTransaction = null,
@@ -50,6 +153,10 @@ export function TransactionEditor({
 
 	const isBankDetected = mode === 'edit' && !isManual;
 	const immutableLocked = isBankDetected;
+	const hasMerchantIdentity = Boolean(
+		editingTransaction?.merchantName?.trim()
+		|| editingTransaction?.counterpartyRaw?.trim(),
+	);
 
 	const [type, setType] = useState<TransactionType>(editingTransaction?.type ?? 'expense');
 	const [amountStr, setAmountStr] = useState(
@@ -163,25 +270,25 @@ export function TransactionEditor({
 				<div className="w-8 h-8" />
 			</header>
 
-			<main className="flex-1 overflow-y-auto px-5 pt-5 pb-8">
+			<main className="flex-1 overflow-y-auto px-5 pt-4 pb-8 flex flex-col gap-5">
 				{/* BANK-DETECTED BANNER */}
 				{isBankDetected && (
 					<div
-						className="rounded-[10px] px-4 py-3 mb-6 flex items-start gap-3"
+						className="rounded-[10px] px-3.5 py-2.5 flex items-center gap-2.5"
 						style={{
 							background: 'var(--ledger-amber-bg)',
 							border: '1px solid rgba(184, 115, 42, 0.2)',
 						}}
 					>
-						<Lock size={15} className="shrink-0 mt-0.5" style={{ color: 'var(--ledger-amber)' }} />
-						<p className="text-xs leading-relaxed" style={{ color: 'var(--ledger-amber)' }}>
-							Imported from Gmail. Amount, type, and date are locked. Category, account, and note remain editable.
+						<Lock size={14} className="shrink-0" style={{ color: 'var(--ledger-amber)' }} />
+						<p className="text-[10px] leading-none whitespace-nowrap" style={{ color: 'var(--ledger-amber)' }}>
+							Gmail import · Edit category, account &amp; note
 						</p>
 					</div>
 				)}
 
 				{/* TYPE TOGGLE */}
-				<div className="mb-8">
+				<div>
 					<div className={`flex gap-2 w-full ${immutableLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
 						<button
 							onClick={() => {
@@ -219,14 +326,17 @@ export function TransactionEditor({
 						</button>
 					</div>
 					{immutableLocked && (
-						<p className="text-[11px] italic mt-2 text-center px-4" style={{ color: 'var(--ledger-muted)' }}>
+						<p
+							className="text-[11px] italic mt-2 text-center px-4"
+							style={{ color: 'var(--ledger-muted)' }}
+						>
 							Amount, type, and date cannot be changed for bank-detected transactions.
 						</p>
 					)}
 				</div>
 
 				{/* AMOUNT */}
-				<div className={`mb-8 flex flex-col items-center ${immutableLocked ? 'opacity-60 pointer-events-none' : ''}`}>
+				<div className={`flex flex-col items-center ${immutableLocked ? 'opacity-60 pointer-events-none' : ''}`}>
 					<div className="flex items-baseline justify-center relative w-full px-8">
 						<span
 							className="text-2xl font-medium absolute left-4 top-1/2 -translate-y-1/2"
@@ -256,7 +366,7 @@ export function TransactionEditor({
 				</div>
 
 				{/* DATE */}
-				<div className={`mb-6 ${immutableLocked ? 'opacity-60 pointer-events-none' : ''}`}>
+				<div className={immutableLocked ? 'opacity-60 pointer-events-none' : ''}>
 					<label className="block w-full">
 						<div
 							className="w-full rounded-[10px] px-4 py-3.5 flex justify-between items-center transition-colors cursor-pointer"
@@ -285,9 +395,9 @@ export function TransactionEditor({
 				</div>
 
 				{/* CATEGORY */}
-				<div className="mb-6">
+				<div>
 					<p
-						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-3 px-1"
+						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2 px-1"
 						style={{ color: 'var(--ledger-muted)' }}
 					>
 						Category
@@ -323,9 +433,9 @@ export function TransactionEditor({
 
 				{/* SUB-CATEGORY */}
 				{subCategories.length > 0 && (
-					<div className="mb-6">
+					<div>
 						<p
-							className="text-[10px] font-bold uppercase tracking-[0.2em] mb-3 px-1"
+							className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2 px-1"
 							style={{ color: 'var(--ledger-muted)' }}
 						>
 							Sub-category
@@ -353,9 +463,9 @@ export function TransactionEditor({
 				)}
 
 				{/* ACCOUNT */}
-				<div className="mb-6">
+				<div>
 					<p
-						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-3 px-1"
+						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2 px-1"
 						style={{ color: 'var(--ledger-muted)' }}
 					>
 						Account
@@ -384,10 +494,14 @@ export function TransactionEditor({
 					)}
 				</div>
 
+				{mode === 'edit' && editingTransaction && (isBankDetected || hasMerchantIdentity) && (
+					<MerchantIdentityCard transaction={editingTransaction} />
+				)}
+
 				{/* NOTE */}
-				<div className="mb-8">
+				<div>
 					<p
-						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-3 px-1"
+						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2 px-1"
 						style={{ color: 'var(--ledger-muted)' }}
 					>
 						Note
