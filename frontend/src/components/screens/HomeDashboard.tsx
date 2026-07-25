@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
-import { Plus, ArrowRight, ChevronRight, Circle } from 'lucide-react';
+import { Plus, ArrowRight, ChevronRight } from 'lucide-react';
 import type { ScreenId } from '../layout/BottomNav';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
 import { useAnalyticsSummary, monthKeyIST } from '../../hooks/useAnalyticsSummary';
 import { useGmailConnection } from '../../hooks/useGmailConnection';
 import { paiseToRupees } from '../../lib/money';
 import { HomeSkeleton, SkeletonTxnRow } from '../ui/Skeleton';
+import { TransactionArtwork } from '../ui/TransactionArtwork';
+import { useMerchantArtworkPhase } from '../../hooks/useMerchantArtworkPhase';
 
 interface HomeDashboardProps {
 	onNavigate: (screen: ScreenId) => void;
+	onOpenReview: (scope: 'recent' | 'all') => void;
 	onEditTransaction?: (t: Transaction) => void;
 }
 
@@ -34,7 +37,7 @@ function relativeDate(date: Date): string {
 	return date.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
 }
 
-export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardProps) {
+export function HomeDashboard({ onNavigate, onOpenReview, onEditTransaction }: HomeDashboardProps) {
 	const {
 		transactions,
 		reviewInbox,
@@ -47,6 +50,7 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 
 	const [heroRange, setHeroRange] = useState<'month' | 'all'>('month');
 	const { summary, isLoading: summaryLoading } = useAnalyticsSummary();
+	const recentArtworkPhase = useMerchantArtworkPhase('auto');
 
 	// Hero figures come from the server-computed summary — no need to wait
 	// for the full transaction feed.
@@ -245,7 +249,7 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 							].map((paneData, paneIndex) => (
 								<button
 									key={paneIndex}
-									onClick={() => onNavigate('review')}
+									onClick={() => onOpenReview(paneIndex === 0 ? 'recent' : 'all')}
 									className="w-full shrink-0 snap-center flex items-center justify-between p-4 rounded-[10px] text-left transition-transform active:scale-[0.98]"
 									style={{
 										background: 'var(--ledger-amber-bg)',
@@ -317,16 +321,6 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 								const isLast = i === recent.length - 1;
 								const isIncome = t.type === 'income';
 								const isExpense = t.type === 'expense';
-								const iconBg = isIncome
-									? 'rgba(45, 122, 79, 0.08)'
-									: isExpense
-										? 'rgba(196, 83, 54, 0.08)'
-										: 'var(--ledger-rule)';
-								const iconColor = isIncome
-									? 'var(--ledger-positive)'
-									: isExpense
-										? 'var(--ledger-negative)'
-										: 'var(--ledger-muted)';
 								const label = t.merchantName ?? t.category;
 								const subLabel = [t.accountName, relativeDate(t.date)].filter(Boolean).join(' · ');
 
@@ -337,20 +331,15 @@ export function HomeDashboard({ onNavigate, onEditTransaction }: HomeDashboardPr
 										className="w-full flex items-center justify-between p-3.5 text-left transition-colors"
 										style={!isLast ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}
 									>
-										<div className="flex items-center gap-3">
-											<div
-												className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-												style={{ background: iconBg, color: iconColor }}
-											>
-												<Circle size={16} />
-											</div>
-											<div>
-												<p className="text-sm font-semibold" style={{ color: 'var(--ledger-fg)' }}>{label}</p>
-												<p className="text-xs mt-0.5" style={{ color: 'var(--ledger-muted)' }}>{subLabel}</p>
+										<div className="flex items-center gap-3 min-w-0 flex-1">
+											<TransactionArtwork transaction={t} phase={recentArtworkPhase} size="compact" />
+											<div className="min-w-0">
+												<p className="text-sm font-semibold truncate" style={{ color: 'var(--ledger-fg)' }}>{label}</p>
+												<p className="text-xs mt-0.5 truncate" style={{ color: 'var(--ledger-muted)' }}>{subLabel}</p>
 											</div>
 										</div>
 										<p
-											className="text-sm font-semibold tnum"
+											className="text-sm font-semibold tnum shrink-0 ml-3"
 											style={{ color: isIncome ? 'var(--ledger-positive)' : isExpense ? 'var(--ledger-fg)' : 'var(--ledger-muted)' }}
 										>
 											{formatSignedRupees(t.amount, t.type)}

@@ -2,8 +2,14 @@
   width: 40px;
   height: 40px;
   flex: 0 0 40px;
-  perspective: 240px;
-  -webkit-perspective: 240px;
+  perspective: 320px;
+  -webkit-perspective: 320px;
+}
+
+.ledger-artwork--compact {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
 }
 
 .ledger-artwork__rotor {
@@ -15,7 +21,14 @@
   transform-style: preserve-3d;
   -webkit-transform-style: preserve-3d;
   will-change: transform;
-  transition: transform 760ms cubic-bezier(0.2, 0.68, 0.24, 1);
+}
+
+.ledger-artwork__rotor--flip-to-merchant {
+  animation: ledger-artwork-flip-to-merchant 900ms cubic-bezier(0.22, 0.7, 0.2, 1) both;
+}
+
+.ledger-artwork__rotor--flip-to-category {
+  animation: ledger-artwork-flip-to-category 900ms cubic-bezier(0.22, 0.7, 0.2, 1) both;
 }
 
 .ledger-artwork__face {
@@ -33,7 +46,7 @@
 }
 
 .ledger-artwork__face--merchant {
-  padding: 2.5px;
+  padding: 5.25px;
   transform: rotateY(180deg) translateZ(1px);
   background: #fff;
   border: 1px solid var(--ledger-rule);
@@ -51,8 +64,28 @@
   object-fit: contain;
 }
 
+@keyframes ledger-artwork-flip-to-merchant {
+  0% { transform: rotateY(0deg); }
+  46% { transform: rotateY(82deg); }
+  54% { transform: rotateY(98deg); }
+  100% { transform: rotateY(180deg); }
+}
+
+@keyframes ledger-artwork-flip-to-category {
+  0% { transform: rotateY(180deg); }
+  46% { transform: rotateY(262deg); }
+  54% { transform: rotateY(278deg); }
+  100% { transform: rotateY(360deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .ledger-artwork__rotor {
-    transition: none;
+  .ledger-artwork__rotor--flip-to-merchant {
+    animation: none;
+    transform: rotateY(180deg);
+  }
+
+  .ledger-artwork__rotor--flip-to-category {
+    animation: none;
+    transform: rotateY(0deg);
   }
 }

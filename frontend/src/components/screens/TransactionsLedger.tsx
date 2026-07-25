@@ -1,23 +1,14 @@
-import { createElement, useEffect, useMemo, useState } from 'react';
-import {
-	AppWindow, ArrowDownCircle, ArrowLeftRight, ArrowUpCircle, Armchair, Award,
-	Baby, BadgePercent, BedDouble, Bike, Bitcoin, Blocks, Bone, Book, BookOpen,
-	Briefcase, Building, Bus, Car,
-	CarTaxiFront, ChevronDown, ChevronRight, Circle, CircleDashed, CircleParking,
-	CirclePlus, Clapperboard, Clock, Coffee, CreditCard, Droplets, Dumbbell, Film,
-	Flame, Flower2, Fuel, Gamepad2,
-	Gift, GraduationCap, Hammer, HandHelping, HeartHandshake, HeartPulse, Home,
-	IdCard, Landmark, Laptop, LineChart, MapPin, MonitorPlay, Palette, PawPrint,
-	PackageOpen, Percent, Pill, Plane, Plus, Receipt, ReceiptText, Repeat, Scissors, School,
-	Shield, Shirt,
-	ShoppingBag, ShoppingCart, Signal, SlidersHorizontal, Smartphone, Sparkles,
-	Stethoscope, Store, TestTube, Ticket, TrainFront, TrendingUp, Tv, Undo2,
-	Utensils, UtensilsCrossed, Wallet, Wifi, Wrench, X, Zap, type LucideIcon,
-} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Plus, SlidersHorizontal, X } from 'lucide-react';
 import type { ScreenId } from '../layout/BottomNav';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
 import { LedgerListSkeleton } from '../ui/Skeleton';
-import '../../styles/merchant-logo-flip.css';
+import { TransactionArtwork } from '../ui/TransactionArtwork';
+import {
+	useMerchantArtworkPhase,
+	type ArtworkMode,
+	type MerchantArtworkPhase,
+} from '../../hooks/useMerchantArtworkPhase';
 
 interface TransactionsLedgerProps {
 	onNavigate: (screen: ScreenId) => void;
@@ -25,300 +16,6 @@ interface TransactionsLedgerProps {
 }
 
 type FilterChip = 'all' | 'income' | 'expense' | 'review';
-type ArtworkMode = 'auto' | 'category' | 'merchant';
-
-const CATEGORY_ICONS: Record<string, LucideIcon> = {
-	AppWindow,
-	ArrowDownCircle,
-	ArrowLeftRight,
-	ArrowUpCircle,
-	Armchair,
-	Award,
-	Baby,
-	BadgePercent,
-	BedDouble,
-	Bike,
-	Bitcoin,
-	Blocks,
-	Bone,
-	Book,
-	BookOpen,
-	Briefcase,
-	Building,
-	Bus,
-	Car,
-	CarTaxiFront,
-	Circle,
-	CircleDashed,
-	CirclePlus,
-	Clapperboard,
-	Clock,
-	Coffee,
-	CreditCard,
-	Droplets,
-	Dumbbell,
-	Film,
-	Flame,
-	Flower2,
-	Fuel,
-	Gamepad2,
-	Gift,
-	GraduationCap,
-	Hammer,
-	HandHelping,
-	HeartHandshake,
-	HeartPulse,
-	Home,
-	IdCard,
-	Landmark,
-	Laptop,
-	LineChart,
-	MapPin,
-	MonitorPlay,
-	Palette,
-	ParkingCircle: CircleParking,
-	PawPrint,
-	Percent,
-	Pill,
-	Plane,
-	Receipt,
-	ReceiptText,
-	Repeat,
-	Scissors,
-	School,
-	Shield,
-	Shirt,
-	ShoppingBag,
-	ShoppingCart,
-	Signal,
-	Smartphone,
-	Sparkles,
-	Stethoscope,
-	Store,
-	TestTube,
-	Ticket,
-	TrainFront,
-	TrendingUp,
-	Tv,
-	Undo2,
-	Utensils,
-	UtensilsCrossed,
-	Wallet,
-	Wifi,
-	Wrench,
-	Zap,
-};
-
-// Category names are the semantic source of truth for the ledger. The stored
-// icon token remains a fallback for user-created and future categories, but
-// the complete system taxonomy is mapped here so a transport-looking glyph
-// never stands in for food delivery (and a painting palette never means beauty).
-const CATEGORY_NAME_ICONS: Record<string, LucideIcon> = {
-	// Structural fallbacks (normally never assigned directly)
-	Expense: Circle,
-	Income: ArrowDownCircle,
-	Transfer: ArrowLeftRight,
-
-	// Expense parents
-	Food: Utensils,
-	Transport: Car,
-	Shopping: ShoppingBag,
-	Bills: ReceiptText,
-	Health: HeartPulse,
-	Entertainment: Film,
-	'Credit Card Spend': CreditCard,
-	Housing: Home,
-	Education: GraduationCap,
-	Travel: Plane,
-	'Personal Care': Sparkles,
-	Financial: Landmark,
-	'Gifts & Donations': Gift,
-	Pets: PawPrint,
-	Subscriptions: MonitorPlay,
-	'Family & Kids': Baby,
-	Miscellaneous: Circle,
-
-	// Income and transfer parents
-	Salary: Briefcase,
-	Refund: Undo2,
-	Cashback: Gift,
-	'Freelance & Business': Briefcase,
-	Investments: TrendingUp,
-	'Gifts Received': Gift,
-	'Other Income': CirclePlus,
-	'Card Bill Payment': CreditCard,
-	'Wallet Transfer': Wallet,
-	'Broker Transfer': LineChart,
-	'Self Transfer': ArrowLeftRight,
-	'Other Transfer': CircleDashed,
-
-	// Food
-	Groceries: ShoppingCart,
-	Restaurants: UtensilsCrossed,
-	'Food Delivery': PackageOpen,
-	'Snacks & Beverages': Coffee,
-
-	// Transport
-	Fuel: Fuel,
-	'Public Transport': Bus,
-	'Taxi & Rideshare': CarTaxiFront,
-	'Parking & Tolls': CircleParking,
-	'Vehicle Maintenance': Wrench,
-
-	// Shopping
-	'Clothing & Fashion': Shirt,
-	Electronics: Smartphone,
-	'Home & Furniture': Armchair,
-	'Beauty & Cosmetics': Sparkles,
-
-	// Bills
-	Electricity: Zap,
-	Water: Droplets,
-	Gas: Flame,
-	'Internet & Broadband': Wifi,
-	'Mobile Recharge': Signal,
-	'DTH & Cable': Tv,
-
-	// Health
-	'Doctor & Consultation': Stethoscope,
-	'Medicines & Pharmacy': Pill,
-	'Lab Tests': TestTube,
-	'Fitness & Gym': Dumbbell,
-
-	// Entertainment
-	'Movies & Shows': Clapperboard,
-	Games: Gamepad2,
-	'Events & Concerts': Ticket,
-	'OTT & Streaming': MonitorPlay,
-
-	// Housing, education, and travel
-	Rent: Home,
-	'Home Maintenance': Hammer,
-	'House Help': HandHelping,
-	'School & College Fees': School,
-	'Courses & Coaching': BookOpen,
-	'Books & Supplies': Book,
-	Flights: Plane,
-	'Trains & Buses': TrainFront,
-	'Hotels & Stays': BedDouble,
-	'Trip Activities': MapPin,
-
-	// Personal care and financial
-	'Salon & Grooming': Scissors,
-	'Spa & Wellness': Flower2,
-	'Loan EMI': Landmark,
-	'Bank Fees & Charges': BadgePercent,
-	'Insurance Premiums': Shield,
-	Taxes: Receipt,
-
-	// Gifts, pets, subscriptions, and family
-	'Gifts Given': Gift,
-	'Charity & Donations': HeartHandshake,
-	'Pet Food & Supplies': Bone,
-	'Vet & Grooming': PawPrint,
-	'Software & Apps': AppWindow,
-	Memberships: IdCard,
-	Childcare: Baby,
-	'Kids Activities': Blocks,
-
-	// Income subcategories
-	'Full-time Salary': Briefcase,
-	'Bonus & Incentives': Award,
-	'Part-time & Stipend': Clock,
-	'Freelance Projects': Laptop,
-	'Business Income': Store,
-	'Stocks & Mutual Funds': LineChart,
-	'Dividends & Interest': Percent,
-	Crypto: Bitcoin,
-	'Rental Income': Building,
-	'Purchase Refund': Undo2,
-	Reimbursements: ReceiptText,
-};
-
-function categoryIconFor(transaction: Transaction): LucideIcon {
-	return CATEGORY_NAME_ICONS[transaction.category]
-		?? CATEGORY_ICONS[transaction.categoryIcon ?? '']
-		?? Circle;
-}
-
-interface MerchantArtworkPhase {
-	showMerchantLogos: boolean;
-	rotationDegrees: number;
-}
-
-function useMerchantArtworkPhase(mode: ArtworkMode): MerchantArtworkPhase {
-	const [phase, setPhase] = useState<MerchantArtworkPhase>({
-		showMerchantLogos: false,
-		rotationDegrees: 0,
-	});
-
-	useEffect(() => {
-		const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-		let intervalId: ReturnType<typeof setInterval> | null = null;
-
-		const showFace = (showMerchantLogos: boolean) => {
-			setPhase((current) => {
-				if (current.showMerchantLogos === showMerchantLogos) return current;
-				return {
-					showMerchantLogos,
-					rotationDegrees: current.rotationDegrees + 180,
-				};
-			});
-		};
-
-		const restart = () => {
-			if (intervalId) {
-				clearInterval(intervalId);
-				intervalId = null;
-			}
-
-			if (mode !== 'auto') {
-				showFace(mode === 'merchant');
-				return;
-			}
-
-			// Every Ledger visit begins with the category face. People who
-			// request reduced motion keep that stable, authoritative face.
-			showFace(false);
-			if (!reducedMotion.matches) {
-				intervalId = setInterval(() => {
-					setPhase((current) => ({
-						showMerchantLogos: !current.showMerchantLogos,
-						rotationDegrees: current.rotationDegrees + 180,
-					}));
-				}, 10_000);
-			}
-		};
-
-		restart();
-		reducedMotion.addEventListener('change', restart);
-		return () => {
-			reducedMotion.removeEventListener('change', restart);
-			if (intervalId) clearInterval(intervalId);
-		};
-	}, [mode]);
-
-	return phase;
-}
-
-function categoryColorFor(transaction: Transaction): string {
-	if (transaction.type === 'income') return 'var(--ledger-positive)';
-	if (transaction.type === 'transfer') return 'var(--ledger-muted)';
-
-	if (['Transport', 'Travel'].includes(transaction.category)) {
-		return 'var(--ledger-category-blue)';
-	}
-	if (['Shopping', 'Entertainment', 'Personal Care', 'Subscriptions'].includes(transaction.category)) {
-		return 'var(--ledger-category-plum)';
-	}
-	if (['Health', 'Family & Kids', 'Pets', 'Gifts & Donations'].includes(transaction.category)) {
-		return 'var(--ledger-category-rose)';
-	}
-	if (['Food', 'Bills', 'Housing', 'Education'].includes(transaction.category)) {
-		return 'var(--ledger-amber)';
-	}
-	return 'var(--ledger-accent)';
-}
 
 function transactionPrimaryLabel(transaction: Transaction): string {
 	return transaction.merchantName
@@ -396,8 +93,7 @@ interface LedgerTransactionRowProps {
 	transaction: Transaction;
 	isLast: boolean;
 	viewMode: 'daily' | 'monthly';
-	showMerchantLogos: boolean;
-	artworkRotationDegrees: number;
+	artworkPhase: MerchantArtworkPhase;
 	onEditTransaction?: (transaction: Transaction) => void;
 }
 
@@ -405,22 +101,14 @@ function LedgerTransactionRow({
 	transaction,
 	isLast,
 	viewMode,
-	showMerchantLogos,
-	artworkRotationDegrees,
+	artworkPhase,
 	onEditTransaction,
 }: LedgerTransactionRowProps) {
 	const isIncome = transaction.type === 'income';
 	const isTransfer = transaction.type === 'transfer';
 	const isReview = transaction.status === 'NEEDS_REVIEW';
-	const iconColor = categoryColorFor(transaction);
 	const primaryLabel = transactionPrimaryLabel(transaction);
 	const metaLabel = transactionMetaLabel(transaction, viewMode);
-	const [failedMerchantLogoUrl, setFailedMerchantLogoUrl] = useState<string | null>(null);
-	const merchantLogoUrl = transaction.merchantLogoUrl ?? null;
-	const hasUsableMerchantLogo = merchantLogoUrl !== null
-		&& merchantLogoUrl !== failedMerchantLogoUrl;
-	const showMerchantFace = showMerchantLogos && hasUsableMerchantLogo;
-	const rowRotationDegrees = hasUsableMerchantLogo ? artworkRotationDegrees : 0;
 
 	return (
 		<button
@@ -429,38 +117,7 @@ function LedgerTransactionRow({
 			style={!isLast ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}
 		>
 			<div className="flex items-center gap-3 min-w-0 flex-1">
-				<div
-					className="ledger-artwork"
-					data-artwork-face={showMerchantFace ? 'merchant' : 'category'}
-					role="img"
-					aria-label={`${transaction.category} category${transaction.merchantName ? `, ${transaction.merchantName} merchant` : ''}`}
-				>
-					<div
-						className="ledger-artwork__rotor"
-						style={{ transform: `rotateY(${rowRotationDegrees}deg)` }}
-					>
-						<span
-							className="ledger-artwork__face ledger-artwork__face--category"
-							style={{
-								background: `color-mix(in srgb, ${iconColor} 11%, transparent)`,
-								color: iconColor,
-							}}
-						>
-							{createElement(categoryIconFor(transaction), { size: 17, strokeWidth: 1.9 })}
-						</span>
-						<span className="ledger-artwork__face ledger-artwork__face--merchant">
-							{merchantLogoUrl && (
-								<img
-									src={merchantLogoUrl}
-									alt=""
-									loading="lazy"
-									decoding="async"
-									onError={() => setFailedMerchantLogoUrl(merchantLogoUrl)}
-								/>
-							)}
-						</span>
-					</div>
-				</div>
+				<TransactionArtwork transaction={transaction} phase={artworkPhase} />
 				<div className="min-w-0">
 					<p className="text-sm font-semibold truncate" style={{ color: 'var(--ledger-fg)' }}>
 						{primaryLabel}
@@ -512,10 +169,7 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 	const [artworkMode, setArtworkMode] = useState<ArtworkMode>('auto');
 	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [expandedMonthKey, setExpandedMonthKey] = useState('');
-	const {
-		showMerchantLogos,
-		rotationDegrees: artworkRotationDegrees,
-	} = useMerchantArtworkPhase(artworkMode);
+	const artworkPhase = useMerchantArtworkPhase(artworkMode);
 	const hasActiveControls = filterChip !== 'all' || artworkMode !== 'auto';
 
 	useEffect(() => {
@@ -808,8 +462,7 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 													transaction={transaction}
 													isLast={index === group.transactions.length - 1}
 													viewMode="monthly"
-													showMerchantLogos={showMerchantLogos}
-													artworkRotationDegrees={artworkRotationDegrees}
+													artworkPhase={artworkPhase}
 													onEditTransaction={onEditTransaction}
 												/>
 											))}
@@ -842,8 +495,7 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 											transaction={transaction}
 											isLast={index === group.transactions.length - 1}
 											viewMode="daily"
-											showMerchantLogos={showMerchantLogos}
-											artworkRotationDegrees={artworkRotationDegrees}
+											artworkPhase={artworkPhase}
 											onEditTransaction={onEditTransaction}
 										/>
 									))}

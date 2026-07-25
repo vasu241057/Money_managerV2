@@ -1,5 +1,5 @@
 import { ClerkLoaded, ClerkLoading, Show, SignInButton, SignUpButton } from '@clerk/react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ClerkTokenBridge } from './components/ClerkTokenBridge';
 import { MobileShell } from './components/layout/MobileShell';
 import { BottomNav, type ScreenId } from './components/layout/BottomNav';
@@ -13,6 +13,7 @@ import { AccountsCardsManager } from './components/screens/AccountsCardsManager'
 import { parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
 import { ensureLegacyLocalDataMigrated } from './lib/legacy-local-migration';
 import { queryClient } from './lib/query-client';
+import { isInLastThreeCalendarDaysIST } from './lib/review-scope';
 import { useGmailConnectionForOAuthCallback } from './hooks/useGmailConnection';
 import { SkeletonBar, SkeletonRules } from './components/ui/Skeleton';
 import { useTransactions } from './hooks/useTransactions';
@@ -21,6 +22,7 @@ import './styles/app.css';
 
 type Overlay = 'editor' | 'review' | null;
 type SettingsSubscreen = 'main' | 'accounts';
+type ReviewScope = 'recent' | 'all';
 
 // Every screen and overlay owns a URL so a refresh (or back/forward) lands
 // exactly where the user was. History API only — no router dependency.
@@ -29,6 +31,7 @@ interface RouteState {
 	settingsSubscreen: SettingsSubscreen;
 	overlay: Overlay;
 	editorTxnId: string | 'new' | null;
+	reviewScope: ReviewScope;
 }
 
 function parseRoute(pathname: string): RouteState {
@@ -37,6 +40,7 @@ function parseRoute(pathname: string): RouteState {
 		settingsSubscreen: 'main',
 		overlay: null,
 		editorTxnId: null,
+		reviewScope: 'all',
 	};
 	if (pathname === '/ledger') return { ...base, screen: 'ledger' };
 	if (pathname === '/analytics') return { ...base, screen: 'analytics' };
@@ -44,7 +48,10 @@ function parseRoute(pathname: string): RouteState {
 	if (pathname === '/settings/accounts') {
 		return { ...base, screen: 'settings', settingsSubscreen: 'accounts' };
 	}
-	if (pathname === '/review') return { ...base, overlay: 'review' };
+	if (pathname === '/review/recent') {
+		return { ...base, overlay: 'review', reviewScope: 'recent' };
+	}
+	if (pathname === '/review') return { ...base, overlay: 'review', reviewScope: 'all' };
 	if (pathname === '/transaction/new') return { ...base, overlay: 'editor', editorTxnId: 'new' };
 	const txnMatch = /^\/transaction\/([0-9a-fA-F-]{8,})$/.exec(pathname);
 	if (txnMatch?.[1]) return { ...base, overlay: 'editor', editorTxnId: txnMatch[1] };
@@ -67,7 +74,7 @@ function syncPath(path: string, replace = false) {
 }
 
 function LedgerApp() {
-	const initialRoute = useRef(parseRoute(window.location.pathname)).current;
+	const [initialRoute] = useState(() => parseRoute(window.location.pathname));
 	const [activeScreen, setActiveScreen] = useState<ScreenId>(initialRoute.screen);
 	const [overlay, setOverlay] = useState<Overlay>(
 		initialRoute.overlay === 'review' || initialRoute.editorTxnId === 'new'
@@ -79,6 +86,7 @@ function LedgerApp() {
 	);
 	const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 	const [reviewedCount, setReviewedCount] = useState(0);
+	const [reviewScope, setReviewScope] = useState<ReviewScope>(initialRoute.reviewScope);
 	const [settingsSubscreen, setSettingsSubscreen] = useState<SettingsSubscreen>(
 		initialRoute.settingsSubscreen,
 	);
@@ -90,6 +98,10 @@ function LedgerApp() {
 	);
 
 	const { reviewInbox, transactions, isFeedComplete } = useTransactions();
+	const scopedReviewInbox = useMemo(() => {
+		if (reviewScope === 'all') return reviewInbox;
+		return reviewInbox.filter((transaction) => isInLastThreeCalendarDaysIST(transaction.date));
+	}, [reviewInbox, reviewScope]);
 
 	useEffect(() => {
 		// One-time legacy localStorage migration. Runs detached: it never
@@ -123,6 +135,7 @@ function LedgerApp() {
 			setActiveScreen(route.screen);
 			setSettingsSubscreen(route.settingsSubscreen);
 			setReviewedCount(0);
+			setReviewScope(route.reviewScope);
 			if (route.overlay === 'editor') {
 				if (route.editorTxnId === 'new') {
 					setEditorMode('add');
@@ -162,10 +175,11 @@ function LedgerApp() {
 		syncPath(pathForScreen(activeScreen, settingsSubscreen));
 	};
 
-	const openReview = () => {
+	const openReview = (scope: ReviewScope = 'all') => {
 		setReviewedCount(0);
+		setReviewScope(scope);
 		setOverlay('review');
-		syncPath('/review');
+		syncPath(scope === 'recent' ? '/review/recent' : '/review');
 	};
 
 	const handleHomeNavigate = (screen: ScreenId) => {
@@ -183,6 +197,7 @@ function LedgerApp() {
 			{activeScreen === 'home' && (
 				<HomeDashboard
 					onNavigate={handleHomeNavigate}
+					onOpenReview={openReview}
 					onEditTransaction={(t) => openEditor('edit', t)}
 				/>
 			)}
@@ -247,18 +262,18 @@ function LedgerApp() {
 				/>
 			)}
 
-			{overlay === 'review' && reviewInbox.length > 0 && reviewInbox[0] && (
+			{overlay === 'review' && scopedReviewInbox.length > 0 && scopedReviewInbox[0] && (
 				<ReviewQueue
-					key={reviewInbox[0].id}
-					transaction={reviewInbox[0]}
+					key={scopedReviewInbox[0].id}
+					transaction={scopedReviewInbox[0]}
 					position={reviewedCount + 1}
-					totalCount={reviewedCount + reviewInbox.length}
+					totalCount={reviewedCount + scopedReviewInbox.length}
 					onReviewed={() => setReviewedCount((c) => c + 1)}
 					onClose={closeOverlay}
 				/>
 			)}
 
-			{overlay === 'review' && reviewInbox.length === 0 && (
+			{overlay === 'review' && scopedReviewInbox.length === 0 && (
 				<EmptyReviewQueue
 					onClose={closeOverlay}
 					onNavigate={(screen) => {
