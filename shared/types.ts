@@ -62,6 +62,19 @@ export type TransactionType = 'income' | 'expense' | 'transfer';
 
 export type TransactionStatus = 'VERIFIED' | 'NEEDS_REVIEW';
 
+export type BudgetTreatment = 'AUTO' | 'INCLUDE' | 'EXCLUDE';
+
+export type EffectiveBudgetTreatment = Exclude<BudgetTreatment, 'AUTO'>;
+
+export type BudgetTreatmentSource =
+  | 'TRANSACTION_OVERRIDE'
+  | 'REFUND_RELATIONSHIP'
+  | 'RECURRING_RULE'
+  | 'CATEGORY_RULE'
+  | 'SYSTEM_DEFAULT';
+
+export type BudgetEffectKind = 'SPEND' | 'ADJUSTMENT' | 'NONE';
+
 export type ClassificationSource =
   | 'USER'
   | 'SYSTEM_DEFAULT'
@@ -176,6 +189,22 @@ export interface UserMerchantRuleRow {
   updated_at: ISODateTimeString;
 }
 
+export interface UserMerchantRuleCategoryRow {
+  user_merchant_rule_id: UUID;
+  transaction_type: TransactionType;
+  category_id: UUID;
+  created_at: ISODateTimeString;
+  updated_at: ISODateTimeString;
+}
+
+export interface GlobalMerchantCategoryDefaultRow {
+  merchant_id: UUID;
+  transaction_type: TransactionType;
+  category_id: UUID;
+  created_at: ISODateTimeString;
+  updated_at: ISODateTimeString;
+}
+
 export interface RawEmailRow {
   id: UUID;
   user_id: UUID;
@@ -186,6 +215,9 @@ export interface RawEmailRow {
   from_address: string | null;
   subject: string | null;
   status: RawEmailStatus;
+  processing_route: 'TEMPLATE' | 'AI' | null;
+  ai_call_id: UUID | null;
+  processing_completed_at: ISODateTimeString | null;
   created_at: ISODateTimeString;
 }
 
@@ -254,6 +286,9 @@ export interface TransactionRow {
   status: TransactionStatus;
   classification_source: ClassificationSource;
   ai_confidence_score: number | null; // NUMERIC(3,2)
+  budget_treatment: BudgetTreatment;
+  recurring_series_id: UUID | null;
+  user_deleted_at: ISODateTimeString | null;
   created_at: ISODateTimeString;
   updated_at: ISODateTimeString;
 }
@@ -330,6 +365,7 @@ export interface TransactionFeedItem {
       })
     | null;
   raw_email: Pick<RawEmailRow, 'id' | 'source_id' | 'internal_date' | 'status'> | null;
+  budget: TransactionBudgetInfo;
 }
 
 /**
@@ -340,6 +376,8 @@ export interface TransactionFeedItem {
 export interface CreateManualTransactionRequest {
   amount_in_paise: number;
   type: TransactionType;
+  /** Required to distinguish incoming vs outgoing manual transfers. */
+  direction?: EventDirection;
   txn_date: ISODateTimeString;
   account_id?: UUID | null;
   category_id?: UUID | null;
@@ -348,9 +386,12 @@ export interface CreateManualTransactionRequest {
   payment_method?: PaymentMethod;
   instrument_id?: string | null;
   counterparty_raw?: string | null;
+  /** Preserves an explicit plan choice when a manual fact is recreated. */
+  budget_treatment?: BudgetTreatment;
 }
 
 export interface UpdateTransactionRequest {
+  type?: TransactionType;
   account_id?: UUID | null;
   category_id?: UUID | null;
   merchant_id?: UUID | null;
@@ -359,6 +400,30 @@ export interface UpdateTransactionRequest {
   status?: TransactionStatus;
   classification_source?: ClassificationSource;
   ai_confidence_score?: number | null;
+  budget_treatment?: BudgetTreatment;
+}
+
+export interface TransactionBudgetRelationship {
+  id: UUID;
+  kind: 'REFUND' | 'REIMBURSEMENT';
+  role: 'SOURCE' | 'TARGET';
+  related_transaction_id: UUID;
+  related_amount_in_paise: number;
+  related_txn_date: ISODateTimeString;
+  related_label: string;
+  created_by: 'AUTO' | 'USER';
+  confidence: number;
+  /** Multiple refund credits may point at one purchase. */
+  related_count: number;
+}
+
+export interface TransactionBudgetInfo {
+  treatment: BudgetTreatment;
+  effective_treatment: EffectiveBudgetTreatment;
+  treatment_source: BudgetTreatmentSource;
+  effect: BudgetEffectKind;
+  effect_in_paise: number;
+  relationship: TransactionBudgetRelationship | null;
 }
 
 export interface CreateUserCreditCardRequest {
@@ -397,6 +462,7 @@ export interface UpsertUserMerchantRuleRequest {
 }
 
 export interface ReviewTransactionRequest {
+  type?: TransactionType;
   category_id?: UUID | null;
   merchant_id?: UUID | null;
   user_note?: string | null;
@@ -657,7 +723,12 @@ export interface MonthlyCategorySlice {
 
 export interface MonthlyAccountSlice {
   account_id: UUID | null;
-  amount_in_paise: number;
+  /** Gross expense transactions assigned to the account. */
+  expense_in_paise: number;
+  /** Incoming credits on card-type accounts (refunds, reversals, cashback). */
+  credit_in_paise: number;
+  /** expense_in_paise - credit_in_paise; may be negative in a refund-heavy month. */
+  net_spend_in_paise: number;
   txn_count: number;
 }
 
@@ -684,6 +755,266 @@ export interface AnalyticsSummaryResponse {
   all_time: { income_in_paise: number; expense_in_paise: number };
   accounts: AccountAllTimeSummary[];
   review: { total: number; last_3_days: number };
+}
+
+// ---- Monthly spending plan ----
+
+export interface BudgetCategoryRule {
+  category_id: UUID;
+  category_name: string;
+  category_icon: string | null;
+  treatment: EffectiveBudgetTreatment;
+}
+
+export interface BudgetCategorySummary {
+  category_id: UUID | null;
+  category_name: string;
+  category_icon: string | null;
+  spent_in_paise: number;
+  adjustment_in_paise: number;
+  net_in_paise: number;
+  transaction_count: number;
+}
+
+export interface BudgetMonthSummary {
+  /** YYYY-MM in Asia/Kolkata. */
+  month: string;
+  limit_in_paise: number | null;
+  /** YYYY-MM of the saved limit row; differs from month when the plan is inherited. */
+  limit_source_month: string | null;
+  counted_spending_in_paise: number;
+  adjustments_in_paise: number;
+  used_in_paise: number;
+  remaining_in_paise: number | null;
+  outside_plan_in_paise: number;
+  categories: BudgetCategorySummary[];
+}
+
+export interface RefundMatchSuggestion {
+  type: 'REFUND_MATCH';
+  fingerprint: string;
+  confidence: number;
+  source_transaction_id: UUID;
+  source_amount_in_paise: number;
+  source_txn_date: ISODateTimeString;
+  target_transaction_id: UUID;
+  target_amount_in_paise: number;
+  target_remaining_in_paise: number;
+  target_txn_date: ISODateTimeString;
+  label: string;
+  can_auto_link: boolean;
+  /** How much linking would reduce the target purchase month's used budget. */
+  budget_impact_in_paise: number;
+}
+
+export interface RecurringPatternSuggestion {
+  type: 'RECURRING_PATTERN';
+  fingerprint: string;
+  confidence: number;
+  label: string;
+  transaction_ids: UUID[];
+  occurrence_count: number;
+  cadence: 'WEEKLY' | 'MONTHLY';
+  expected_day: number;
+  amount_min_in_paise: number;
+  amount_max_in_paise: number;
+  suggested_treatment: EffectiveBudgetTreatment;
+}
+
+export type BudgetSuggestion = RefundMatchSuggestion | RecurringPatternSuggestion;
+
+export interface BudgetOverviewResponse {
+  summary: BudgetMonthSummary;
+  category_rules: BudgetCategoryRule[];
+  recurring_series: RecurringSeriesSummary[];
+  suggestions: BudgetSuggestion[];
+}
+
+export interface RecurringSeriesSummary {
+  id: UUID;
+  fingerprint: string;
+  label: string;
+  cadence: 'WEEKLY' | 'MONTHLY';
+  expected_day: number;
+  amount_min_in_paise: number;
+  amount_max_in_paise: number;
+  budget_treatment: BudgetTreatment;
+  status: 'ACTIVE' | 'PAUSED';
+  last_matched_at: ISODateTimeString | null;
+}
+
+export interface UpsertMonthlyBudgetRequest {
+  limit_in_paise: number;
+}
+
+export interface BudgetPlanCategoryRuleInput {
+  category_id: UUID;
+  treatment: EffectiveBudgetTreatment | null;
+}
+
+export interface UpsertBudgetPlanRequest extends UpsertMonthlyBudgetRequest {
+  /** Only listed categories are changed; null removes that category's rule. */
+  category_rules: BudgetPlanCategoryRuleInput[];
+}
+
+export interface SetCategoryBudgetRuleRequest {
+  treatment: EffectiveBudgetTreatment;
+}
+
+export interface CreateTransactionRelationshipRequest {
+  source_transaction_id: UUID;
+  target_transaction_id: UUID;
+  kind: 'REFUND' | 'REIMBURSEMENT';
+}
+
+export interface RefundTargetOption {
+  transaction_id: UUID;
+  label: string;
+  amount_in_paise: number;
+  remaining_in_paise: number;
+  txn_date: ISODateTimeString;
+}
+
+export interface ConfirmRecurringPatternRequest {
+  fingerprint: string;
+  transaction_ids: UUID[];
+  treatment: EffectiveBudgetTreatment;
+}
+
+export interface UpdateRecurringSeriesRequest {
+  budget_treatment?: BudgetTreatment;
+  status?: 'ACTIVE' | 'PAUSED';
+}
+
+export interface DismissBudgetSuggestionRequest {
+  type: 'REFUND_MATCH' | 'RECURRING_PATTERN';
+  fingerprint: string;
+}
+
+// ---- Admin AI usage ledger ----
+
+export type AiUsageProvider = 'opencode' | 'openrouter';
+export type AiUsageOperation =
+  | 'EMAIL_NORMALIZATION'
+  | 'SENDER_CLASSIFICATION'
+  | 'MERCHANT_MAPPING';
+export type AiUsageStatus = 'SUCCESS' | 'ERROR';
+
+export interface AiUsageAccountSnapshot {
+  provider: 'openrouter';
+  /** Account usage when available; otherwise usage on the configured key. */
+  all_time_cost_usd: number;
+  /** Usage on the configured OpenRouter key in the current month. */
+  current_month_cost_usd: number;
+  purchased_credits_usd: number | null;
+  credits_remaining_usd: number | null;
+  limit_usd: number | null;
+  remaining_usd: number | null;
+  fetched_at: ISODateTimeString;
+}
+
+export interface AiUsageSummaryResponse {
+  account: AiUsageAccountSnapshot | null;
+  tracked_since: ISODateTimeString | null;
+  tracked_all_time_cost_usd: number;
+  tracked_current_month_cost_usd: number;
+  tracked_all_time_request_count: number;
+  tracked_current_month_request_count: number;
+}
+
+export interface AiUsageMonthSummary {
+  /** YYYY-MM in Asia/Kolkata. */
+  month: string;
+  request_count: number;
+  success_count: number;
+  cost_usd: number;
+  item_count: number;
+  average_latency_ms: number;
+  total_tokens: number;
+}
+
+export interface AiUsageModelBreakdown {
+  provider: AiUsageProvider;
+  model: string;
+  request_count: number;
+  success_count: number;
+  cost_usd: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  item_count: number;
+  average_latency_ms: number;
+}
+
+export interface AiUsageEvent {
+  id: UUID;
+  call_id: UUID | null;
+  attempt_number: number | null;
+  provider: AiUsageProvider;
+  model: string;
+  operation: AiUsageOperation;
+  status: AiUsageStatus;
+  http_status: number | null;
+  item_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  latency_ms: number;
+  error_code: string | null;
+  generation_id: string | null;
+  created_at: ISODateTimeString;
+}
+
+export interface AiProcessingAttempt {
+  id: UUID;
+  attempt_number: number;
+  model: string;
+  status: AiUsageStatus;
+  http_status: number | null;
+  error_code: string | null;
+  cost_usd: number | null;
+  latency_ms: number;
+}
+
+export interface AiProcessingRun {
+  id: UUID;
+  item_count: number;
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED';
+  attempt_count: number;
+  started_at: ISODateTimeString;
+  completed_at: ISODateTimeString | null;
+  attempts: AiProcessingAttempt[];
+}
+
+export interface AiProcessingSummary {
+  emails_handled: number;
+  template_hits: number;
+  ai_routed_emails: number;
+  email_final_failures: number;
+  transactions_created: number;
+  logical_calls: number;
+  provider_attempts: number;
+  first_attempt_successes: number;
+  recovered_calls: number;
+  final_failures: number;
+  in_progress_calls: number;
+  recent_runs: AiProcessingRun[];
+}
+
+export interface AiUsageDashboardResponse {
+  selected_month: string;
+  page: number;
+  page_size: number;
+  total_event_count: number;
+  months: AiUsageMonthSummary[];
+  models: AiUsageModelBreakdown[];
+  events: AiUsageEvent[];
+  processing: AiProcessingSummary;
 }
 
 // ---- Card statements (billing-cycle capture from statement emails) ----
