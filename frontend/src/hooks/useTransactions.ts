@@ -49,6 +49,8 @@ interface UseTransactionsResult {
 
 interface UseTransactionsOptions {
 	search?: string;
+	from?: string;
+	to?: string;
 	autoLoadAll?: boolean;
 }
 
@@ -158,8 +160,14 @@ const FEED_PAGE_LIMIT = 100;
 function useRemoteTransactions(options: UseTransactionsOptions = {}): UseTransactionsResult {
   const queryClient = useQueryClient();
 	const search = options.search?.trim() ?? '';
-	const transactionsQueryKey = search
-		? [...TRANSACTIONS_QUERY_KEY, { q: search }] as const
+	const from = options.from?.trim() ?? '';
+	const to = options.to?.trim() ?? '';
+	const transactionsQueryKey = search || from || to
+		? [...TRANSACTIONS_QUERY_KEY, {
+			q: search || undefined,
+			from: from || undefined,
+			to: to || undefined,
+		}] as const
 		: TRANSACTIONS_QUERY_KEY;
 
   const updateCachedTransaction = (
@@ -229,6 +237,8 @@ function useRemoteTransactions(options: UseTransactionsOptions = {}): UseTransac
 			page: pageParam,
 			limit: FEED_PAGE_LIMIT,
 			q: search || undefined,
+			from: from || undefined,
+			to: to || undefined,
 		});
     },
     getNextPageParam: (lastPage, _pages, lastPageParam) =>

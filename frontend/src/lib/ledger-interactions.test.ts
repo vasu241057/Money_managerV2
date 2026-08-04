@@ -26,10 +26,14 @@ describe('Ledger swipe decisions', () => {
 		expect(resolveSwipeOutcome(-24, -0.7, 360)).toBe('OPEN_LEFT');
 	});
 
-	it('commits only after crossing roughly half the row', () => {
+	it('commits the budget action only after dragging right across roughly half the row', () => {
 		expect(resolveSwipeOutcome(188, 0, 360)).toBe('COMMIT_RIGHT');
-		expect(resolveSwipeOutcome(-188, 0, 360)).toBe('COMMIT_LEFT');
 		expect(resolveSwipeOutcome(180, 4, 360)).toBe('OPEN_RIGHT');
+	});
+
+	it('never commits a left drag, regardless of distance or speed', () => {
+		expect(resolveSwipeOutcome(-188, 0, 360)).toBe('OPEN_LEFT');
+		expect(resolveSwipeOutcome(-350, -4, 360)).toBe('OPEN_LEFT');
 	});
 });
 

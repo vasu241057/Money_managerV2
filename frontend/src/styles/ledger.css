@@ -16,14 +16,32 @@
 	justify-content: flex-start;
 }
 
-.ledger-swipe-action--delete {
-	justify-content: flex-end;
-}
-
-.ledger-swipe-row[data-swipe-direction='right'] .ledger-swipe-action--budget,
-.ledger-swipe-row[data-swipe-direction='left'] .ledger-swipe-action--delete {
+.ledger-swipe-row[data-swipe-direction='right'] .ledger-swipe-action--budget {
 	opacity: 1;
 	pointer-events: auto;
+}
+
+.ledger-swipe-secondary-actions {
+	position: absolute;
+	inset-block: 0;
+	right: 0;
+	width: 160px;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 100ms linear;
+}
+
+.ledger-swipe-row[data-swipe-direction='left'] .ledger-swipe-secondary-actions {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.ledger-swipe-secondary-action {
+	min-width: 0;
+	transform: scale(calc(0.9 + (var(--swipe-progress) * 0.1)));
+	opacity: calc(0.5 + (var(--swipe-progress) * 0.5));
 }
 
 .ledger-swipe-action__content {
@@ -50,14 +68,15 @@
 	will-change: transform;
 }
 
-.ledger-swipe-row[data-committing='right'] .ledger-swipe-action--budget .ledger-swipe-action__content,
-.ledger-swipe-row[data-committing='left'] .ledger-swipe-action--delete .ledger-swipe-action__content {
+.ledger-swipe-row[data-committing='right'] .ledger-swipe-action--budget .ledger-swipe-action__content {
 	transform: scale(1.08);
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.ledger-swipe-action,
 	.ledger-swipe-action__content,
+	.ledger-swipe-secondary-actions,
+	.ledger-swipe-secondary-action,
 	.ledger-swipe-foreground {
 		transition-duration: 1ms !important;
 	}
@@ -70,6 +89,16 @@
 }
 
 .ledger-search:focus-within {
+	border-color: color-mix(in srgb, var(--ledger-accent) 55%, var(--ledger-rule)) !important;
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--ledger-accent) 10%, transparent);
+}
+
+.ledger-search input[type='search'],
+.ledger-date-input {
+	font-size: 16px;
+}
+
+.ledger-date-input:focus-visible {
 	border-color: color-mix(in srgb, var(--ledger-accent) 55%, var(--ledger-rule)) !important;
 	box-shadow: 0 0 0 2px color-mix(in srgb, var(--ledger-accent) 10%, transparent);
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, Loader2, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Loader2, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import type { BudgetTreatment } from '../../../../shared/types';
 import type { ScreenId } from '../layout/BottomNav';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
@@ -19,6 +19,12 @@ import {
 	resolveSwipeOutcome,
 	type LedgerFilter,
 } from '../../lib/ledger-interactions';
+import {
+	buildLedgerDateQuery,
+	formatLedgerDateFilterLabel,
+	toLocalDateInputValue,
+	type LedgerDateFilterMode,
+} from '../../lib/ledger-date-filter';
 import '../../styles/ledger.css';
 
 interface TransactionsLedgerProps {
@@ -80,13 +86,14 @@ interface LedgerTransactionRowProps {
 	artworkPhase: MerchantArtworkPhase;
 	onEditTransaction?: (transaction: Transaction) => void;
 	onReviewTransaction?: (transaction: Transaction) => void;
-	onDelete: (transaction: Transaction) => Promise<void>;
+	onRequestDelete: (transaction: Transaction) => void;
 	onSetBudgetTreatment: (transaction: Transaction, treatment: BudgetTreatment) => Promise<void>;
 	openRowId: string | null;
 	setOpenRowId: (id: string | null) => void;
 }
 
 const SWIPE_ACTION_WIDTH = 88;
+const SWIPE_SECONDARY_ACTIONS_WIDTH = 160;
 const SWIPE_AXIS_SLOP = 5;
 
 type SwipeDirection = 'left' | 'right';
@@ -104,7 +111,7 @@ function LedgerTransactionRow({
 	artworkPhase,
 	onEditTransaction,
 	onReviewTransaction,
-	onDelete,
+	onRequestDelete,
 	onSetBudgetTreatment,
 	openRowId,
 	setOpenRowId,
@@ -148,12 +155,7 @@ function LedgerTransactionRow({
 		.join(' · ');
 
 	const displayedOffset = openRowId === transaction.id ? settledOffset : 0;
-	const rightActionLabel = isReview
-		? 'Review'
-		: nextTreatment === 'INCLUDE' ? 'Count' : 'Outside';
-	const runRightAction = () => isReview
-		? Promise.resolve(onReviewTransaction?.(transaction))
-		: onSetBudgetTreatment(transaction, nextTreatment);
+	const budgetActionLabel = nextTreatment === 'INCLUDE' ? 'Count' : 'Outside';
 
 	const applyOffset = (nextOffset: number, animate: boolean) => {
 		offsetRef.current = nextOffset;
@@ -167,7 +169,8 @@ function LedgerTransactionRow({
 		}
 		if (root) {
 			root.dataset.swipeDirection = directionForOffset(nextOffset) ?? 'none';
-			root.style.setProperty('--swipe-progress', String(Math.min(1, Math.abs(nextOffset) / SWIPE_ACTION_WIDTH)));
+			const revealWidth = nextOffset < 0 ? SWIPE_SECONDARY_ACTIONS_WIDTH : SWIPE_ACTION_WIDTH;
+			root.style.setProperty('--swipe-progress', String(Math.min(1, Math.abs(nextOffset) / revealWidth)));
 		}
 	};
 
@@ -180,18 +183,21 @@ function LedgerTransactionRow({
 	const closeRow = () => {
 		settleAt(0);
 	};
+	const runReviewAction = () => {
+		closeRow();
+		if (isReview && onReviewTransaction) onReviewTransaction(transaction);
+		else onEditTransaction?.(transaction);
+	};
 
-	const commitSwipe = (direction: SwipeDirection, rowWidth: number) => {
-		setCommitting(direction);
-		setSettledOffset(direction === 'right' ? rowWidth : -rowWidth);
-		applyOffset(direction === 'right' ? rowWidth : -rowWidth, true);
+	const commitBudgetSwipe = (rowWidth: number) => {
+		setCommitting('right');
+		setSettledOffset(rowWidth);
+		applyOffset(rowWidth, true);
 		setOpenRowId(transaction.id);
 		if ('vibrate' in navigator) navigator.vibrate(8);
 
 		window.setTimeout(() => {
-			const action = direction === 'right'
-				? runRightAction()
-				: onDelete(transaction);
+			const action = onSetBudgetTreatment(transaction, nextTreatment);
 			void action.finally(() => {
 				setCommitting(null);
 				setSettledOffset(0);
@@ -212,10 +218,9 @@ function LedgerTransactionRow({
 		const distance = Math.abs(finalOffset);
 		didSwipe.current = distance > 6;
 		const outcome = resolveSwipeOutcome(finalOffset, current.velocityX, current.rowWidth);
-		if (outcome === 'COMMIT_RIGHT') commitSwipe('right', current.rowWidth);
-		else if (outcome === 'COMMIT_LEFT') commitSwipe('left', current.rowWidth);
+		if (outcome === 'COMMIT_RIGHT') commitBudgetSwipe(current.rowWidth);
 		else if (outcome === 'OPEN_RIGHT') settleAt(SWIPE_ACTION_WIDTH);
-		else if (outcome === 'OPEN_LEFT') settleAt(-SWIPE_ACTION_WIDTH);
+		else if (outcome === 'OPEN_LEFT') settleAt(-SWIPE_SECONDARY_ACTIONS_WIDTH);
 		else closeRow();
 	};
 
@@ -239,32 +244,38 @@ function LedgerTransactionRow({
 				<button
 					type="button"
 					onFocus={() => settleAt(SWIPE_ACTION_WIDTH)}
-					onClick={() => { closeRow(); void runRightAction(); }}
+					onClick={() => { closeRow(); void onSetBudgetTreatment(transaction, nextTreatment); }}
 					className="ledger-swipe-action ledger-swipe-action--budget flex items-center text-[10px] font-bold uppercase tracking-wider"
-					style={isReview
-						? { background: 'var(--ledger-amber-bg)', color: 'var(--ledger-amber)' }
-						: { background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}
-					aria-label={isReview
-						? 'Review transaction'
-						: `${nextTreatment === 'INCLUDE' ? 'Include' : 'Exclude'} transaction in monthly budget`}
+					style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}
+					aria-label={`${nextTreatment === 'INCLUDE' ? 'Include' : 'Exclude'} transaction in monthly budget`}
 				>
 					<span className="ledger-swipe-action__content">
-						{isReview
-							? <CheckCircle2 size={17} />
-							: <span className="text-lg leading-none">{nextTreatment === 'INCLUDE' ? '+' : '−'}</span>}
-						<span>{rightActionLabel}</span>
+						<span className="text-lg leading-none">{nextTreatment === 'INCLUDE' ? '+' : '−'}</span>
+						<span>{budgetActionLabel}</span>
 					</span>
 				</button>
-				<button
-					type="button"
-					onFocus={() => settleAt(-SWIPE_ACTION_WIDTH)}
-					onClick={() => { closeRow(); void onDelete(transaction); }}
-					className="ledger-swipe-action ledger-swipe-action--delete flex items-center justify-end text-[10px] font-bold uppercase tracking-wider"
-					style={{ background: 'var(--ledger-negative)', color: '#fff' }}
-					aria-label="Delete transaction"
-				>
-					<span className="ledger-swipe-action__content"><Trash2 size={16} /><span>Delete</span></span>
-				</button>
+				<div className="ledger-swipe-secondary-actions">
+					<button
+						type="button"
+						onFocus={() => settleAt(-SWIPE_SECONDARY_ACTIONS_WIDTH)}
+						onClick={runReviewAction}
+						className="ledger-swipe-secondary-action flex flex-col items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider"
+						style={{ background: 'var(--ledger-amber-bg)', color: 'var(--ledger-amber)' }}
+						aria-label="Review transaction"
+					>
+						<CheckCircle2 size={16} /><span>Review</span>
+					</button>
+					<button
+						type="button"
+						onFocus={() => settleAt(-SWIPE_SECONDARY_ACTIONS_WIDTH)}
+						onClick={() => { closeRow(); onRequestDelete(transaction); }}
+						className="ledger-swipe-secondary-action flex flex-col items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider"
+						style={{ background: 'var(--ledger-negative)', color: '#fff' }}
+						aria-label="Delete transaction"
+					>
+						<Trash2 size={16} /><span>Delete</span>
+					</button>
+				</div>
 			</div>
 			<button
 				ref={rowRef}
@@ -306,8 +317,12 @@ function LedgerTransactionRow({
 					current.velocityX = current.velocityX * 0.65 + instantaneousVelocity * 0.35;
 					current.lastX = event.clientX;
 					current.lastTime = event.timeStamp;
-					const maxTravel = current.rowWidth * 0.68;
-					applyOffset(Math.max(-maxTravel, Math.min(maxTravel, current.startOffset + dx)), false);
+					const rawOffset = current.startOffset + dx;
+					const maxBudgetTravel = current.rowWidth * 0.68;
+					const nextOffset = rawOffset < -SWIPE_SECONDARY_ACTIONS_WIDTH
+						? -SWIPE_SECONDARY_ACTIONS_WIDTH - Math.min(14, (-rawOffset - SWIPE_SECONDARY_ACTIONS_WIDTH) * 0.16)
+						: Math.min(maxBudgetTravel, rawOffset);
+					applyOffset(nextOffset, false);
 				}}
 				onPointerUp={finishGesture}
 				onPointerCancel={cancelGesture}
@@ -388,6 +403,17 @@ export function TransactionsLedger({
 }: TransactionsLedgerProps) {
 	const [searchInput, setSearchInput] = useState('');
 	const searchQuery = useDebouncedValue(searchInput.trim(), 220);
+	const [dateFilterMode, setDateFilterMode] = useState<LedgerDateFilterMode>('single');
+	const [dateFrom, setDateFrom] = useState('');
+	const [dateTo, setDateTo] = useState('');
+	const dateQuery = useMemo(
+		() => buildLedgerDateQuery(dateFilterMode, dateFrom, dateTo),
+		[dateFilterMode, dateFrom, dateTo],
+	);
+	const dateFilterLabel = useMemo(
+		() => formatLedgerDateFilterLabel(dateFilterMode, dateFrom, dateTo),
+		[dateFilterMode, dateFrom, dateTo],
+	);
 	const {
 		transactions,
 		deleteTransaction,
@@ -398,7 +424,12 @@ export function TransactionsLedger({
 		isFetchingMore,
 		isInitialLoading,
 		error,
-	} = useTransactions({ search: searchQuery, autoLoadAll: false });
+	} = useTransactions({
+		search: searchQuery,
+		from: dateQuery.from,
+		to: dateQuery.to,
+		autoLoadAll: false,
+	});
 
 	const [viewMode, setViewMode] = useState<'daily' | 'monthly'>('daily');
 	const [filterChip, setFilterChip] = useState<LedgerFilter>(() => {
@@ -409,12 +440,19 @@ export function TransactionsLedger({
 	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [expandedMonthKey, setExpandedMonthKey] = useState('');
 	const [openRowId, setOpenRowId] = useState<string | null>(null);
+	const [pendingDeleteTransaction, setPendingDeleteTransaction] = useState<Transaction | null>(null);
+	const [deletePending, setDeletePending] = useState(false);
 	const [deletedTransaction, setDeletedTransaction] = useState<Transaction | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const scrollContainerRef = useRef<HTMLElement | null>(null);
 	const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+	const confirmDeleteButtonRef = useRef<HTMLButtonElement | null>(null);
 	const artworkPhase = useMerchantArtworkPhase(artworkMode);
-	const hasActiveControls = filterChip !== 'all' || artworkMode !== 'auto' || searchInput.trim() !== '';
+	const hasDateSelection = dateFrom !== '' || dateTo !== '';
+	const hasActiveControls = filterChip !== 'all'
+		|| artworkMode !== 'auto'
+		|| searchInput.trim() !== ''
+		|| hasDateSelection;
 
 	const resetScrollPosition = () => {
 		scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'auto' });
@@ -428,10 +466,47 @@ export function TransactionsLedger({
 		setViewMode(nextMode);
 	};
 
+	const clearDateFilter = () => {
+		setDateFilterMode('single');
+		setDateFrom('');
+		setDateTo('');
+		resetScrollPosition();
+	};
+
+	const selectDateFilterMode = (mode: LedgerDateFilterMode) => {
+		setDateFilterMode(mode);
+		if (mode === 'single') {
+			setDateTo('');
+		} else if (dateFrom && !dateTo) {
+			setDateTo(dateFrom);
+		}
+	};
+
+	const applyTodayFilter = () => {
+		const today = toLocalDateInputValue(new Date());
+		setDateFilterMode('single');
+		setDateFrom(today);
+		setDateTo('');
+		setFiltersOpen(false);
+		resetScrollPosition();
+	};
+
+	const applyThisMonthFilter = () => {
+		const today = new Date();
+		setDateFilterMode('range');
+		setDateFrom(toLocalDateInputValue(new Date(today.getFullYear(), today.getMonth(), 1)));
+		setDateTo(toLocalDateInputValue(today));
+		setFiltersOpen(false);
+		resetScrollPosition();
+	};
+
 	const clearAllFilters = () => {
 		setFilterChip('all');
 		setArtworkMode('auto');
 		setSearchInput('');
+		setDateFilterMode('single');
+		setDateFrom('');
+		setDateTo('');
 		setExpandedMonthKey('');
 		setFiltersOpen(false);
 		resetScrollPosition();
@@ -457,6 +532,16 @@ export function TransactionsLedger({
 	}, [filtersOpen]);
 
 	useEffect(() => {
+		if (!pendingDeleteTransaction) return;
+		confirmDeleteButtonRef.current?.focus();
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === 'Escape' && !deletePending) setPendingDeleteTransaction(null);
+		};
+		window.addEventListener('keydown', closeOnEscape);
+		return () => window.removeEventListener('keydown', closeOnEscape);
+	}, [deletePending, pendingDeleteTransaction]);
+
+	useEffect(() => {
 		const root = scrollContainerRef.current;
 		const sentinel = loadMoreSentinelRef.current;
 		if (!root || !sentinel || !hasMore) return;
@@ -472,7 +557,7 @@ export function TransactionsLedger({
 
 	useEffect(() => {
 		scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'auto' });
-	}, [searchQuery]);
+	}, [dateQuery.from, dateQuery.to, searchQuery]);
 
 	const filtered = useMemo(() => {
 		return transactions.filter(transaction => matchesLedgerFilter(transaction, filterChip));
@@ -507,14 +592,24 @@ export function TransactionsLedger({
 		return Array.from(map.values());
 	}, [filtered, viewMode, filterChip]);
 
-	const handleDelete = async (transaction: Transaction) => {
+	const requestDelete = (transaction: Transaction) => {
 		setActionError(null);
 		setOpenRowId(null);
+		setPendingDeleteTransaction(transaction);
+	};
+
+	const confirmDelete = async () => {
+		if (!pendingDeleteTransaction || deletePending) return;
+		const transaction = pendingDeleteTransaction;
+		setDeletePending(true);
 		try {
 			await deleteTransaction(transaction.id);
+			setPendingDeleteTransaction(null);
 			setDeletedTransaction(transaction);
 		} catch (cause) {
 			setActionError(cause instanceof Error ? cause.message : 'Could not delete transaction.');
+		} finally {
+			setDeletePending(false);
 		}
 	};
 
@@ -610,10 +705,10 @@ export function TransactionsLedger({
 						type="search"
 						value={searchInput}
 						onChange={event => setSearchInput(event.target.value)}
-						placeholder="Merchant, amount, note or date"
-						aria-label="Search ledger by merchant, amount, note, or date"
+						placeholder="Merchant, amount, or note"
+						aria-label="Search ledger by merchant, amount, or note"
 						maxLength={120}
-						className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+						className="min-w-0 flex-1 bg-transparent text-base outline-none"
 						style={{ color: 'var(--ledger-fg)' }}
 					/>
 					{searchInput && (
@@ -622,6 +717,32 @@ export function TransactionsLedger({
 						</button>
 					)}
 				</label>
+				{dateFilterLabel && (
+					<div className="mt-2 flex items-center">
+						<div
+							className="inline-flex h-8 max-w-full items-center rounded-full"
+							style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}
+						>
+							<button
+								type="button"
+								onClick={() => setFiltersOpen(true)}
+								className="flex min-w-0 items-center gap-1.5 pl-3 pr-2 text-xs font-semibold"
+								aria-label={`Change date filter: ${dateFilterLabel}`}
+							>
+								<CalendarDays size={13} className="shrink-0" />
+								<span className="truncate">{dateFilterLabel}</span>
+							</button>
+							<button
+								type="button"
+								onClick={clearDateFilter}
+								className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+								aria-label="Clear date filter"
+							>
+								<X size={12} />
+							</button>
+						</div>
+					</div>
+				)}
 			</div>
 
 			{filtersOpen && (
@@ -638,7 +759,7 @@ export function TransactionsLedger({
 						role="dialog"
 						aria-modal="true"
 						aria-label="Ledger filters and artwork"
-						className="absolute top-[48px] right-5 z-30 w-[calc(100%-2.5rem)] max-w-[360px] rounded-[14px] px-4 py-3.5"
+						className="absolute top-[48px] right-5 z-30 max-h-[calc(100%-4rem)] w-[calc(100%-2.5rem)] max-w-[360px] overflow-y-auto rounded-[14px] px-4 py-3.5"
 						style={{
 							background: 'var(--ledger-card)',
 							border: '1px solid var(--ledger-rule)',
@@ -696,8 +817,124 @@ export function TransactionsLedger({
 								</button>
 							))}
 							<p className="w-full text-[10px] leading-relaxed mt-1" style={{ color: 'var(--ledger-muted)' }}>
-								Swipe right to review or change budget · swipe left to delete
+								Swipe right for budget · swipe left for review or delete
 							</p>
+						</div>
+
+						<div
+							className="mt-3 pt-3"
+							style={{ borderTop: '1px solid var(--ledger-rule)' }}
+						>
+							<div className="flex items-center justify-between gap-3">
+								<p
+									className="text-[9px] font-bold uppercase tracking-[0.18em]"
+									style={{ color: 'var(--ledger-muted)' }}
+								>
+									Date
+								</p>
+								{hasDateSelection && (
+									<button
+										type="button"
+										onClick={clearDateFilter}
+										className="text-[10px] font-bold"
+										style={{ color: 'var(--ledger-accent)' }}
+									>
+										Clear date
+									</button>
+								)}
+							</div>
+
+							<div className="mt-2 flex gap-2">
+								<button
+									type="button"
+									onClick={applyTodayFilter}
+									className="rounded-full px-3 py-1 text-xs font-medium"
+									style={{ background: 'var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+								>
+									Today
+								</button>
+								<button
+									type="button"
+									onClick={applyThisMonthFilter}
+									className="rounded-full px-3 py-1 text-xs font-medium"
+									style={{ background: 'var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+								>
+									This month
+								</button>
+							</div>
+
+							<div
+								className="mt-2.5 grid grid-cols-2 gap-1 rounded-[10px] p-1"
+								style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)' }}
+								role="group"
+								aria-label="Date filter mode"
+							>
+								{(['single', 'range'] as const).map((mode) => (
+									<button
+										key={mode}
+										type="button"
+										onClick={() => selectDateFilterMode(mode)}
+										aria-pressed={dateFilterMode === mode}
+										className="rounded-[7px] px-2 py-1.5 text-xs font-semibold transition-colors"
+										style={dateFilterMode === mode
+											? { background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }
+											: { color: 'var(--ledger-muted)' }}
+									>
+										{mode === 'single' ? 'Single day' : 'Date range'}
+									</button>
+								))}
+							</div>
+
+							{dateFilterMode === 'single' ? (
+								<label className="mt-2.5 block">
+									<span className="sr-only">Date</span>
+									<input
+										type="date"
+										value={dateFrom}
+										onChange={(event) => {
+											setDateFrom(event.target.value);
+											setDateTo('');
+											if (event.target.value) setFiltersOpen(false);
+										}}
+										className="ledger-date-input h-11 w-full min-w-0 rounded-[9px] px-3 text-base outline-none"
+										style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)', color: 'var(--ledger-fg)' }}
+									/>
+								</label>
+							) : (
+								<div className="mt-2.5 grid grid-cols-2 gap-2">
+									<label className="min-w-0">
+										<span className="mb-1 block text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-muted)' }}>From</span>
+										<input
+											type="date"
+											value={dateFrom}
+											max={dateTo || undefined}
+											onChange={(event) => {
+												const value = event.target.value;
+												setDateFrom(value);
+												if (value && dateTo && value > dateTo) setDateTo(value);
+											}}
+											className="ledger-date-input h-11 w-full min-w-0 rounded-[9px] px-2 text-base outline-none"
+											style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)', color: 'var(--ledger-fg)' }}
+										/>
+									</label>
+									<label className="min-w-0">
+										<span className="mb-1 block text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-muted)' }}>To</span>
+										<input
+											type="date"
+											value={dateTo}
+											min={dateFrom || undefined}
+											onChange={(event) => {
+												const value = event.target.value;
+												setDateTo(value);
+												if (value && dateFrom && value < dateFrom) setDateFrom(value);
+												if (value && dateFrom) setFiltersOpen(false);
+											}}
+											className="ledger-date-input h-11 w-full min-w-0 rounded-[9px] px-2 text-base outline-none"
+											style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)', color: 'var(--ledger-fg)' }}
+										/>
+									</label>
+								</div>
+							)}
 						</div>
 
 						<div
@@ -765,7 +1002,8 @@ export function TransactionsLedger({
 						<p className="text-sm font-medium" style={{ color: 'var(--ledger-muted)' }}>No transactions found</p>
 						<p className="text-xs mt-1" style={{ color: 'var(--ledger-muted)', opacity: 0.7 }}>
 							{searchQuery
-								? 'Try another merchant, amount, note, or date'
+								? 'Try another merchant, amount, or note'
+								: dateFilterLabel ? 'Try another date or range'
 								: filterChip !== 'all' ? 'Try a different filter' : 'Add one with the + button'}
 						</p>
 					</div>
@@ -823,7 +1061,7 @@ export function TransactionsLedger({
 													artworkPhase={artworkPhase}
 													onEditTransaction={onEditTransaction}
 													onReviewTransaction={onReviewTransaction}
-													onDelete={handleDelete}
+													onRequestDelete={requestDelete}
 													onSetBudgetTreatment={handleBudgetTreatment}
 													openRowId={openRowId}
 													setOpenRowId={setOpenRowId}
@@ -861,7 +1099,7 @@ export function TransactionsLedger({
 											artworkPhase={artworkPhase}
 											onEditTransaction={onEditTransaction}
 											onReviewTransaction={onReviewTransaction}
-											onDelete={handleDelete}
+											onRequestDelete={requestDelete}
 											onSetBudgetTreatment={handleBudgetTreatment}
 											openRowId={openRowId}
 											setOpenRowId={setOpenRowId}
@@ -895,6 +1133,42 @@ export function TransactionsLedger({
 				<div className="absolute left-5 right-20 bottom-5 z-30 rounded-[12px] px-4 py-3 flex items-center gap-3" style={{ background: 'var(--ledger-fg)', color: 'var(--ledger-bg)', boxShadow: '0 12px 32px rgba(0,0,0,0.22)' }} role="status">
 					<p className="text-xs font-semibold flex-1 truncate">Transaction deleted</p>
 					<button type="button" onClick={() => { void undoDelete(); }} className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-accent)' }}>Undo</button>
+				</div>
+			)}
+
+			{pendingDeleteTransaction && (
+				<div className="absolute inset-0 z-50 flex items-end justify-center px-4 pb-5" role="presentation">
+					<button
+						type="button"
+						className="absolute inset-0 cursor-default"
+						style={{ background: 'color-mix(in srgb, var(--ledger-fg) 24%, transparent)' }}
+						onClick={() => { if (!deletePending) setPendingDeleteTransaction(null); }}
+						aria-label="Cancel delete"
+					/>
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="delete-transaction-title"
+						className="relative z-10 w-full max-w-[360px] rounded-[16px] p-5"
+						style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)', boxShadow: '0 20px 54px rgba(16, 24, 20, 0.28)' }}
+					>
+						<div className="flex items-start gap-3">
+							<span className="w-10 h-10 rounded-[10px] flex items-center justify-center shrink-0" style={{ background: 'color-mix(in srgb, var(--ledger-negative) 10%, transparent)', color: 'var(--ledger-negative)' }}><AlertTriangle size={18} /></span>
+							<div className="min-w-0">
+								<h2 id="delete-transaction-title" className="text-base font-bold">Delete transaction?</h2>
+								<p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--ledger-muted)' }}>
+									{transactionPrimaryLabel(pendingDeleteTransaction)} · {formatSignedRupees(pendingDeleteTransaction.amount, pendingDeleteTransaction.type)}
+								</p>
+								<p className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--ledger-muted)' }}>This removes it from the Ledger, Analytics, and Budget calculations. You can undo immediately afterward.</p>
+							</div>
+						</div>
+						<div className="grid grid-cols-2 gap-2 mt-5">
+							<button type="button" disabled={deletePending} onClick={() => setPendingDeleteTransaction(null)} className="h-11 rounded-[10px] text-sm font-bold" style={{ border: '1px solid var(--ledger-rule)', color: 'var(--ledger-muted)' }}>Cancel</button>
+							<button ref={confirmDeleteButtonRef} type="button" disabled={deletePending} onClick={() => { void confirmDelete(); }} className="h-11 rounded-[10px] text-sm font-bold flex items-center justify-center gap-2" style={{ background: 'var(--ledger-negative)', color: '#fff', opacity: deletePending ? 0.65 : 1 }}>
+								{deletePending && <Loader2 size={15} className="animate-spin" />} Delete
+							</button>
+						</div>
+					</section>
 				</div>
 			)}
 		</div>

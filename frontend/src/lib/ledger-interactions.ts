@@ -13,7 +13,6 @@ export type SwipeOutcome =
 	| 'CLOSE'
 	| 'OPEN_LEFT'
 	| 'OPEN_RIGHT'
-	| 'COMMIT_LEFT'
 	| 'COMMIT_RIGHT';
 
 const OPEN_DISTANCE = 42;
@@ -28,8 +27,8 @@ export function resolveSwipeOutcome(
 	const distance = Math.abs(offset);
 	if (offset === 0 || rowWidth <= 0) return 'CLOSE';
 	const isRight = offset > 0;
-	if (distance >= rowWidth * COMMIT_RATIO) {
-		return isRight ? 'COMMIT_RIGHT' : 'COMMIT_LEFT';
+	if (isRight && distance >= rowWidth * COMMIT_RATIO) {
+		return 'COMMIT_RIGHT';
 	}
 
 	const movingTowardAction = isRight
