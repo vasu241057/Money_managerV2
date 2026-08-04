@@ -271,14 +271,16 @@ export function BudgetScreen({ onOpenBudgetLedger }: BudgetScreenProps) {
 				) : <div className="w-8 h-8" />}
 			</header>
 
-			<div className="px-4 py-2.5 flex items-center justify-between shrink-0" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
-				<button type="button" onClick={() => moveToMonth(-1)} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: 'var(--ledger-muted)' }} aria-label="Previous month"><ChevronLeft size={18} /></button>
-				<div className="text-center">
-					<p className="text-sm font-bold tnum">{monthLabel(month)}</p>
-					{month !== currentMonth && <button type="button" onClick={returnToCurrentMonth} className="mt-0.5 text-[10px] font-bold" style={{ color: 'var(--ledger-accent)' }}>Back to this month</button>}
+			{hasPlan && !editingPlan && (
+				<div className="px-4 py-2.5 flex items-center justify-between shrink-0" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
+					<button type="button" onClick={() => moveToMonth(-1)} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: 'var(--ledger-muted)' }} aria-label="Previous month"><ChevronLeft size={18} /></button>
+					<div className="text-center">
+						<p className="text-sm font-bold tnum">{monthLabel(month)}</p>
+						{month !== currentMonth && <button type="button" onClick={returnToCurrentMonth} className="mt-0.5 text-[10px] font-bold" style={{ color: 'var(--ledger-accent)' }}>Back to this month</button>}
+					</div>
+					<button type="button" onClick={() => moveToMonth(1)} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: 'var(--ledger-muted)' }} aria-label="Next month"><ChevronRight size={18} /></button>
 				</div>
-				<button type="button" onClick={() => moveToMonth(1)} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: 'var(--ledger-muted)' }} aria-label="Next month"><ChevronRight size={18} /></button>
-			</div>
+			)}
 
 			<main className="flex-1 overflow-y-auto px-5 pt-5 pb-24 min-h-0">
 				{(error || saveError) && (
