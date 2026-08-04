@@ -5,6 +5,7 @@ import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
 import { toRequiredString } from '../lib/db/serialization';
 import { loadSystemExpenseCategories } from '../lib/identity';
+import { captureAiUsageAttempt } from '../services/ai-usage.service';
 import { TransientMessageError } from './queue.errors';
 
 // The provider routinely takes 25-45s on large prompts; queue consumers
@@ -229,7 +230,14 @@ interface MappingCallOutcome {
 	unsure_count: number;
 }
 
+interface MerchantModelPayload {
+	id?: string;
+	choices?: Array<{ message?: { content?: string } }>;
+	usage?: unknown;
+}
+
 async function callMerchantMappingModel(
+	sql: SqlClient,
 	env: Env,
 	apiKey: string,
 	candidates: Array<{ key: string; name: string; web_context?: string }>,
@@ -238,6 +246,27 @@ async function callMerchantMappingModel(
 	const controller = new AbortController();
 	const providerConfig = resolveAiProviderConfig(env);
 	const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_TIMEOUT_MS);
+	const startedAtMs = Date.now();
+	const capture = async (
+		status: 'SUCCESS' | 'ERROR',
+		httpStatus: number | null,
+		payload?: unknown,
+		errorCode?: string,
+		generationId?: string | null,
+	) =>
+		captureAiUsageAttempt({
+			sql,
+			provider: providerConfig.provider,
+			model: providerConfig.dailyModel,
+			operation: 'MERCHANT_MAPPING',
+			itemCount: candidates.length,
+			startedAtMs,
+			status,
+			httpStatus,
+			payload,
+			errorCode,
+			generationId,
+		});
 
 	let response: Response;
 	try {
@@ -258,32 +287,45 @@ async function callMerchantMappingModel(
 	} catch (error) {
 		clearTimeout(timeoutId);
 		if (error instanceof Error && error.name === 'AbortError') {
+			await capture('ERROR', null, undefined, 'TIMEOUT');
 			throw new TransientMessageError('Merchant mapping request timed out');
 		}
+		await capture('ERROR', null, undefined, 'NETWORK_ERROR');
 		throw new TransientMessageError(
 			`Merchant mapping network error: ${error instanceof Error ? error.message : 'Unknown'}`,
 		);
 	}
 	clearTimeout(timeoutId);
+	const generationId = response.headers.get('X-Generation-Id');
 
 	if (response.status === 429 || response.status === 408 || response.status >= 500) {
+		await capture('ERROR', response.status, undefined, `HTTP_${response.status}`, generationId);
 		throw new TransientMessageError(`Merchant mapping transient HTTP ${response.status}`);
 	}
 	if (!response.ok) {
+		await capture('ERROR', response.status, undefined, `HTTP_${response.status}`, generationId);
 		console.error('MERCHANT_MAPPER_HTTP_ERROR', { status: response.status });
 		return null;
 	}
 
 	let content: string | undefined;
+	let payload: MerchantModelPayload | null = null;
 	try {
-		const json = (await response.json()) as {
-			choices?: Array<{ message?: { content?: string } }>;
-		};
-		content = json.choices?.[0]?.message?.content;
+		payload = (await response.json()) as MerchantModelPayload;
+		content = payload.choices?.[0]?.message?.content;
 	} catch {
-		content = undefined;
+		await capture('ERROR', response.status, undefined, 'MALFORMED_RESPONSE', generationId);
+		console.error('MERCHANT_MAPPER_MALFORMED_RESPONSE');
+		return null;
 	}
 	if (!content) {
+		await capture(
+			'ERROR',
+			response.status,
+			payload,
+			'EMPTY_RESPONSE',
+			generationId ?? payload?.id ?? null,
+		);
 		console.error('MERCHANT_MAPPER_EMPTY_RESPONSE');
 		return null;
 	}
@@ -297,10 +339,24 @@ async function callMerchantMappingModel(
 	try {
 		parsed = JSON.parse(cleaned) as { merchants?: unknown };
 	} catch {
+		await capture(
+			'ERROR',
+			response.status,
+			payload,
+			'MALFORMED_RESPONSE',
+			generationId ?? payload?.id ?? null,
+		);
 		console.error('MERCHANT_MAPPER_MALFORMED_JSON');
 		return null;
 	}
 	if (!Array.isArray(parsed.merchants)) {
+		await capture(
+			'ERROR',
+			response.status,
+			payload,
+			'MISSING_MERCHANTS',
+			generationId ?? payload?.id ?? null,
+		);
 		console.error('MERCHANT_MAPPER_MISSING_MERCHANTS');
 		return null;
 	}
@@ -355,6 +411,13 @@ async function callMerchantMappingModel(
 			default_category_id: defaultCategoryId,
 		});
 	}
+	await capture(
+		'SUCCESS',
+		response.status,
+		payload,
+		undefined,
+		generationId ?? payload?.id ?? null,
+	);
 	return { mappings, unsure_count: unsureCount };
 }
 
@@ -460,6 +523,17 @@ async function persistMappings(
 			returning id
 		`;
 		const merchantId = toRequiredString(merchantRows[0]?.id, 'global_merchants.id');
+		if (mapping.default_category_id) {
+			await sql`
+				insert into public.global_merchant_category_defaults (
+					merchant_id,
+					transaction_type,
+					category_id
+				)
+				values (${merchantId}, 'expense', ${mapping.default_category_id})
+				on conflict (merchant_id, transaction_type) do nothing
+			`;
+		}
 
 		const aliasRows = await sql<Array<{ search_key: unknown }>>`
 			insert into public.global_merchant_aliases (search_key, merchant_id)
@@ -536,7 +610,7 @@ async function backfillMerchantCategories(
 		return { candidateCount: 0, backfilledCount: 0 };
 	}
 
-	const outcome = await callMerchantMappingModel(env, apiKey, candidates, categoriesByName);
+	const outcome = await callMerchantMappingModel(sql, env, apiKey, candidates, categoriesByName);
 	if (outcome === null) {
 		return { candidateCount: candidates.length, backfilledCount: 0 };
 	}
@@ -553,6 +627,17 @@ async function backfillMerchantCategories(
 				and gm.default_category_id is null
 			returning gm.id
 		`;
+		if (updated.length > 0) {
+			await sql`
+				insert into public.global_merchant_category_defaults (
+					merchant_id,
+					transaction_type,
+					category_id
+				)
+				values (${mapping.search_key}, 'expense', ${mapping.default_category_id})
+				on conflict (merchant_id, transaction_type) do nothing
+			`;
+		}
 		backfilled += updated.length;
 	}
 	return { candidateCount: candidates.length, backfilledCount: backfilled };
@@ -591,7 +676,7 @@ export async function runMerchantMappingJob(
 		let anyChunkSucceeded = false;
 		for (let i = 0; i < enriched.length; i += MAPPING_AI_CHUNK_SIZE) {
 			const chunk = enriched.slice(i, i + MAPPING_AI_CHUNK_SIZE);
-			const outcome = await callMerchantMappingModel(env, apiKey, chunk, categoriesByName);
+			const outcome = await callMerchantMappingModel(sql, env, apiKey, chunk, categoriesByName);
 			if (outcome === null) {
 				// One malformed chunk answer must not discard the others.
 				result.skipped_reason = 'invalid model response';

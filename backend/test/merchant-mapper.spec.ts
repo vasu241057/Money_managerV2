@@ -22,6 +22,7 @@ type QueryHandler = (query: string, values: unknown[]) => unknown | Promise<unkn
 function createSqlMock(handler: QueryHandler): SqlClient {
 	const tag = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
 		const query = strings.join(' ').replace(/\s+/g, ' ').trim();
+		if (query.includes('insert into public.ai_usage_events')) return [];
 		return handler(query, values);
 	};
 	return tag as unknown as SqlClient;
@@ -122,6 +123,7 @@ describe('merchant-mapper worker', () => {
 				});
 				return [{ id: MERCHANT_ID }];
 			}
+			if (query.includes('insert into public.global_merchant_category_defaults')) return [];
 			if (query.includes('insert into public.global_merchant_aliases')) {
 				insertedAliases.push({ key: values[0] as string, merchantId: values[1] as string });
 				return [{ search_key: values[0] }];
@@ -248,6 +250,7 @@ describe('merchant-mapper worker', () => {
 				categoryUpdates.push({ categoryId: values[0], merchantId: values[1] });
 				return [{ id: OLD_MERCHANT_ID }];
 			}
+			if (query.includes('insert into public.global_merchant_category_defaults')) return [];
 			throw new Error(`Unexpected query: ${query}`);
 		});
 		getSqlClientMock.mockReturnValue(sql);
@@ -332,6 +335,7 @@ describe('sure-gate and web context', () => {
 				insertedMerchants.push(values[0] as string);
 				return [{ id: MERCHANT_ID }];
 			}
+			if (query.includes('insert into public.global_merchant_category_defaults')) return [];
 			if (query.includes('insert into public.global_merchant_aliases')) {
 				return [{ search_key: values[0] }];
 			}

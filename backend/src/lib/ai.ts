@@ -5,13 +5,14 @@ const DEFAULT_OPENCODE_MODEL = 'deepseek-v4-flash';
 const OPENCODE_CHAT_URL = 'https://opencode.ai/zen/go/v1/chat/completions';
 const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-// OpenRouter free-tier model ids (":free" suffix). The free roster churns —
-// verify current ids at openrouter.ai/models before relying on these.
-const DEFAULT_OPENROUTER_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct:free';
+// OpenRouter uses the paid DeepSeek model while credit is available, then
+// the normalizer rotates through two explicitly free reasoning fallbacks.
+// The free roster can change, so keep these exact ids covered by tests.
+const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-flash';
 const DEFAULT_OPENROUTER_NORMALIZER_TIERS = [
-	'deepseek/deepseek-r1:free',
-	'nvidia/llama-3.1-nemotron-70b-instruct:free',
-	'meta-llama/llama-3.3-70b-instruct:free',
+	'deepseek/deepseek-v4-flash',
+	'nvidia/nemotron-3-ultra-550b-a55b:free',
+	'openai/gpt-oss-120b:free',
 ];
 
 const DEFAULT_NORMALIZER_MODEL_TIERS = [
@@ -262,4 +263,3 @@ export function resolveNormalizerTierConfig(env: Env): NormalizerTierConfig {
 		),
 	};
 }
-

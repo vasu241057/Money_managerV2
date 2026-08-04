@@ -4,7 +4,11 @@ import type { AppConfig } from '../src/lib/config';
 import type { SqlClient } from '../src/lib/db/client';
 import { induceExtractTemplate } from '../src/lib/email-templates';
 import { maskNumericTokens } from '../src/lib/masking';
-import { runNormalizeRawEmailsJob } from '../src/workers/email-ai-normalizer';
+import {
+	filterCategoryIdByTransactionType,
+	resolveSuggestedTransactionType,
+	runNormalizeRawEmailsJob,
+} from '../src/workers/email-ai-normalizer';
 
 const { getAppConfigMock, getSqlClientMock } = vi.hoisted(() => ({
 	getAppConfigMock: vi.fn(),
@@ -28,6 +32,8 @@ interface SqlMock extends SqlClient {
 function createSqlMock(handler: QueryHandler): SqlMock {
 	const tag = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
 		const query = strings.join(' ').replace(/\s+/g, ' ').trim();
+		if (query.includes('insert into public.ai_usage_events')) return [];
+		if (query.includes('public.ai_call_runs')) return [];
 		return handler(query, values);
 	};
 	const begin = async (cb: (tx: SqlClient) => Promise<unknown>): Promise<unknown> =>
@@ -49,6 +55,7 @@ const RAW_EMAIL_ID = '00000000-0000-4000-8000-0000000000e1';
 const RULE_MERCHANT_ID = '00000000-0000-4000-8000-0000000000fe';
 const RULE_CATEGORY_ID = '00000000-0000-4000-8000-0000000000fc';
 const EXPENSE_CATEGORY_ID = '00000000-0000-4000-8000-0000000000fd';
+const TRANSFER_CATEGORY_ID = '00000000-0000-4000-8000-0000000000fb';
 const FE_ID = '00000000-0000-4000-8000-0000000000aa';
 const TXN_ID = '00000000-0000-4000-8000-0000000000ab';
 
@@ -97,6 +104,25 @@ function aiModelResponse(): Response {
 	);
 }
 
+function aiTransferResponse(instrumentLast4: string | null = null): Response {
+	return new Response(JSON.stringify({
+		choices: [{ message: { content: JSON.stringify({
+			transactions: [{
+				direction: 'debit',
+				amount_in_paise: 265100,
+				txn_timestamp: '2026-07-01T10:00:00.000Z',
+				payment_method: 'upi',
+				counterparty_raw: 'ZEPTO MARKETPLACE PRIVATE LIMITED',
+				instrument_last4: instrumentLast4,
+				category_guess: 'Card Bill Payment',
+				category_id: TRANSFER_CATEGORY_ID,
+				sub_category_id: null,
+				confidence: 0.99,
+			}],
+		}) } }],
+	}), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
 describe('email-ai-normalizer identity graph integration', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -136,6 +162,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 						user_id: USER_ID,
 						search_key: EXPECTED_SEARCH_KEY,
 						merchant_id: RULE_MERCHANT_ID,
+						category_type: 'expense',
 						custom_category_id: RULE_CATEGORY_ID,
 					},
 				];
@@ -191,6 +218,159 @@ describe('email-ai-normalizer identity graph integration', () => {
 		expect(result.needs_review_transaction_count).toBe(0);
 	});
 
+	it('stores an explicit transfer-category suggestion as NEEDS_REVIEW even for a known institution', async () => {
+		let transactionValues: unknown[] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re')) return [pendingRawEmailRow()];
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) return [];
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [
+					{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' },
+					{ id: TRANSFER_CATEGORY_ID, type: 'transfer', name: 'Card Bill Payment', parent_id: 'root' },
+				];
+			}
+			if (query.includes('from public.accounts as a')) return [];
+			if (query.includes('from public.user_credit_cards as ucc')) return [];
+			if (query.includes('from public.user_merchant_rules as umr')) return [];
+			if (query.includes('from public.global_merchant_aliases as gma')) {
+				return [{
+					search_key: EXPECTED_SEARCH_KEY,
+					merchant_id: RULE_MERCHANT_ID,
+					category_type: 'transfer',
+					default_category_id: TRANSFER_CATEGORY_ID,
+					merchant_type: 'TRANSFER_INSTITUTION',
+					confirmed: true,
+				}];
+			}
+			if (query.includes('pg_advisory_xact_lock')) return [];
+			if (query.includes("t.type = 'transfer'")) return [];
+			if (query.includes('insert into public.financial_events')) return [{ id: FE_ID }];
+			if (query.includes('insert into public.transactions')) {
+				transactionValues = values;
+				return [{ id: TXN_ID, status: values[9] }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) return [];
+			if (query.includes('select uhc.category_id')) return [];
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(aiTransferResponse()));
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{ OPENCODE_GO_API_KEY: 'test-key', AI_NORMALIZER_MASK_NUMBERS: 'false' } as unknown as Env,
+		);
+
+		expect(transactionValues[3]).toBe(TRANSFER_CATEGORY_ID);
+		expect(transactionValues[7]).toBe('transfer');
+		expect(transactionValues[9]).toBe('NEEDS_REVIEW');
+		expect(result.needs_review_transaction_count).toBe(1);
+	});
+
+	it('keeps the account-linked transfer when an account-less receipt arrives later', async () => {
+		let financialEventInserted = false;
+		let transactionInserted = false;
+		const sql = createSqlMock((query) => {
+			if (query.includes('from public.raw_emails as re')) return [pendingRawEmailRow()];
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) return [];
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [{ id: TRANSFER_CATEGORY_ID, type: 'transfer', name: 'Card Bill Payment', parent_id: 'root' }];
+			}
+			if (query.includes('from public.accounts as a')) return [];
+			if (query.includes('from public.user_credit_cards as ucc')) return [];
+			if (query.includes('from public.user_merchant_rules as umr')) return [];
+			if (query.includes('from public.global_merchant_aliases as gma')) return [];
+			if (query.includes('pg_advisory_xact_lock')) return [];
+			if (query.includes("t.type = 'transfer'")) {
+				return [{
+					transaction_id: '00000000-0000-4000-8000-0000000000b1',
+					financial_event_id: '00000000-0000-4000-8000-0000000000b2',
+					account_id: '00000000-0000-4000-8000-0000000000b3',
+				}];
+			}
+			if (query.includes('insert into public.financial_events')) {
+				financialEventInserted = true;
+				return [{ id: FE_ID }];
+			}
+			if (query.includes('insert into public.transactions')) {
+				transactionInserted = true;
+				return [{ id: TXN_ID, status: 'NEEDS_REVIEW' }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) return [];
+			if (query.includes('select uhc.category_id')) return [];
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(aiTransferResponse()));
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{ OPENCODE_GO_API_KEY: 'test-key', AI_NORMALIZER_MASK_NUMBERS: 'false' } as unknown as Env,
+		);
+
+		expect(result.processed_raw_email_count).toBe(1);
+		expect(result.created_transaction_count).toBe(0);
+		expect(financialEventInserted).toBe(false);
+		expect(transactionInserted).toBe(false);
+	});
+
+	it('replaces an account-less receipt when the account-linked transfer arrives later', async () => {
+		const accountId = '00000000-0000-4000-8000-0000000000b3';
+		let deletedOldProjection = false;
+		let reversedOldEvent = false;
+		let transactionValues: unknown[] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re')) return [pendingRawEmailRow()];
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = false')) return [];
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [{ id: TRANSFER_CATEGORY_ID, type: 'transfer', name: 'Card Bill Payment', parent_id: 'root' }];
+			}
+			if (query.includes('from public.accounts as a')) {
+				return [{ id: accountId, name: 'HDFC', type: 'bank', instrument_last4: '5960' }];
+			}
+			if (query.includes('from public.user_credit_cards as ucc')) return [];
+			if (query.includes('from public.user_merchant_rules as umr')) return [];
+			if (query.includes('from public.global_merchant_aliases as gma')) return [];
+			if (query.includes('pg_advisory_xact_lock')) return [];
+			if (query.includes("t.type = 'transfer'")) {
+				return [{
+					transaction_id: '00000000-0000-4000-8000-0000000000b1',
+					financial_event_id: '00000000-0000-4000-8000-0000000000b2',
+					account_id: null,
+				}];
+			}
+			if (query.includes('delete from public.transactions as t')) {
+				deletedOldProjection = true;
+				return [];
+			}
+			if (query.includes("set status = 'REVERSED'")) {
+				reversedOldEvent = true;
+				return [];
+			}
+			if (query.includes('insert into public.financial_events')) return [{ id: FE_ID }];
+			if (query.includes('insert into public.transactions')) {
+				transactionValues = values;
+				return [{ id: TXN_ID, status: 'NEEDS_REVIEW' }];
+			}
+			if (query.includes("set status = 'PROCESSED'")) return [];
+			if (query.includes('select uhc.category_id')) return [];
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(aiTransferResponse('5960')));
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{ OPENCODE_GO_API_KEY: 'test-key', AI_NORMALIZER_MASK_NUMBERS: 'false' } as unknown as Env,
+		);
+
+		expect(result.created_transaction_count).toBe(1);
+		expect(result.needs_review_transaction_count).toBe(1);
+		expect(deletedOldProjection).toBe(true);
+		expect(reversedOldEvent).toBe(true);
+		expect(transactionValues[2]).toBe(accountId);
+	});
+
 	it('masked mode: no digits reach the model; amount/date/last4 resolved locally; alias hit auto-verifies', async () => {
 		let financialEventValues: unknown[] = [];
 		let transactionValues: unknown[] = [];
@@ -228,6 +408,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 					{
 						search_key: EXPECTED_SEARCH_KEY,
 						merchant_id: RULE_MERCHANT_ID,
+						category_type: 'expense',
 						default_category_id: RULE_CATEGORY_ID,
 						merchant_type: 'MERCHANT',
 					},
@@ -342,6 +523,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 						user_id: USER_ID,
 						search_key: EXPECTED_SEARCH_KEY,
 						merchant_id: RULE_MERCHANT_ID,
+						category_type: 'expense',
 						custom_category_id: RULE_CATEGORY_ID,
 					},
 				];
@@ -451,6 +633,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 						{
 							search_key: EXPECTED_SEARCH_KEY,
 							merchant_id: RULE_MERCHANT_ID,
+							category_type: null,
 							default_category_id: null,
 							merchant_type: merchantType,
 						},
@@ -528,6 +711,11 @@ describe('email-ai-normalizer identity graph integration', () => {
 		// Control: the identical setup with a plain MERCHANT alias verifies.
 		const merchantValues = await runWithMerchantType('MERCHANT');
 		expect(merchantValues[9]).toBe('VERIFIED');
+
+		// A bank/CRED identity is context, not proof of an internal transfer.
+		const transferInstitutionValues = await runWithMerchantType('TRANSFER_INSTITUTION');
+		expect(transferInstitutionValues[7]).toBe('expense');
+		expect(transferInstitutionValues[9]).toBe('NEEDS_REVIEW');
 	});
 
 	it('degrades a hidden category proposed by the alias default to the fallback + review', async () => {
@@ -562,6 +750,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 					{
 						search_key: EXPECTED_SEARCH_KEY,
 						merchant_id: RULE_MERCHANT_ID,
+						category_type: 'expense',
 						default_category_id: RULE_CATEGORY_ID,
 						merchant_type: 'MERCHANT',
 					},
@@ -631,6 +820,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 					{
 						search_key: EXPECTED_SEARCH_KEY,
 						merchant_id: RULE_MERCHANT_ID,
+						category_type: null,
 						default_category_id: null,
 						merchant_type: 'MERCHANT',
 					},
@@ -704,6 +894,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 						user_id: USER_ID,
 						search_key: EXPECTED_SEARCH_KEY,
 						merchant_id: RULE_MERCHANT_ID,
+						category_type: 'expense',
 						custom_category_id: RULE_CATEGORY_ID,
 					},
 				];
@@ -804,7 +995,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [];
 			}
 			if (query.includes("set status = 'FAILED'")) {
-				failedIds.push(values[0] as string);
+				failedIds.push(values[2] as string);
 				return [];
 			}
 			if (query.includes('select uhc.category_id')) {
@@ -1175,5 +1366,31 @@ describe('email-ai-normalizer identity graph integration', () => {
 		expect(transactionValues[9]).toBe('NEEDS_REVIEW');
 		expect(transactionValues[10]).toBe('AI');
 		expect(transactionValues[11]).toBe(0.9);
+	});
+});
+
+describe('category type enforcement', () => {
+	it('drops a real category id when it belongs to the opposite transaction type', () => {
+		const categoryTypes = new Map([
+			['food-id', 'expense' as const],
+			['other-income-id', 'income' as const],
+		]);
+
+		expect(filterCategoryIdByTransactionType('food-id', categoryTypes, 'income')).toBeNull();
+		expect(filterCategoryIdByTransactionType('food-id', categoryTypes, 'expense')).toBe('food-id');
+		expect(filterCategoryIdByTransactionType('other-income-id', categoryTypes, 'expense')).toBeNull();
+	});
+
+	it('suggests transfer only from an explicit transfer-typed category', () => {
+		const categoryTypes = new Map([
+			['food-id', 'expense' as const],
+			['card-payment-id', 'transfer' as const],
+		]);
+
+		expect(resolveSuggestedTransactionType('debit', 'food-id', categoryTypes)).toBe('expense');
+		expect(resolveSuggestedTransactionType('credit', 'food-id', categoryTypes)).toBe('income');
+		expect(resolveSuggestedTransactionType('debit', 'card-payment-id', categoryTypes)).toBe('transfer');
+		expect(resolveSuggestedTransactionType('credit', 'card-payment-id', categoryTypes)).toBe('transfer');
+		expect(resolveSuggestedTransactionType('debit', null, categoryTypes)).toBe('expense');
 	});
 });

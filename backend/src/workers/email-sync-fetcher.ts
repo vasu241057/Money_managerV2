@@ -1443,7 +1443,10 @@ async function persistRawEmailsAndCursor(
 					clean_text = excluded.clean_text,
 					from_address = excluded.from_address,
 					subject = excluded.subject,
-					status = excluded.status
+					status = excluded.status,
+					processing_route = null,
+					ai_call_id = null,
+					processing_completed_at = null
 				where raw_emails.status = 'FAILED'
 				returning id
 			`;

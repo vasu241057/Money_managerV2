@@ -25,6 +25,7 @@ type QueryHandler = (query: string, values: unknown[]) => unknown | Promise<unkn
 function createSqlMock(handler: QueryHandler): SqlClient {
 	const tag = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
 		const query = strings.join(' ').replace(/\s+/g, ' ').trim();
+		if (query.includes('insert into public.ai_usage_events')) return [];
 		return handler(query, values);
 	};
 	return tag as unknown as SqlClient;

@@ -153,12 +153,12 @@ export interface SystemCategoryMap {
 
 export interface UserRuleResolution {
 	merchant_id: UUID | null;
-	custom_category_id: UUID | null;
+	category_ids: SystemCategoryMap;
 }
 
 export interface GlobalAliasResolution {
 	merchant_id: UUID;
-	default_category_id: UUID | null;
+	category_ids: SystemCategoryMap;
 	merchant_type: MerchantType;
 	// Probation: unconfirmed (fresh AI) mappings inform but never auto-verify.
 	confirmed: boolean;
@@ -180,12 +180,14 @@ interface UserRuleLookupRowRaw {
 	user_id: unknown;
 	search_key: unknown;
 	merchant_id: unknown;
+	category_type: unknown;
 	custom_category_id: unknown;
 }
 
 interface GlobalAliasLookupRowRaw {
 	search_key: unknown;
 	merchant_id: unknown;
+	category_type: unknown;
 	default_category_id: unknown;
 	merchant_type: unknown;
 	confirmed?: unknown;
@@ -268,15 +270,18 @@ export async function loadUserRulesForLookup(
 	}
 
 	const rows = await sql<UserRuleLookupRowRaw[]>`
-		select distinct on (umr.user_id, umr.search_key)
+		select
 			umr.user_id,
 			umr.search_key,
 			umr.merchant_id,
-			umr.custom_category_id
+			umrc.transaction_type as category_type,
+			umrc.category_id as custom_category_id
 		from public.user_merchant_rules as umr
+		left join public.user_merchant_rule_categories as umrc
+			on umrc.user_merchant_rule_id = umr.id
 		where umr.user_id = any(${userIds}::uuid[])
 			and umr.search_key = any(${searchKeys}::text[])
-		order by umr.user_id, umr.search_key, umr.updated_at desc, umr.created_at desc, umr.id desc
+		order by umr.user_id, umr.search_key, umrc.transaction_type
 	`;
 
 	const lookup = new Map<UUID, Map<string, UserRuleResolution>>();
@@ -284,13 +289,19 @@ export async function loadUserRulesForLookup(
 		const userId = toRequiredString(row.user_id, 'user_merchant_rules.user_id');
 		const searchKey = toRequiredString(row.search_key, 'user_merchant_rules.search_key');
 		const userMap = lookup.get(userId) ?? new Map<string, UserRuleResolution>();
-		userMap.set(searchKey, {
+		const resolution = userMap.get(searchKey) ?? {
 			merchant_id: toNullableString(row.merchant_id, 'user_merchant_rules.merchant_id'),
-			custom_category_id: toNullableString(
-				row.custom_category_id,
-				'user_merchant_rules.custom_category_id',
-			),
-		});
+			category_ids: { income: null, expense: null, transfer: null },
+		};
+		const categoryType = toNullableString(row.category_type, 'user_merchant_rule_categories.transaction_type');
+		const categoryId = toNullableString(row.custom_category_id, 'user_merchant_rule_categories.category_id');
+		if (
+			categoryId &&
+			(categoryType === 'income' || categoryType === 'expense' || categoryType === 'transfer')
+		) {
+			resolution.category_ids[categoryType] = resolution.category_ids[categoryType] ?? categoryId;
+		}
+		userMap.set(searchKey, resolution);
 		lookup.set(userId, userMap);
 	}
 
@@ -309,32 +320,39 @@ export async function loadGlobalAliasesForLookup(
 		select
 			gma.search_key,
 			gm.id as merchant_id,
-			gm.default_category_id,
+			gmcd.transaction_type as category_type,
+			gmcd.category_id as default_category_id,
 			gm.type as merchant_type,
 			gm.confirmed
 		from public.global_merchant_aliases as gma
 		join public.global_merchants as gm
 			on gm.id = gma.merchant_id
+		left join public.global_merchant_category_defaults as gmcd
+			on gmcd.merchant_id = gm.id
 		where gma.search_key = any(${searchKeys}::text[])
+		order by gma.search_key, gmcd.transaction_type
 	`;
 
 	const lookup = new Map<string, GlobalAliasResolution>();
 	for (const row of rows) {
 		const searchKey = toRequiredString(row.search_key, 'global_merchant_aliases.search_key');
-		if (lookup.has(searchKey)) {
-			continue;
-		}
-		lookup.set(searchKey, {
+		const resolution = lookup.get(searchKey) ?? {
 			merchant_id: toRequiredString(row.merchant_id, 'global_merchants.id'),
-			default_category_id: toNullableString(
-				row.default_category_id,
-				'global_merchants.default_category_id',
-			),
+			category_ids: { income: null, expense: null, transfer: null },
 			merchant_type: toRequiredString(row.merchant_type, 'global_merchants.type') as MerchantType,
 			// Missing column (spec harnesses) reads as confirmed so legacy
 			// fixtures keep their auto-verify semantics.
 			confirmed: row.confirmed !== false,
-		});
+		};
+		const categoryType = toNullableString(row.category_type, 'global_merchant_category_defaults.transaction_type');
+		const categoryId = toNullableString(row.default_category_id, 'global_merchant_category_defaults.category_id');
+		if (
+			categoryId &&
+			(categoryType === 'income' || categoryType === 'expense' || categoryType === 'transfer')
+		) {
+			resolution.category_ids[categoryType] = resolution.category_ids[categoryType] ?? categoryId;
+		}
+		lookup.set(searchKey, resolution);
 	}
 
 	return lookup;
@@ -346,9 +364,8 @@ export interface IdentityResolution {
 	// Category by provenance: a rule category is the user's own decision, an
 	// alias category is the global default. Auto-verify needs to know which
 	// (or neither) actually resolved — the merged view hid that.
-	rule_category_id: UUID | null;
-	alias_category_id: UUID | null;
-	category_id: UUID | null;
+	rule_category_ids: SystemCategoryMap;
+	alias_category_ids: SystemCategoryMap;
 	user_rule_hit: boolean;
 	global_alias_hit: boolean;
 	// False while the hit alias's merchant is on probation (fresh AI mapping
@@ -363,8 +380,8 @@ export function resolveIdentityForSearchKeys(
 ): IdentityResolution {
 	let merchantId: UUID | null = null;
 	let merchantType: MerchantType | null = null;
-	let ruleCategoryId: UUID | null = null;
-	let aliasCategoryId: UUID | null = null;
+	const ruleCategoryIds: SystemCategoryMap = { income: null, expense: null, transfer: null };
+	const aliasCategoryIds: SystemCategoryMap = { income: null, expense: null, transfer: null };
 	let userRuleHit = false;
 	let globalAliasHit = false;
 	let aliasConfirmed = false;
@@ -377,7 +394,9 @@ export function resolveIdentityForSearchKeys(
 		}
 		userRuleHit = true;
 		merchantId = merchantId ?? userRule.merchant_id;
-		ruleCategoryId = ruleCategoryId ?? userRule.custom_category_id;
+		for (const type of ['income', 'expense', 'transfer'] as const) {
+			ruleCategoryIds[type] = ruleCategoryIds[type] ?? userRule.category_ids[type];
+		}
 	}
 
 	for (const key of searchKeys) {
@@ -389,16 +408,17 @@ export function resolveIdentityForSearchKeys(
 		aliasConfirmed = alias.confirmed;
 		merchantId = merchantId ?? alias.merchant_id;
 		merchantType = merchantType ?? alias.merchant_type;
-		aliasCategoryId = aliasCategoryId ?? alias.default_category_id;
+		for (const type of ['income', 'expense', 'transfer'] as const) {
+			aliasCategoryIds[type] = aliasCategoryIds[type] ?? alias.category_ids[type];
+		}
 		break;
 	}
 
 	return {
 		merchant_id: merchantId,
 		merchant_type: merchantType,
-		rule_category_id: ruleCategoryId,
-		alias_category_id: aliasCategoryId,
-		category_id: ruleCategoryId ?? aliasCategoryId,
+		rule_category_ids: ruleCategoryIds,
+		alias_category_ids: aliasCategoryIds,
 		user_rule_hit: userRuleHit,
 		global_alias_hit: globalAliasHit,
 		alias_confirmed: aliasConfirmed,

@@ -6,6 +6,7 @@ import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
 import { toRequiredString } from '../lib/db/serialization';
 import { isAllowedSender, resolveSenderGateConfig } from '../lib/sender-gate';
+import { captureAiUsageAttempt } from '../services/ai-usage.service';
 import { TransientMessageError } from './queue.errors';
 
 // The provider routinely takes 25-45s on large prompts; queue consumers
@@ -49,6 +50,12 @@ interface ClassifiedSender {
 	address: string;
 	financial: boolean;
 	sender_type: 'BANK' | 'FINTECH' | 'WALLET' | 'OTHER';
+}
+
+interface SenderModelPayload {
+	id?: string;
+	choices?: Array<{ message?: { content?: string } }>;
+	usage?: unknown;
 }
 
 export interface SenderClassificationResult {
@@ -117,6 +124,7 @@ function buildClassificationPrompt(
 }
 
 async function callSenderClassificationModel(
+	sql: SqlClient,
 	env: Env,
 	apiKey: string,
 	candidates: SenderCandidate[],
@@ -124,6 +132,27 @@ async function callSenderClassificationModel(
 	const controller = new AbortController();
 	const providerConfig = resolveAiProviderConfig(env);
 	const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_TIMEOUT_MS);
+	const startedAtMs = Date.now();
+	const capture = async (
+		status: 'SUCCESS' | 'ERROR',
+		httpStatus: number | null,
+		payload?: unknown,
+		errorCode?: string,
+		generationId?: string | null,
+	) =>
+		captureAiUsageAttempt({
+			sql,
+			provider: providerConfig.provider,
+			model: providerConfig.dailyModel,
+			operation: 'SENDER_CLASSIFICATION',
+			itemCount: candidates.length,
+			startedAtMs,
+			status,
+			httpStatus,
+			payload,
+			errorCode,
+			generationId,
+		});
 
 	let response: Response;
 	try {
@@ -144,32 +173,45 @@ async function callSenderClassificationModel(
 	} catch (error) {
 		clearTimeout(timeoutId);
 		if (error instanceof Error && error.name === 'AbortError') {
+			await capture('ERROR', null, undefined, 'TIMEOUT');
 			throw new TransientMessageError('Sender classification request timed out');
 		}
+		await capture('ERROR', null, undefined, 'NETWORK_ERROR');
 		throw new TransientMessageError(
 			`Sender classification network error: ${error instanceof Error ? error.message : 'Unknown'}`,
 		);
 	}
 	clearTimeout(timeoutId);
+	const generationId = response.headers.get('X-Generation-Id');
 
 	if (response.status === 429 || response.status === 408 || response.status >= 500) {
+		await capture('ERROR', response.status, undefined, `HTTP_${response.status}`, generationId);
 		throw new TransientMessageError(`Sender classification transient HTTP ${response.status}`);
 	}
 	if (!response.ok) {
+		await capture('ERROR', response.status, undefined, `HTTP_${response.status}`, generationId);
 		console.error('SENDER_CLASSIFIER_HTTP_ERROR', { status: response.status });
 		return null;
 	}
 
 	let content: string | undefined;
+	let payload: SenderModelPayload | null = null;
 	try {
-		const json = (await response.json()) as {
-			choices?: Array<{ message?: { content?: string } }>;
-		};
-		content = json.choices?.[0]?.message?.content;
+		payload = (await response.json()) as SenderModelPayload;
+		content = payload.choices?.[0]?.message?.content;
 	} catch {
-		content = undefined;
+		await capture('ERROR', response.status, undefined, 'MALFORMED_RESPONSE', generationId);
+		console.error('SENDER_CLASSIFIER_MALFORMED_RESPONSE');
+		return null;
 	}
 	if (!content) {
+		await capture(
+			'ERROR',
+			response.status,
+			payload,
+			'EMPTY_RESPONSE',
+			generationId ?? payload?.id ?? null,
+		);
 		console.error('SENDER_CLASSIFIER_EMPTY_RESPONSE');
 		return null;
 	}
@@ -183,10 +225,24 @@ async function callSenderClassificationModel(
 	try {
 		parsed = JSON.parse(cleaned) as { senders?: unknown };
 	} catch {
+		await capture(
+			'ERROR',
+			response.status,
+			payload,
+			'MALFORMED_RESPONSE',
+			generationId ?? payload?.id ?? null,
+		);
 		console.error('SENDER_CLASSIFIER_MALFORMED_JSON');
 		return null;
 	}
 	if (!Array.isArray(parsed.senders)) {
+		await capture(
+			'ERROR',
+			response.status,
+			payload,
+			'MISSING_SENDERS',
+			generationId ?? payload?.id ?? null,
+		);
 		console.error('SENDER_CLASSIFIER_MISSING_SENDERS');
 		return null;
 	}
@@ -211,6 +267,13 @@ async function callSenderClassificationModel(
 		seen.add(address);
 		classified.push({ address, financial: record.financial, sender_type: senderType });
 	}
+	await capture(
+		'SUCCESS',
+		response.status,
+		payload,
+		undefined,
+		generationId ?? payload?.id ?? null,
+	);
 	return classified;
 }
 
@@ -427,7 +490,7 @@ export async function runSenderClassificationJob(
 		subjects: subjectsBySender.get(address) ?? [],
 	}));
 
-	const classified = await callSenderClassificationModel(env, apiKey, candidates);
+	const classified = await callSenderClassificationModel(sql, env, apiKey, candidates);
 	if (classified === null) {
 		result.skipped_reason = 'invalid model response';
 		return result;

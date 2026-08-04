@@ -9,6 +9,8 @@
 import type {
 	AiNormalizationResponse,
 	AiNormalizedTransactionItem,
+	AiUsageOperation,
+	AiUsageProvider,
 	ClassificationSource,
 	NormalizeRawEmailsJobPayload,
 	PaymentMethod,
@@ -54,8 +56,17 @@ import {
 } from '../lib/masking';
 import { resolveMaskedStatement } from '../lib/statements';
 import { persistCardStatement } from '../services/card-statements.service';
+import {
+	captureAiUsageAttempt,
+	finishAiCallRun,
+	startAiCallRun,
+} from '../services/ai-usage.service';
 import { completeStatementFromPdf } from '../services/statement-pdf.service';
-import { hasLikelyDuplicateEvent, resolveDedupWindowMinutes } from '../lib/txn-dedup';
+import {
+	findLikelyDuplicateTransfer,
+	hasLikelyDuplicateEvent,
+	resolveDedupWindowMinutes,
+} from '../lib/txn-dedup';
 import {
 	resolveAiProviderConfig,
 	resolveEmailPipelineTraceEnabled,
@@ -98,6 +109,38 @@ interface UserNormalizationContext {
 	hidden_category_ids: Set<string>;
 }
 
+function buildCategoryTypeMap(ctx: UserNormalizationContext): Map<string, TransactionType> {
+	const categoryTypes = new Map<string, TransactionType>();
+	for (const category of ctx.categories) {
+		if (category.type !== 'income' && category.type !== 'expense' && category.type !== 'transfer') {
+			continue;
+		}
+		categoryTypes.set(category.id, category.type);
+		for (const subCategory of category.sub_categories) {
+			categoryTypes.set(subCategory.id, category.type);
+		}
+	}
+	return categoryTypes;
+}
+
+export function filterCategoryIdByTransactionType(
+	categoryId: string | null,
+	categoryTypes: ReadonlyMap<string, TransactionType>,
+	transactionType: TransactionType,
+): string | null {
+	return categoryId && categoryTypes.get(categoryId) === transactionType ? categoryId : null;
+}
+
+export function resolveSuggestedTransactionType(
+	direction: 'debit' | 'credit',
+	categoryId: string | null,
+	categoryTypes: ReadonlyMap<string, TransactionType>,
+): TransactionType {
+	return categoryId && categoryTypes.get(categoryId) === 'transfer'
+		? 'transfer'
+		: directionToType(direction);
+}
+
 function buildUserContextPrompt(ctx: UserNormalizationContext): string {
 	const catList = ctx.categories.map(c => {
 		const subList = c.sub_categories.map(s => `      { "id": "${s.id}", "name": "${s.name}" }`).join(',\n');
@@ -121,6 +164,8 @@ function buildUserContextPrompt(ctx: UserNormalizationContext): string {
 		'- Pick the best matching category from the list above based on the transaction content.',
 		'- If a sub-category fits, set both category_id (parent) and sub_category_id.',
 		'- The category type must match the money flow: debit → an "expense" (or "transfer") category; credit → an "income" (or "transfer") category. Never cross types.',
+		'- Use a "transfer" category only when the text explicitly describes money moving between accounts owned by the user, including paying the user\'s own credit card. A bank, CRED, wallet, broker, or another financial institution appearing in the text is not enough by itself.',
+		'- Money sent to another person is an expense; money received from another person is income. P2P does not mean transfer.',
 		'- If unsure or nothing fits, return null for category_id and sub_category_id. Never guess, never invent IDs.',
 	].join('\n');
 }
@@ -338,7 +383,23 @@ class RateLimitedModelError extends TransientMessageError {
 	}
 }
 
-type ModelErrorKind = 'rate_limited' | 'transient' | 'permanent' | 'parse_error' | 'timeout';
+// OpenRouter documents HTTP 402 as insufficient credits. Keeping it distinct
+// prevents a paid model with an empty balance from consuming its normal retry
+// allowance before the free tiers are tried.
+class PaymentRequiredModelError extends TransientMessageError {
+	constructor(message: string) {
+		super(message);
+		this.name = 'PaymentRequiredModelError';
+	}
+}
+
+type ModelErrorKind =
+	| 'payment_required'
+	| 'rate_limited'
+	| 'transient'
+	| 'permanent'
+	| 'parse_error'
+	| 'timeout';
 
 interface ModelError {
 	kind: ModelErrorKind;
@@ -351,6 +412,47 @@ interface TierState {
 	activeIndex: number;
 	failureCountPerTier: Map<number, number>;
 	cooldownUntil: Map<number, number>;
+}
+
+interface AiUsageCallContext {
+	sql: SqlClient;
+	userId: UUID;
+	callId: UUID;
+	provider: AiUsageProvider;
+	operation: AiUsageOperation;
+	itemCount: number;
+	attemptNumber?: number;
+}
+
+type EmailProcessingRoute = 'TEMPLATE' | 'AI';
+
+async function captureModelAttempt(
+	context: AiUsageCallContext | undefined,
+	model: string,
+	startedAtMs: number,
+	status: 'SUCCESS' | 'ERROR',
+	httpStatus: number | null,
+	payload: unknown,
+	errorCode?: string,
+	generationId?: string | null,
+): Promise<void> {
+	if (!context) return;
+	await captureAiUsageAttempt({
+		sql: context.sql,
+		userId: context.userId,
+		callId: context.callId,
+		attemptNumber: context.attemptNumber,
+		provider: context.provider,
+		model,
+		operation: context.operation,
+		itemCount: context.itemCount,
+		startedAtMs,
+		status,
+		httpStatus,
+		payload,
+		errorCode,
+		generationId,
+	});
 }
 
 function normalizeBooleanEnvFlag(value: unknown): boolean {
@@ -416,6 +518,7 @@ function resolveAiItemsWithIdentityGraph(
 	userId: UUID,
 	items: AiNormalizedTransactionItem[],
 	lookup: IdentityGraphLookup,
+	categoryTypes: ReadonlyMap<string, TransactionType>,
 	hiddenCategoryIds: ReadonlySet<string> = new Set<string>(),
 ): ResolvedAiItem[] {
 	// A category the user has hidden ("deleted") resolves as if it didn't
@@ -430,24 +533,35 @@ function resolveAiItemsWithIdentityGraph(
 		const searchKeys = buildCanonicalSearchKeys(item);
 		const identity = resolveIdentityForSearchKeys(userId, searchKeys, lookup);
 
-		const transferIntercepted = identity.merchant_type === 'TRANSFER_INSTITUTION';
-		const transactionType: TransactionType = transferIntercepted
-			? 'transfer'
-			: directionToType(item.direction);
-
 		// Category precedence: user rule > AI's per-email pick (user-context
 		// aware) > global alias default > system generic for the type
 		// (Miscellaneous/Other — never a bare root). A model answer that IS
 		// the system generic ("use Miscellaneous when unsure") means "don't
 		// know" — it ranks and verifies like the fallback, not like a pick.
 		const rawAiCategoryId = item.sub_category_id || item.category_id || null;
+		// A financial-institution merchant is only context. It never proves that
+		// this particular money movement is internal. Transfer is suggested only
+		// when the per-email model explicitly selected a transfer-typed category,
+		// and the suggestion always remains reviewable below.
+		const transactionType = resolveSuggestedTransactionType(
+			item.direction,
+			rawAiCategoryId,
+			categoryTypes,
+		);
+		const typeCompatibleAiCategoryId = filterCategoryIdByTransactionType(
+			rawAiCategoryId,
+			categoryTypes,
+			transactionType,
+		);
 		const aiCategoryId = unlessHidden(
-			rawAiCategoryId === lookup.system_categories[transactionType] ? null : rawAiCategoryId,
+			typeCompatibleAiCategoryId === lookup.system_categories[transactionType]
+				? null
+				: typeCompatibleAiCategoryId,
 		);
 		const resolvedCategoryId =
-			unlessHidden(identity.rule_category_id) ??
+			unlessHidden(identity.rule_category_ids[transactionType]) ??
 			aiCategoryId ??
-			unlessHidden(identity.alias_category_id) ??
+			unlessHidden(identity.alias_category_ids[transactionType]) ??
 			null;
 		const categoryId = resolvedCategoryId ?? lookup.system_categories[transactionType];
 
@@ -466,7 +580,8 @@ function resolveAiItemsWithIdentityGraph(
 		const aliasIdentitySignal =
 			identity.global_alias_hit &&
 			identity.alias_confirmed &&
-			identity.merchant_type !== 'AGGREGATOR';
+			identity.merchant_type !== 'AGGREGATOR' &&
+			identity.merchant_type !== 'TRANSFER_INSTITUTION';
 		const identityVerified =
 			(identity.user_rule_hit || aliasIdentitySignal) && resolvedCategoryId !== null;
 
@@ -475,7 +590,9 @@ function resolveAiItemsWithIdentityGraph(
 		// transfer both deserve review, and neither may be silently trusted.
 		const overAmountThreshold = item.amount_in_paise > AMOUNT_REVIEW_THRESHOLD_IN_PAISE;
 		const status: TransactionStatus =
-			identityVerified && !overAmountThreshold ? 'VERIFIED' : 'NEEDS_REVIEW';
+			transactionType !== 'transfer' && identityVerified && !overAmountThreshold
+				? 'VERIFIED'
+				: 'NEEDS_REVIEW';
 
 		const classificationSource: ClassificationSource = identity.user_rule_hit
 			? 'USER'
@@ -704,6 +821,10 @@ function classifyError(error: unknown): ModelError {
 		return { kind: 'permanent', message: error.message };
 	}
 
+	if (error instanceof PaymentRequiredModelError) {
+		return { kind: 'payment_required', status: 402, message: error.message };
+	}
+
 	if (error instanceof RateLimitedModelError) {
 		return { kind: 'rate_limited', message: error.message };
 	}
@@ -779,6 +900,7 @@ async function callModel(
 	temperature: number,
 	maxTokens: number,
 	systemPrompt: string,
+	usageContext?: AiUsageCallContext,
 ): Promise<AiNormalizationResponse> {
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -817,15 +939,60 @@ async function callModel(
 	} catch (error) {
 		clearTimeout(timeoutId);
 		if (error instanceof Error && error.name === 'AbortError') {
+			await captureModelAttempt(
+				usageContext,
+				model,
+				callStartMs,
+				'ERROR',
+				null,
+				null,
+				'TIMEOUT',
+			);
 			throw new TransientMessageError('AI normalizer request timed out');
 		}
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'ERROR',
+			null,
+			null,
+			'NETWORK_ERROR',
+		);
 		throw new TransientMessageError(
 			`AI normalizer network error: ${error instanceof Error ? error.message : 'Unknown'}`,
 		);
 	}
 	clearTimeout(timeoutId);
+	const generationId = response.headers.get('X-Generation-Id');
+
+	if (response.status === 402) {
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'ERROR',
+			response.status,
+			null,
+			'HTTP_402',
+			generationId,
+		);
+		throw new PaymentRequiredModelError(
+			'AI normalizer payment required (402): provider credits are insufficient',
+		);
+	}
 
 	if (response.status === 429) {
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'ERROR',
+			response.status,
+			null,
+			'HTTP_429',
+			generationId,
+		);
 		const retryAfter = response.headers.get('Retry-After');
 		throw new RateLimitedModelError(
 			`AI normalizer rate limited (429)${retryAfter ? `, retry after ${retryAfter}s` : ''}`,
@@ -833,20 +1000,56 @@ async function callModel(
 	}
 
 	if (response.status >= 500 || response.status === 408) {
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'ERROR',
+			response.status,
+			null,
+			`HTTP_${response.status}`,
+			generationId,
+		);
 		throw new TransientMessageError(
 			`AI normalizer server error (${response.status})`,
 		);
 	}
 
 	if (!response.ok) {
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'ERROR',
+			response.status,
+			null,
+			`HTTP_${response.status}`,
+			generationId,
+		);
 		throw new PoisonMessageError(
 			`AI normalizer HTTP ${response.status}: model possibly unavailable`,
 		);
 	}
 
-	const json = (await response.json()) as {
+	let json: {
+		id?: string;
 		choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
 	};
+	try {
+		json = (await response.json()) as typeof json;
+	} catch {
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'ERROR',
+			response.status,
+			null,
+			'MALFORMED_RESPONSE',
+			generationId,
+		);
+		throw new TransientMessageError('AI normalizer returned malformed JSON');
+	}
 
 	const message = json.choices?.[0]?.message;
 	let content = message?.content;
@@ -882,6 +1085,16 @@ async function callModel(
 					? message.reasoning_content.slice(-300)
 					: null,
 		});
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'ERROR',
+			response.status,
+			json,
+			'EMPTY_RESPONSE',
+			generationId ?? json.id ?? null,
+		);
 		throw new TransientMessageError('AI normalizer returned empty response');
 	}
 
@@ -903,6 +1116,16 @@ async function callModel(
 			completionTokens: usage?.completion_tokens,
 			totalTokens: usage?.total_tokens,
 		});
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'SUCCESS',
+			response.status,
+			json,
+			undefined,
+			generationId ?? json.id ?? null,
+		);
 
 		// Batch responses carry `emails` instead of `transactions`; pass them
 		// through untouched for splitBatchResponse.
@@ -913,17 +1136,29 @@ async function callModel(
 			return { transactions: [] };
 		}
 		return parsed;
-	} catch {
+	} catch (error) {
+		if (error instanceof TransientMessageError) throw error;
+		await captureModelAttempt(
+			usageContext,
+			model,
+			callStartMs,
+			'ERROR',
+			response.status,
+			json,
+			'MALFORMED_RESPONSE',
+			generationId ?? json.id ?? null,
+		);
 		throw new TransientMessageError('AI normalizer returned malformed JSON');
 	}
 }
 
-async function callWithTieredFallback(
+export async function callWithTieredFallback(
 	env: Env,
 	emailText: string,
 	apiKey: string,
 	chatUrl: string,
 	systemPrompt: string,
+	usageContext?: AiUsageCallContext,
 ): Promise<AiNormalizationResponse> {
 	const config = resolveNormalizerTierConfig(env);
 	const state: TierState = {
@@ -933,66 +1168,103 @@ async function callWithTieredFallback(
 	};
 
 	let totalAttempts = 0;
-
-	while (totalAttempts < config.maxRetries) {
-		let tierIdx = state.activeIndex;
-		while (tierIdx < config.models.length) {
-			const cooldown = state.cooldownUntil.get(tierIdx) ?? 0;
-			if (Date.now() < cooldown) {
-				tierIdx++;
-			} else {
-				break;
-			}
-		}
-
-		if (tierIdx >= config.models.length) {
-			throw new PoisonMessageError('All AI model tiers exhausted');
-		}
-
-		const model = config.models[tierIdx];
-		state.activeIndex = tierIdx;
-
-		try {
-			return await callModel(
-				chatUrl,
-				model,
-				emailText,
-				apiKey,
-				config.timeoutMs,
-				config.temperature,
-				config.maxTokens,
-				systemPrompt,
-			);
-		} catch (error) {
-			const classified = classifyError(error);
-			totalAttempts++;
-
-			const tierFails = (state.failureCountPerTier.get(tierIdx) ?? 0) + 1;
-			state.failureCountPerTier.set(tierIdx, tierFails);
-
-			console.warn('AI_NORMALIZER_TIER_FAILURE', {
-				tierIndex: tierIdx,
-				model,
-				attempt: totalAttempts,
-				tierAttempts: tierFails,
-				errorKind: classified.kind,
-				message: classified.message ?? '',
-			});
-
-			if (classified.kind === 'rate_limited' || classified.kind === 'permanent') {
-				state.cooldownUntil.set(tierIdx, Date.now() + config.cooldownMs);
-				state.activeIndex = tierIdx + 1;
-				continue;
-			}
-
-			if (tierFails >= (config.tierAttempts[tierIdx] ?? 1)) {
-				state.cooldownUntil.set(tierIdx, Date.now() + config.cooldownMs);
-				state.activeIndex = tierIdx + 1;
-			}
-		}
+	if (usageContext) {
+		await startAiCallRun({
+			sql: usageContext.sql,
+			id: usageContext.callId,
+			userId: usageContext.userId,
+			operation: usageContext.operation,
+			itemCount: usageContext.itemCount,
+			startedAtMs: Date.now(),
+		});
 	}
 
-	throw new PoisonMessageError(`All ${config.maxRetries} normalizer attempts exhausted`);
+	try {
+		while (totalAttempts < config.maxRetries) {
+			let tierIdx = state.activeIndex;
+			while (tierIdx < config.models.length) {
+				const cooldown = state.cooldownUntil.get(tierIdx) ?? 0;
+				if (Date.now() < cooldown) {
+					tierIdx++;
+				} else {
+					break;
+				}
+			}
+
+			if (tierIdx >= config.models.length) {
+				throw new PoisonMessageError('All AI model tiers exhausted');
+			}
+
+			const model = config.models[tierIdx];
+			state.activeIndex = tierIdx;
+			const attemptNumber = totalAttempts + 1;
+
+			try {
+				const response = await callModel(
+					chatUrl,
+					model,
+					emailText,
+					apiKey,
+					config.timeoutMs,
+					config.temperature,
+					config.maxTokens,
+					systemPrompt,
+					usageContext ? { ...usageContext, attemptNumber } : undefined,
+				);
+				if (usageContext) {
+					await finishAiCallRun(
+						usageContext.sql,
+						usageContext.callId,
+						'SUCCESS',
+						attemptNumber,
+					);
+				}
+				return response;
+			} catch (error) {
+				const classified = classifyError(error);
+				totalAttempts++;
+
+				const tierFails = (state.failureCountPerTier.get(tierIdx) ?? 0) + 1;
+				state.failureCountPerTier.set(tierIdx, tierFails);
+
+				console.warn('AI_NORMALIZER_TIER_FAILURE', {
+					tierIndex: tierIdx,
+					model,
+					attempt: totalAttempts,
+					tierAttempts: tierFails,
+					errorKind: classified.kind,
+					message: classified.message ?? '',
+				});
+
+				if (
+					classified.kind === 'payment_required' ||
+					classified.kind === 'rate_limited' ||
+					classified.kind === 'permanent'
+				) {
+					state.cooldownUntil.set(tierIdx, Date.now() + config.cooldownMs);
+					state.activeIndex = tierIdx + 1;
+					continue;
+				}
+
+				if (tierFails >= (config.tierAttempts[tierIdx] ?? 1)) {
+					state.cooldownUntil.set(tierIdx, Date.now() + config.cooldownMs);
+					state.activeIndex = tierIdx + 1;
+				}
+			}
+		}
+
+		throw new PoisonMessageError(`All ${config.maxRetries} normalizer attempts exhausted`);
+	} catch (error) {
+		if (usageContext) {
+			await finishAiCallRun(
+				usageContext.sql,
+				usageContext.callId,
+				'FAILED',
+				totalAttempts,
+			);
+		}
+		throw error;
+	}
 }
 
 // Any id outside this set would violate the transactions.category_id FK
@@ -1196,6 +1468,8 @@ async function persistAiTransactions(
 	rawEmail: RawEmailRecord,
 	resolvedItems: ResolvedAiItem[],
 	dedupWindowMinutes: number,
+	processingRoute: EmailProcessingRoute,
+	callId: UUID | null,
 ): Promise<{ transactionCount: number; needsReviewIds: UUID[] }> {
 	return sql.begin(async (tx) => {
 		const txSql = tx as unknown as SqlClient;
@@ -1215,10 +1489,64 @@ async function persistAiTransactions(
 		let persistedFinancialEvents = 0;
 		let persistedTransactions = 0;
 		const needsReviewIds: UUID[] = [];
+		if (dedupWindowMinutes > 0) {
+			const transferDedupKeys = Array.from(new Set(
+				resolvedItems
+					.filter(item => item.transaction_type === 'transfer')
+					.map(item => [
+						lockedRow.user_id,
+						item.item.amount_in_paise,
+						item.item.direction,
+					].join(':')),
+			)).sort();
+			for (const dedupKey of transferDedupKeys) {
+				// Different queue consumers can normalize the bank alert and app
+				// receipt concurrently. Serialize only matching transfer shapes.
+				await txSql`
+					select pg_advisory_xact_lock(hashtextextended(${dedupKey}, 0))
+				`;
+			}
+		}
 
 		for (let idx = 0; idx < resolvedItems.length; idx++) {
 			const resolved = resolvedItems[idx] as ResolvedAiItem;
 			const item = resolved.item;
+
+			if (resolved.transaction_type === 'transfer' && dedupWindowMinutes > 0) {
+				const duplicate = await findLikelyDuplicateTransfer(txSql, {
+					user_id: lockedRow.user_id,
+					raw_email_id: lockedRow.id,
+					amount_in_paise: item.amount_in_paise,
+					direction: item.direction,
+					txn_timestamp: item.txn_timestamp,
+					window_minutes: dedupWindowMinutes,
+					account_id: item.account_id || null,
+				});
+
+				if (duplicate?.account_id) {
+					// The existing bank/account-side event is authoritative; this
+					// account-less payment receipt adds no second money movement.
+					continue;
+				}
+
+				if (duplicate) {
+					// The receipt arrived first. Remove only its duplicate projection;
+					// the raw email and reversed event remain as the audit trail.
+					await txSql`
+						delete from public.transactions as t
+						where t.id = ${duplicate.transaction_id}
+							and t.user_id = ${lockedRow.user_id}
+							and t.financial_event_id = ${duplicate.financial_event_id}
+					`;
+					await txSql`
+						update public.financial_events as fe
+						set status = 'REVERSED'
+						where fe.id = ${duplicate.financial_event_id}
+							and fe.user_id = ${lockedRow.user_id}
+							and fe.status = 'ACTIVE'
+					`;
+				}
+			}
 
 			const feRows = await txSql<FinancialEventInsertRowRaw[]>`
 				insert into public.financial_events (
@@ -1251,7 +1579,11 @@ async function persistAiTransactions(
 			// Cross-email dedup: the same payment often triggers two alerts
 			// (bank + payment app). Never silently auto-verify the second one.
 			let transactionStatus = resolved.status;
-			if (transactionStatus === 'VERIFIED' && dedupWindowMinutes > 0) {
+			if (
+				resolved.transaction_type !== 'transfer' &&
+				transactionStatus === 'VERIFIED' &&
+				dedupWindowMinutes > 0
+			) {
 				const hasDuplicate = await hasLikelyDuplicateEvent(txSql, {
 					user_id: lockedRow.user_id,
 					raw_email_id: lockedRow.id,
@@ -1306,7 +1638,10 @@ async function persistAiTransactions(
 
 		await txSql`
 			update public.raw_emails as re
-			set status = 'PROCESSED'
+			set status = 'PROCESSED',
+				processing_route = ${processingRoute},
+				ai_call_id = ${callId},
+				processing_completed_at = now()
 			where re.id = ${lockedRow.id}
 				and re.user_id = ${lockedRow.user_id}
 				and re.status = 'PENDING_EXTRACTION'
@@ -1323,6 +1658,8 @@ async function markRawEmailFailed(
 	sql: SqlClient,
 	rawEmail: RawEmailRecord,
 	error: unknown,
+	processingRoute: EmailProcessingRoute,
+	callId: UUID | null,
 ): Promise<void> {
 	const reason =
 		error instanceof Error
@@ -1331,7 +1668,10 @@ async function markRawEmailFailed(
 	try {
 		await sql`
 			update public.raw_emails as re
-			set status = 'FAILED'
+			set status = 'FAILED',
+				processing_route = ${processingRoute},
+				ai_call_id = ${callId},
+				processing_completed_at = now()
 			where re.id = ${rawEmail.id}
 				and re.user_id = ${rawEmail.user_id}
 				and re.status = 'PENDING_EXTRACTION'
@@ -1348,10 +1688,15 @@ async function markRawEmailFailed(
 async function markRawEmailIgnored(
 	sql: SqlClient,
 	rawEmail: RawEmailRecord,
+	processingRoute: EmailProcessingRoute,
+	callId: UUID | null,
 ): Promise<void> {
 	await sql`
 		update public.raw_emails as re
-		set status = 'IGNORED'
+		set status = 'IGNORED',
+			processing_route = ${processingRoute},
+			ai_call_id = ${callId},
+			processing_completed_at = now()
 		where re.id = ${rawEmail.id}
 			and re.user_id = ${rawEmail.user_id}
 			and re.status = 'PENDING_EXTRACTION'
@@ -1363,10 +1708,15 @@ async function markRawEmailIgnored(
 async function markRawEmailProcessed(
 	sql: SqlClient,
 	rawEmail: RawEmailRecord,
+	processingRoute: EmailProcessingRoute,
+	callId: UUID | null,
 ): Promise<void> {
 	await sql`
 		update public.raw_emails as re
-		set status = 'PROCESSED'
+		set status = 'PROCESSED',
+			processing_route = ${processingRoute},
+			ai_call_id = ${callId},
+			processing_completed_at = now()
 		where re.id = ${rawEmail.id}
 			and re.user_id = ${rawEmail.user_id}
 			and re.status = 'PENDING_EXTRACTION'
@@ -1568,16 +1918,18 @@ export async function runNormalizeRawEmailsJob(
 		ctx: UserNormalizationContext,
 		validated: AiNormalizedTransactionItem[],
 		emailStartMs: number,
+		processingRoute: EmailProcessingRoute,
+		callId: UUID | null,
 		statementCaptured = false,
 	): Promise<void> => {
 		result.reconciled_fact_count += validated.length;
 
 		if (validated.length === 0) {
 			if (statementCaptured) {
-				await markRawEmailProcessed(sql, rawEmail);
+				await markRawEmailProcessed(sql, rawEmail, processingRoute, callId);
 				result.processed_raw_email_count++;
 			} else {
-				await markRawEmailIgnored(sql, rawEmail);
+				await markRawEmailIgnored(sql, rawEmail, processingRoute, callId);
 				result.ignored_raw_email_count++;
 			}
 			console.info('AI_NORMALIZER_EMAIL_IGNORED', {
@@ -1625,6 +1977,7 @@ export async function runNormalizeRawEmailsJob(
 			rawEmail.user_id,
 			validated,
 			identityLookup,
+			buildCategoryTypeMap(ctx),
 			ctx.hidden_category_ids,
 		);
 
@@ -1657,6 +2010,8 @@ export async function runNormalizeRawEmailsJob(
 			rawEmail,
 			resolvedItems,
 			resolveDedupWindowMinutes(env),
+			processingRoute,
+			callId,
 		);
 
 		result.persisted_financial_event_count += persistence.transactionCount;
@@ -1672,8 +2027,12 @@ export async function runNormalizeRawEmailsJob(
 		});
 	};
 
-	const failEmail = async (rawEmail: RawEmailRecord, error: unknown): Promise<void> => {
-		await markRawEmailFailed(sql, rawEmail, error);
+	const failEmail = async (
+		rawEmail: RawEmailRecord,
+		error: unknown,
+		callId: UUID,
+	): Promise<void> => {
+		await markRawEmailFailed(sql, rawEmail, error, 'AI', callId);
 		result.failed_raw_email_count++;
 		result.failed_raw_email_ids.push(rawEmail.id);
 	};
@@ -1816,6 +2175,7 @@ export async function runNormalizeRawEmailsJob(
 		}
 		const systemPrompt = masked ? buildMaskedSystemPrompt(ctx) : buildSystemPrompt(ctx);
 		const emailStartMs = Date.now();
+		const callId = crypto.randomUUID();
 
 		// Never log email content: bodies carry balances, account numbers,
 		// and personal mail. Structural metadata only.
@@ -1832,6 +2192,14 @@ export async function runNormalizeRawEmailsJob(
 				apiKey,
 				providerConfig.chatUrl,
 				systemPrompt,
+				{
+					sql,
+					userId: rawEmail.user_id,
+					callId,
+					provider: providerConfig.provider,
+					operation: 'EMAIL_NORMALIZATION',
+					itemCount: 1,
+				},
 			);
 
 			const validated = masked
@@ -1856,7 +2224,15 @@ export async function runNormalizeRawEmailsJob(
 				? await maybeCaptureStatement(rawEmail, ctx, aiResponse, allTokens)
 				: false;
 
-			await finishEmail(rawEmail, ctx, validated, emailStartMs, statementCaptured);
+			await finishEmail(
+				rawEmail,
+				ctx,
+				validated,
+				emailStartMs,
+				'AI',
+				callId,
+				statementCaptured,
+			);
 
 			// Learning needs the model's token references, so masked mode only.
 			if (masked) {
@@ -1866,7 +2242,7 @@ export async function runNormalizeRawEmailsJob(
 			if (error instanceof TransientMessageError) {
 				throw error;
 			}
-			await failEmail(rawEmail, error);
+			await failEmail(rawEmail, error, callId);
 		}
 	};
 
@@ -1878,6 +2254,7 @@ export async function runNormalizeRawEmailsJob(
 		const firstEmail = batch[0] as RawEmailRecord;
 		const ctx = await getUserContext(firstEmail.user_id);
 		const batchStartMs = Date.now();
+		const callId = crypto.randomUUID();
 
 		const sections: string[] = [];
 		const maskedTexts: string[] = [];
@@ -1919,6 +2296,14 @@ export async function runNormalizeRawEmailsJob(
 				apiKey,
 				providerConfig.chatUrl,
 				buildMaskedBatchSystemPrompt(ctx, batch.length),
+				{
+					sql,
+					userId: firstEmail.user_id,
+					callId,
+					provider: providerConfig.provider,
+					operation: 'EMAIL_NORMALIZATION',
+					itemCount: batch.length,
+				},
 			);
 			perEmailResponses = splitBatchResponse(aiResponse, batch.length);
 		} catch (error) {
@@ -1928,7 +2313,7 @@ export async function runNormalizeRawEmailsJob(
 			// Permanent model failure: every email in the batch is marked
 			// FAILED so nothing silently disappears.
 			for (const rawEmail of batch) {
-				await failEmail(rawEmail, error);
+				await failEmail(rawEmail, error, callId);
 			}
 			return;
 		}
@@ -1942,6 +2327,7 @@ export async function runNormalizeRawEmailsJob(
 				await failEmail(
 					rawEmail,
 					new Error('Batch response missing entry for this email'),
+					callId,
 				);
 				continue;
 			}
@@ -1965,7 +2351,15 @@ export async function runNormalizeRawEmailsJob(
 					tokens,
 				);
 
-				await finishEmail(rawEmail, ctx, validated, batchStartMs, statementCaptured);
+				await finishEmail(
+					rawEmail,
+					ctx,
+					validated,
+					batchStartMs,
+					'AI',
+					callId,
+					statementCaptured,
+				);
 				await maybeLearnTemplate(
 					rawEmail,
 					emailResponse,
@@ -1977,7 +2371,7 @@ export async function runNormalizeRawEmailsJob(
 				if (error instanceof TransientMessageError) {
 					throw error;
 				}
-				await failEmail(rawEmail, error);
+				await failEmail(rawEmail, error, callId);
 			}
 		}
 	};
@@ -2058,7 +2452,7 @@ export async function runNormalizeRawEmailsJob(
 			}
 
 			if (applied.outcome === 'ignore') {
-				await markRawEmailIgnored(sql, rawEmail);
+				await markRawEmailIgnored(sql, rawEmail, 'TEMPLATE', null);
 				result.ignored_raw_email_count++;
 				result.template_matched_count++;
 			} else {
@@ -2078,7 +2472,7 @@ export async function runNormalizeRawEmailsJob(
 					confidence: applied.extraction.confidence,
 				};
 				result.extracted_fact_count++;
-				await finishEmail(rawEmail, ctx, [item], emailStartMs);
+				await finishEmail(rawEmail, ctx, [item], emailStartMs, 'TEMPLATE', null);
 				result.template_matched_count++;
 			}
 

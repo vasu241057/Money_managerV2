@@ -74,6 +74,9 @@ interface RawEmailState {
 	from_address: string | null;
 	subject: string | null;
 	status: RawEmailStatus;
+	processing_route: 'TEMPLATE' | 'AI' | null;
+	ai_call_id: UUID | null;
+	processing_completed_at: string | null;
 	created_at: string;
 }
 
@@ -117,6 +120,7 @@ interface GlobalAliasState {
 	search_key: string;
 	merchant_id: UUID;
 	default_category_id: UUID | null;
+	default_category_type: 'income' | 'expense' | 'transfer' | null;
 	merchant_type: 'MERCHANT' | 'TRANSFER_INSTITUTION' | 'AGGREGATOR' | 'P2P';
 }
 
@@ -224,6 +228,7 @@ function createPipelineState(input: PipelineScenarioInput = {}): PipelineState {
 			search_key: input.merchant_alias.search_key,
 			merchant_id: input.merchant_alias.merchant_id,
 			default_category_id: input.merchant_alias.category_id,
+			default_category_type: 'expense',
 			merchant_type: 'MERCHANT',
 		});
 	}
@@ -253,13 +258,19 @@ function mapRawEmailToRow(rawEmail: RawEmailState) {
 		internal_date: rawEmail.internal_date,
 		clean_text: rawEmail.clean_text,
 		from_address: rawEmail.from_address,
+		subject: rawEmail.subject,
 		status: rawEmail.status,
+		processing_route: rawEmail.processing_route,
+		ai_call_id: rawEmail.ai_call_id,
+		processing_completed_at: rawEmail.processing_completed_at,
 	};
 }
 
 function createSqlHarness(state: PipelineState): SqlMock {
 	const tag = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
 		const query = normalizeQuery(strings);
+		if (query.includes('insert into public.ai_usage_events')) return [];
+		if (query.includes('public.ai_call_runs')) return [];
 
 		if (query.includes('select oc.user_id as max_user_id')) {
 			const snapshotTimeMs = Number(values[0]);
@@ -484,7 +495,10 @@ function createSqlHarness(state: PipelineState): SqlMock {
 					from_address: fromAddress,
 					subject,
 					status: insertStatus,
-					created_at: state.now_iso,
+					processing_route: null,
+					ai_call_id: null,
+					processing_completed_at: null,
+				created_at: state.now_iso,
 				};
 				state.raw_emails_by_id.set(id, record);
 				state.raw_email_id_by_user_source.set(lookup, id);
@@ -499,6 +513,9 @@ function createSqlHarness(state: PipelineState): SqlMock {
 				existing.from_address = fromAddress;
 				existing.subject = subject;
 				existing.status = insertStatus;
+				existing.processing_route = null;
+				existing.ai_call_id = null;
+				existing.processing_completed_at = null;
 			}
 
 			return [];
@@ -578,6 +595,7 @@ function createSqlHarness(state: PipelineState): SqlMock {
 				.map((alias) => ({
 					search_key: alias.search_key,
 					merchant_id: alias.merchant_id,
+					category_type: alias.default_category_type,
 					default_category_id: alias.default_category_id,
 					merchant_type: alias.merchant_type,
 				}));
@@ -724,31 +742,40 @@ function createSqlHarness(state: PipelineState): SqlMock {
 		}
 
 		if (query.includes("set status = 'processed'")) {
-			const rawEmailId = values[0] as UUID;
-			const userId = values[1] as UUID;
+			const rawEmailId = values.at(-2) as UUID;
+			const userId = values.at(-1) as UUID;
 			const record = state.raw_emails_by_id.get(rawEmailId);
 			if (record && record.user_id === userId && record.status === 'PENDING_EXTRACTION') {
 				record.status = 'PROCESSED';
+				record.processing_route = values[0] as 'TEMPLATE' | 'AI';
+				record.ai_call_id = (values[1] as UUID | null) ?? null;
+				record.processing_completed_at = state.now_iso;
 			}
 			return [];
 		}
 
 		if (query.includes("set status = 'failed'")) {
-			const rawEmailId = values[0] as UUID;
-			const userId = values[1] as UUID;
+			const rawEmailId = values.at(-2) as UUID;
+			const userId = values.at(-1) as UUID;
 			const record = state.raw_emails_by_id.get(rawEmailId);
 			if (record && record.user_id === userId && record.status === 'PENDING_EXTRACTION') {
 				record.status = 'FAILED';
+				record.processing_route = values[0] as 'TEMPLATE' | 'AI';
+				record.ai_call_id = (values[1] as UUID | null) ?? null;
+				record.processing_completed_at = state.now_iso;
 			}
 			return [];
 		}
 
 		if (query.includes("set status = 'ignored'")) {
-			const rawEmailId = values[0] as UUID;
-			const userId = values[1] as UUID;
+			const rawEmailId = values.at(-2) as UUID;
+			const userId = values.at(-1) as UUID;
 			const record = state.raw_emails_by_id.get(rawEmailId);
 			if (record && record.user_id === userId && record.status === 'PENDING_EXTRACTION') {
 				record.status = 'IGNORED';
+				record.processing_route = values[0] as 'TEMPLATE' | 'AI';
+				record.ai_call_id = (values[1] as UUID | null) ?? null;
+				record.processing_completed_at = state.now_iso;
 			}
 			return [];
 		}
@@ -1000,6 +1027,8 @@ describe('email sync pipeline e2e (template → AI → learn)', () => {
 		expect(new Set(transactions.map(txn => txn.status))).toEqual(new Set(['NEEDS_REVIEW']));
 		expect(state.raw_emails_by_id.get(rawEmailId1)?.status).toBe('PROCESSED');
 		expect(state.raw_emails_by_id.get(rawEmailId2)?.status).toBe('PROCESSED');
+		expect(state.raw_emails_by_id.get(rawEmailId1)?.processing_route).toBe('AI');
+		expect(state.raw_emails_by_id.get(rawEmailId2)?.processing_route).toBe('TEMPLATE');
 	});
 
 	it('auto-verifies via global alias on the AI path and records AI classification', async () => {
@@ -1091,6 +1120,7 @@ describe('email sync pipeline e2e (template → AI → learn)', () => {
 		expect(firstResult.ignored_raw_email_count).toBe(1);
 		expect(firstResult.template_learned_count).toBe(1);
 		expect(state.raw_emails_by_id.get(rawEmailId1)?.status).toBe('IGNORED');
+		expect(state.raw_emails_by_id.get(rawEmailId1)?.processing_route).toBe('AI');
 
 		const rawEmailId2 = await syncEmail(state, sql, env, {
 			id: 'gmail-otp-2',
@@ -1108,6 +1138,7 @@ describe('email sync pipeline e2e (template → AI → learn)', () => {
 		expect(secondResult.ignored_raw_email_count).toBe(1);
 		expect(secondResult.template_matched_count).toBe(1);
 		expect(state.raw_emails_by_id.get(rawEmailId2)?.status).toBe('IGNORED');
+		expect(state.raw_emails_by_id.get(rawEmailId2)?.processing_route).toBe('TEMPLATE');
 		expect(state.transactions_by_id.size).toBe(0);
 	});
 });

@@ -77,19 +77,23 @@ describe('resolveAiProviderConfig', () => {
 		expect(config.chatUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
 		expect(config.apiKey).toBe('or-key');
 		expect(config.apiKeyEnvVar).toBe('OPENROUTER_API_KEY');
-		expect(config.dailyModel).toContain(':free');
+		expect(config.dailyModel).toBe('deepseek/deepseek-v4-flash');
 	});
 
 	it('falls back to opencode on unknown provider values', () => {
 		expect(resolveAiProvider({ AI_PROVIDER: 'gibberish' } as unknown as Env)).toBe('opencode');
 	});
 
-	it('uses OpenRouter free-tier defaults for the normalizer chain', () => {
+	it('uses DeepSeek followed by the two free OpenRouter fallbacks', () => {
 		const config = resolveNormalizerTierConfig({
 			AI_PROVIDER: 'openrouter',
 		} as unknown as Env);
-		expect(config.models.length).toBe(3);
-		expect(config.models.every(model => model.endsWith(':free'))).toBe(true);
+		expect(config.models).toEqual([
+			'deepseek/deepseek-v4-flash',
+			'nvidia/nemotron-3-ultra-550b-a55b:free',
+			'openai/gpt-oss-120b:free',
+		]);
+		expect(config.models.slice(1).every(model => model.endsWith(':free'))).toBe(true);
 		// AI_NORMALIZER_TIERS still overrides regardless of provider.
 		const overridden = resolveNormalizerTierConfig({
 			AI_PROVIDER: 'openrouter',
