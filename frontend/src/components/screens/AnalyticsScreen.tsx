@@ -16,8 +16,10 @@ type Breakdown = 'category' | 'account';
 interface BreakdownItem {
 	id: string | null;
 	name: string;
-	valuePaise: number;
-	value: number; // rupees, for the chart
+	valuePaise: number; // net spend for accounts, gross spend for categories
+	value: number; // non-negative rupees, for the chart
+	expensePaise: number;
+	creditPaise: number;
 	txnCount: number;
 }
 
@@ -101,6 +103,8 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 				name: slice.category_name ?? 'Uncategorized',
 				valuePaise: slice.amount_in_paise,
 				value: Math.round(paiseToRupees(slice.amount_in_paise)),
+				expensePaise: slice.amount_in_paise,
+				creditPaise: 0,
 				txnCount: slice.txn_count,
 			}));
 		}
@@ -109,11 +113,16 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 			name: slice.account_id
 				? accountsById.get(slice.account_id)?.name ?? 'Unknown account'
 				: 'No account',
-			valuePaise: slice.amount_in_paise,
-			value: Math.round(paiseToRupees(slice.amount_in_paise)),
+			valuePaise: slice.net_spend_in_paise,
+			value: Math.max(0, Math.round(paiseToRupees(slice.net_spend_in_paise))),
+			expensePaise: slice.expense_in_paise,
+			creditPaise: slice.credit_in_paise,
 			txnCount: slice.txn_count,
 		}));
 	}, [activeMonth, breakdown, accountsById]);
+
+	const chartData = data.filter((item) => item.valuePaise > 0);
+	const breakdownTotalPaise = chartData.reduce((total, item) => total + item.valuePaise, 0);
 
 	const selectedBucket = selectedSlice
 		? data.find((item) => item.id === selectedSlice.id) ?? null
@@ -123,18 +132,22 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 		if (!selectedSlice) return [];
 		return transactions
 			.filter((t) => {
-				if (t.type !== 'expense') return false;
 				if (monthKeyIST(t.date) !== activeMonthKey) return false;
 				if (breakdown === 'category') {
-					return (t.persistedCategoryId ?? null) === selectedSlice.id;
+					return t.type === 'expense'
+						&& (t.persistedCategoryId ?? null) === selectedSlice.id;
 				}
-				return (t.accountId ?? null) === selectedSlice.id;
+				if ((t.accountId ?? null) !== selectedSlice.id) return false;
+				if (t.type === 'expense') return true;
+				const selectedAccount = selectedSlice.id
+					? accountsById.get(selectedSlice.id)
+					: null;
+				return selectedAccount?.type === 'card' && t.type === 'income';
 			})
 			.sort((a, b) => b.date.getTime() - a.date.getTime());
-	}, [transactions, selectedSlice, breakdown, activeMonthKey]);
+	}, [transactions, selectedSlice, breakdown, activeMonthKey, accountsById]);
 
 	const periodLabel = monthKeyLabel(activeMonthKey);
-	const totalExpense = totals.expense;
 
 	// Lakh/crore figures shrink to fit their third of the card instead of
 	// clipping off-screen; all three columns share one size.
@@ -145,6 +158,13 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 	);
 	const summaryAmountClass =
 		longestSummary > 8 ? 'text-xs' : longestSummary > 6 ? 'text-sm' : 'text-lg';
+	const selectedValuePaise = selectedBucket?.valuePaise ?? 0;
+	const selectedIsNetCredit = breakdown === 'account' && selectedValuePaise < 0;
+	const selectedAmountPrefix = selectedIsNetCredit
+		? '+'
+		: selectedValuePaise === 0
+			? ''
+			: '−';
 
 	return (
 		<div
@@ -302,13 +322,13 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 							))}
 						</div>
 
-						{totalExpense === 0 ? (
+						{data.length === 0 ? (
 							<div
 								className="rounded-[10px] p-8 text-center"
 								style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
 							>
 								<p className="text-sm font-medium" style={{ color: 'var(--ledger-muted)' }}>
-									No expenses in {periodLabel}
+									No {breakdown === 'account' ? 'account activity' : 'expenses'} in {periodLabel}
 								</p>
 								<p className="text-xs mt-1" style={{ color: 'var(--ledger-muted)', opacity: 0.7 }}>
 									Step to another month or add a transaction
@@ -323,52 +343,61 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 									className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4"
 									style={{ color: 'var(--ledger-muted)' }}
 								>
-									Spending by {breakdown}
+									{breakdown === 'account' ? 'Net spending by account' : 'Spending by category'}
 								</h3>
 
 								<div className="w-full h-[240px]">
-									<ResponsiveContainer width="100%" height="100%">
-										<RechartsPieChart>
-											<Pie
-												data={data}
-												cx="50%"
-												cy="50%"
-												innerRadius={50}
-												outerRadius={90}
-												paddingAngle={2}
-												dataKey="value"
-												stroke="none"
-												onClick={(_entry: unknown, index: number) => {
-													const item = data[index];
-													if (item) setSelectedSlice({ id: item.id, name: item.name });
-												}}
-											>
-												{data.map((item, index) => (
-													<Cell key={item.id ?? 'none'} fill={LEDGER_COLORS[index % LEDGER_COLORS.length]} />
-												))}
-											</Pie>
-											<Tooltip
-												formatter={(value: number | string | undefined, name: string | undefined) => {
-													const amount = typeof value === 'number' ? value : Number(value ?? 0);
-													return [`₹${formatRupeesPaise(amount)}`, name ?? ''];
-												}}
-												contentStyle={{
-													background: 'var(--ledger-card)',
-													border: '1px solid var(--ledger-rule)',
-													borderRadius: '8px',
-													fontSize: '12px',
-													color: 'var(--ledger-fg)',
-												}}
-											/>
-										</RechartsPieChart>
-									</ResponsiveContainer>
+									{chartData.length > 0 ? (
+										<ResponsiveContainer width="100%" height="100%">
+											<RechartsPieChart>
+												<Pie
+													data={chartData}
+													cx="50%"
+													cy="50%"
+													innerRadius={50}
+													outerRadius={90}
+													paddingAngle={2}
+													dataKey="value"
+													stroke="none"
+													onClick={(_entry: unknown, index: number) => {
+														const item = chartData[index];
+														if (item) setSelectedSlice({ id: item.id, name: item.name });
+													}}
+												>
+													{chartData.map((item, index) => (
+														<Cell key={item.id ?? 'none'} fill={LEDGER_COLORS[index % LEDGER_COLORS.length]} />
+													))}
+												</Pie>
+												<Tooltip
+													formatter={(value: number | string | undefined, name: string | undefined) => {
+														const amount = typeof value === 'number' ? value : Number(value ?? 0);
+														return [`₹${formatRupeesPaise(amount)}`, name ?? ''];
+													}}
+													contentStyle={{
+														background: 'var(--ledger-card)',
+														border: '1px solid var(--ledger-rule)',
+														borderRadius: '8px',
+														fontSize: '12px',
+														color: 'var(--ledger-fg)',
+													}}
+												/>
+											</RechartsPieChart>
+										</ResponsiveContainer>
+									) : (
+										<div className="h-full flex items-center justify-center text-center px-8">
+											<p className="text-sm" style={{ color: 'var(--ledger-muted)' }}>
+												Credits were equal to or greater than spending this month
+											</p>
+										</div>
+									)}
 								</div>
 
 								<div className="mt-4 space-y-0">
 									{data.map((item, index) => {
-										const percentage = totalExpense > 0
-											? ((paiseToRupees(item.valuePaise) / totalExpense) * 100).toFixed(1)
+										const percentage = breakdownTotalPaise > 0 && item.valuePaise > 0
+											? ((item.valuePaise / breakdownTotalPaise) * 100).toFixed(1)
 											: '0.0';
+										const isNetCredit = breakdown === 'account' && item.valuePaise < 0;
 										return (
 											<button
 												key={item.id ?? 'none'}
@@ -390,8 +419,13 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 													</span>
 												</div>
 												<div className="flex items-center gap-3 shrink-0">
-													<span className="text-sm font-semibold tnum" style={{ color: 'var(--ledger-fg)' }}>
-														₹{item.value.toLocaleString('en-IN')}
+													<span
+														className="text-sm font-semibold tnum"
+														style={{ color: isNetCredit ? 'var(--ledger-positive)' : 'var(--ledger-fg)' }}
+													>
+														{isNetCredit ? '+' : ''}₹{formatRupees(
+															Math.abs(paiseToRupees(item.valuePaise)),
+														)}
 													</span>
 													<span className="text-xs tnum w-10 text-right" style={{ color: 'var(--ledger-muted)' }}>
 														{percentage}%
@@ -434,12 +468,24 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 								>
 									{selectedSlice.name} · {periodLabel}
 								</p>
-								<p className="text-lg font-bold tnum mt-1" style={{ color: 'var(--ledger-fg)' }}>
-									−₹{formatRupeesPaise(paiseToRupees(selectedBucket?.valuePaise ?? 0))}
+								<p
+									className="text-lg font-bold tnum mt-1"
+									style={{ color: selectedIsNetCredit ? 'var(--ledger-positive)' : 'var(--ledger-fg)' }}
+								>
+									{selectedAmountPrefix}₹{formatRupeesPaise(
+										Math.abs(paiseToRupees(selectedValuePaise)),
+									)}
 									<span className="text-xs font-medium ml-2" style={{ color: 'var(--ledger-muted)' }}>
 										{selectedBucket?.txnCount ?? sliceTransactions.length} txn{(selectedBucket?.txnCount ?? sliceTransactions.length) !== 1 ? 's' : ''}
 									</span>
 								</p>
+								{breakdown === 'account' && selectedBucket && (
+									<p className="text-[11px] mt-1 tnum" style={{ color: 'var(--ledger-muted)' }}>
+										₹{formatRupeesPaise(paiseToRupees(selectedBucket.expensePaise))} spent
+										{' · '}
+										+₹{formatRupeesPaise(paiseToRupees(selectedBucket.creditPaise))} credited
+									</p>
+								)}
 							</div>
 							<button
 								onClick={() => setSelectedSlice(null)}
@@ -452,34 +498,38 @@ export function AnalyticsScreen({ onEditTransaction }: AnalyticsScreenProps) {
 						</div>
 
 						<div className="overflow-y-auto px-5 pb-2">
-							{sliceTransactions.map((t, i) => (
-								<button
-									key={t.id}
-									onClick={() => onEditTransaction(t)}
-									className="w-full flex items-center justify-between gap-3 py-3 text-left"
-									style={
-										i < sliceTransactions.length - 1
-											? { borderBottom: '1px solid var(--ledger-rule)' }
-											: undefined
-									}
-								>
-									<div className="min-w-0">
-										<p className="text-sm font-medium truncate" style={{ color: 'var(--ledger-fg)' }}>
-											{t.merchantName ?? t.description ?? t.category}
-										</p>
-										<p className="text-[11px] mt-0.5 tnum" style={{ color: 'var(--ledger-muted)' }}>
-											{t.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-											{t.status === 'NEEDS_REVIEW' ? ' · needs review' : ''}
-										</p>
-									</div>
-									<p
-										className="text-sm font-semibold tnum shrink-0"
-										style={{ color: 'var(--ledger-negative)' }}
+							{sliceTransactions.map((t, i) => {
+								const isCredit = t.type === 'income';
+								return (
+									<button
+										key={t.id}
+										onClick={() => onEditTransaction(t)}
+										className="w-full flex items-center justify-between gap-3 py-3 text-left"
+										style={
+											i < sliceTransactions.length - 1
+												? { borderBottom: '1px solid var(--ledger-rule)' }
+												: undefined
+										}
 									>
-										−₹{formatRupeesPaise(t.amount)}
-									</p>
-								</button>
-							))}
+										<div className="min-w-0">
+											<p className="text-sm font-medium truncate" style={{ color: 'var(--ledger-fg)' }}>
+												{t.merchantName ?? t.description ?? t.category}
+											</p>
+											<p className="text-[11px] mt-0.5 tnum" style={{ color: 'var(--ledger-muted)' }}>
+												{t.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+												{isCredit ? ' · credit' : ''}
+												{t.status === 'NEEDS_REVIEW' ? ' · needs review' : ''}
+											</p>
+										</div>
+										<p
+											className="text-sm font-semibold tnum shrink-0"
+											style={{ color: isCredit ? 'var(--ledger-positive)' : 'var(--ledger-negative)' }}
+										>
+											{isCredit ? '+' : '−'}₹{formatRupeesPaise(t.amount)}
+										</p>
+									</button>
+								);
+							})}
 							{sliceTransactions.length === 0 && feedLoading && (
 								<div className="flex items-center justify-center gap-2 py-6">
 									<Loader2 size={16} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />

@@ -316,6 +316,10 @@ export const apiClient = {
     });
   },
 
+  async restoreTransaction(transactionId: string): Promise<void> {
+    await request<void>(`/transactions/${transactionId}/restore`, { method: 'POST' });
+  },
+
   async startGoogleOAuth(): Promise<GoogleOAuthStartResponse> {
     const response = await request<ApiEnvelope<GoogleOAuthStartResponse>>('/oauth/google/start', {
       method: 'POST',

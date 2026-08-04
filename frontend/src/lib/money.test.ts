@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { Transaction } from '../types/domain';
 import { paiseToRupees, rupeesToPaise } from './money';
 import {
-  areImmutableFieldsChanged,
-  normalizeOptionalId,
-  normalizeOptionalText,
-  resolvePersistedCategoryId,
+	allowedTransactionTypes,
+	areImmutableSourceFieldsChanged,
+	normalizeOptionalId,
+	normalizeOptionalText,
+	resolvePersistedCategoryId,
+	transactionDirection,
 } from './transaction-adapter';
 
 const BASE_TRANSACTION: Transaction = {
@@ -78,23 +80,37 @@ describe('transaction adapter helpers', () => {
 
   it('detects immutable field edits', () => {
     expect(
-      areImmutableFieldsChanged(BASE_TRANSACTION, {
+		areImmutableSourceFieldsChanged(BASE_TRANSACTION, {
         ...BASE_TRANSACTION,
       }),
     ).toBe(false);
 
-    expect(
-      areImmutableFieldsChanged(BASE_TRANSACTION, {
-        ...BASE_TRANSACTION,
-        amount: 101,
+		expect(
+			areImmutableSourceFieldsChanged(BASE_TRANSACTION, {
+				...BASE_TRANSACTION,
+				type: 'transfer',
+			}),
+		).toBe(false);
+
+		expect(
+			areImmutableSourceFieldsChanged(BASE_TRANSACTION, {
+				...BASE_TRANSACTION,
+				amount: 101,
       }),
     ).toBe(true);
 
     expect(
-      areImmutableFieldsChanged(BASE_TRANSACTION, {
+		areImmutableSourceFieldsChanged(BASE_TRANSACTION, {
         ...BASE_TRANSACTION,
         date: new Date('2026-01-02T00:00:00.000Z'),
       }),
-    ).toBe(true);
-  });
+		).toBe(true);
+	});
+
+	it('keeps direction immutable while allowing only transfer as the alternate type', () => {
+		expect(transactionDirection(BASE_TRANSACTION)).toBe('debit');
+		expect(transactionDirection({ ...BASE_TRANSACTION, type: 'transfer', direction: 'credit' })).toBe('credit');
+		expect(allowedTransactionTypes('debit')).toEqual(['expense', 'transfer']);
+		expect(allowedTransactionTypes('credit')).toEqual(['income', 'transfer']);
+	});
 });

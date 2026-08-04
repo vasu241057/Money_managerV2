@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, SlidersHorizontal, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, Plus, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import type { BudgetTreatment } from '../../../../shared/types';
 import type { ScreenId } from '../layout/BottomNav';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
 import { LedgerListSkeleton } from '../ui/Skeleton';
@@ -19,7 +20,7 @@ interface TransactionsLedgerProps {
 	onEditTransaction?: (t: Transaction) => void;
 }
 
-type FilterChip = 'all' | 'income' | 'expense' | 'review';
+type FilterChip = 'all' | 'income' | 'expense' | 'review' | 'in-budget' | 'outside-budget' | 'adjustments';
 
 function formatSignedRupees(amount: number, type: string): string {
 	const sign = type === 'income' ? '+' : type === 'expense' ? '−' : '↔';
@@ -64,6 +65,10 @@ interface LedgerTransactionRowProps {
 	viewMode: 'daily' | 'monthly';
 	artworkPhase: MerchantArtworkPhase;
 	onEditTransaction?: (transaction: Transaction) => void;
+	onDelete: (transaction: Transaction) => Promise<void>;
+	onSetBudgetTreatment: (transaction: Transaction, treatment: BudgetTreatment) => Promise<void>;
+	openRowId: string | null;
+	setOpenRowId: (id: string | null) => void;
 }
 
 function LedgerTransactionRow({
@@ -72,19 +77,137 @@ function LedgerTransactionRow({
 	viewMode,
 	artworkPhase,
 	onEditTransaction,
+	onDelete,
+	onSetBudgetTreatment,
+	openRowId,
+	setOpenRowId,
 }: LedgerTransactionRowProps) {
+	const [offset, setOffset] = useState(0);
+	const [dragging, setDragging] = useState(false);
+	const gesture = useRef<{ x: number; y: number; axis: 'x' | 'y' | null } | null>(null);
+	const didSwipe = useRef(false);
 	const isIncome = transaction.type === 'income';
 	const isTransfer = transaction.type === 'transfer';
 	const isReview = transaction.status === 'NEEDS_REVIEW';
 	const primaryLabel = transactionPrimaryLabel(transaction);
-	const metaLabel = transactionMetaLabel(transaction, viewMode);
+	const budgetIncluded = transaction.effectiveBudgetTreatment === 'INCLUDE';
+	const isAdjustment = transaction.budgetEffect === 'ADJUSTMENT';
+	const nextTreatment: BudgetTreatment = budgetIncluded ? 'EXCLUDE' : 'INCLUDE';
+	const budgetMeta = isAdjustment
+		? 'Budget adjustment'
+		: budgetIncluded ? null : 'Outside budget';
+	const relationshipMeta = transaction.budgetRelationship
+		? transaction.budgetRelationship.role === 'SOURCE'
+			? `${transaction.budgetRelationship.kind === 'REFUND' ? 'Refund' : 'Reimbursement'} for ${transaction.budgetRelationship.related_label}`
+			: transaction.budgetRelationship.related_count > 1
+				? `${transaction.budgetRelationship.related_count} refunds linked`
+				: `${transaction.budgetRelationship.kind === 'REFUND' ? 'Refund' : 'Reimbursement'} linked`
+		: null;
+	const metaLabel = [transactionMetaLabel(transaction, viewMode), relationshipMeta]
+		.filter(Boolean)
+		.join(' · ');
+
+	const displayedOffset = openRowId === transaction.id ? offset : 0;
+
+	const closeRow = () => {
+		setOffset(0);
+		setOpenRowId(null);
+	};
+
+	const finishGesture = () => {
+		if (!gesture.current) return;
+		const wasHorizontal = gesture.current.axis === 'x';
+		gesture.current = null;
+		setDragging(false);
+		if (!wasHorizontal) return;
+		didSwipe.current = Math.abs(offset) > 8;
+		if (offset <= -44) {
+			setOffset(-82);
+			setOpenRowId(transaction.id);
+		} else if (offset >= 44) {
+			setOffset(82);
+			setOpenRowId(transaction.id);
+		} else {
+			closeRow();
+		}
+	};
 
 	return (
-		<button
-			onClick={() => onEditTransaction?.(transaction)}
-			className="w-full flex items-center justify-between px-4 py-3.5 text-left transition-colors hover:bg-black/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-			style={!isLast ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}
-		>
+		<div className="relative overflow-hidden" style={!isLast ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}>
+			<div className="absolute inset-0 flex items-stretch justify-between">
+				<button
+					type="button"
+					onFocus={() => { setOffset(82); setOpenRowId(transaction.id); }}
+					onClick={() => { closeRow(); void onSetBudgetTreatment(transaction, nextTreatment); }}
+					className="w-[82px] flex flex-col items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider"
+					style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}
+					aria-label={`${nextTreatment === 'INCLUDE' ? 'Include' : 'Exclude'} transaction in monthly budget`}
+				>
+					<span className="text-lg leading-none">{nextTreatment === 'INCLUDE' ? '+' : '−'}</span>
+					{nextTreatment === 'INCLUDE' ? 'Count' : 'Outside'}
+				</button>
+				<button
+					type="button"
+					onFocus={() => { setOffset(-82); setOpenRowId(transaction.id); }}
+					onClick={() => { closeRow(); void onDelete(transaction); }}
+					className="w-[82px] flex flex-col items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider"
+					style={{ background: 'var(--ledger-negative)', color: '#fff' }}
+					aria-label="Delete transaction"
+				>
+					<Trash2 size={16} /> Delete
+				</button>
+			</div>
+			<button
+				type="button"
+				onPointerDown={(event) => {
+					if (event.button !== 0) return;
+					if (openRowId !== transaction.id) {
+						setOffset(0);
+						setOpenRowId(transaction.id);
+					}
+					gesture.current = { x: event.clientX, y: event.clientY, axis: null };
+					setDragging(true);
+					event.currentTarget.setPointerCapture(event.pointerId);
+				}}
+				onPointerMove={(event) => {
+					const current = gesture.current;
+					if (!current) return;
+					const dx = event.clientX - current.x;
+					const dy = event.clientY - current.y;
+					if (current.axis === null && Math.max(Math.abs(dx), Math.abs(dy)) > 7) {
+						current.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
+					}
+					if (current.axis !== 'x') return;
+					event.preventDefault();
+					setOffset(Math.max(-96, Math.min(96, dx)));
+				}}
+				onPointerUp={finishGesture}
+				onPointerCancel={finishGesture}
+				onClick={(event) => {
+					if (didSwipe.current) {
+						didSwipe.current = false;
+						event.preventDefault();
+						return;
+					}
+					if (displayedOffset !== 0) {
+						closeRow();
+						return;
+					}
+					onEditTransaction?.(transaction);
+				}}
+				className="relative w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-black/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+				style={{
+					background: !budgetIncluded && !isAdjustment
+						? 'color-mix(in srgb, var(--ledger-card) 72%, var(--ledger-bg))'
+						: 'var(--ledger-card)',
+					transform: `translateX(${displayedOffset}px)`,
+					transition: dragging ? 'none' : 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
+					touchAction: 'pan-y',
+					boxShadow: isAdjustment
+						? 'inset 3px 0 var(--ledger-positive)'
+						: !budgetIncluded ? 'inset 3px 0 var(--ledger-rule)' : undefined,
+				}}
+			>
 			<div className="flex items-center gap-3 min-w-0 flex-1">
 				<TransactionArtwork transaction={transaction} phase={artworkPhase} />
 				<div className="min-w-0">
@@ -121,25 +244,44 @@ function LedgerTransactionRow({
 						Review
 					</span>
 				)}
+				{!isReview && budgetMeta && (
+					<span className="mt-2 text-[9px] leading-none font-bold uppercase tracking-[0.08em]" style={{ color: isAdjustment ? 'var(--ledger-positive)' : 'var(--ledger-muted)' }}>{budgetMeta}</span>
+				)}
 			</div>
-		</button>
+			</button>
+		</div>
 	);
 }
 
 export function TransactionsLedger({ onNavigate, onEditTransaction }: TransactionsLedgerProps) {
 	const {
 		transactions,
+		deleteTransaction,
+		restoreTransaction,
+		setBudgetTreatment,
 		isLoading,
 		error,
 	} = useTransactions();
 
 	const [viewMode, setViewMode] = useState<'daily' | 'monthly'>('daily');
-	const [filterChip, setFilterChip] = useState<FilterChip>('all');
+	const [filterChip, setFilterChip] = useState<FilterChip>(() => {
+		const requested = new URLSearchParams(window.location.search).get('budget');
+		return requested === 'in' ? 'in-budget' : requested === 'out' ? 'outside-budget' : 'all';
+	});
 	const [artworkMode, setArtworkMode] = useState<ArtworkMode>('auto');
 	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [expandedMonthKey, setExpandedMonthKey] = useState('');
+	const [openRowId, setOpenRowId] = useState<string | null>(null);
+	const [deletedTransaction, setDeletedTransaction] = useState<Transaction | null>(null);
+	const [actionError, setActionError] = useState<string | null>(null);
 	const artworkPhase = useMerchantArtworkPhase(artworkMode);
 	const hasActiveControls = filterChip !== 'all' || artworkMode !== 'auto';
+
+	useEffect(() => {
+		if (!deletedTransaction) return;
+		const timeout = window.setTimeout(() => setDeletedTransaction(null), 6_000);
+		return () => window.clearTimeout(timeout);
+	}, [deletedTransaction]);
 
 	useEffect(() => {
 		if (!filtersOpen) return;
@@ -156,6 +298,9 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 			if (filterChip === 'income') return t.type === 'income';
 			if (filterChip === 'expense') return t.type === 'expense';
 			if (filterChip === 'review') return t.status === 'NEEDS_REVIEW';
+			if (filterChip === 'in-budget') return t.budgetEffect !== 'NONE';
+			if (filterChip === 'outside-budget') return t.effectiveBudgetTreatment === 'EXCLUDE';
+			if (filterChip === 'adjustments') return t.budgetEffect === 'ADJUSTMENT';
 			return true;
 		});
 	}, [transactions, filterChip]);
@@ -164,22 +309,63 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 		const sorted = [...filtered].sort((a, b) => b.date.getTime() - a.date.getTime());
 		const map = new Map<string, DayGroup>();
 
+		const transactionNet = (transaction: Transaction) => {
+			if (filterChip === 'in-budget' || filterChip === 'adjustments') {
+				if (transaction.budgetEffect === 'SPEND') return -(transaction.budgetEffectAmount ?? transaction.amount);
+				if (transaction.budgetEffect === 'ADJUSTMENT') return transaction.budgetEffectAmount ?? transaction.amount;
+				return 0;
+			}
+			return transaction.type === 'income' ? transaction.amount : transaction.type === 'expense' ? -transaction.amount : 0;
+		};
+
 		for (const t of sorted) {
 			const key = viewMode === 'daily' ? dayKey(t.date) : monthKey(t.date);
 			const label = viewMode === 'daily' ? dayLabel(t.date) : monthLabel(t.date);
 			const existing = map.get(key);
 			if (existing) {
 				existing.transactions.push(t);
-				if (t.type === 'income') existing.net += t.amount;
-				else if (t.type === 'expense') existing.net -= t.amount;
+				existing.net += transactionNet(t);
 			} else {
-				const net = t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0;
+				const net = transactionNet(t);
 				map.set(key, { key, label, date: t.date, transactions: [t], net });
 			}
 		}
 
 		return Array.from(map.values());
-	}, [filtered, viewMode]);
+	}, [filtered, viewMode, filterChip]);
+
+	const handleDelete = async (transaction: Transaction) => {
+		setActionError(null);
+		setOpenRowId(null);
+		try {
+			await deleteTransaction(transaction.id);
+			setDeletedTransaction(transaction);
+		} catch (cause) {
+			setActionError(cause instanceof Error ? cause.message : 'Could not delete transaction.');
+		}
+	};
+
+	const handleBudgetTreatment = async (transaction: Transaction, treatment: BudgetTreatment) => {
+		setActionError(null);
+		setOpenRowId(null);
+		try {
+			await setBudgetTreatment(transaction.id, treatment);
+		} catch (cause) {
+			setActionError(cause instanceof Error ? cause.message : 'Could not update the monthly plan.');
+		}
+	};
+
+	const undoDelete = async () => {
+		if (!deletedTransaction) return;
+		const transaction = deletedTransaction;
+		setActionError(null);
+		try {
+			await restoreTransaction(transaction.id);
+			setDeletedTransaction(null);
+		} catch (cause) {
+			setActionError(cause instanceof Error ? cause.message : 'Could not restore transaction.');
+		}
+	};
 
 	return (
 		<div
@@ -293,7 +479,7 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 							>
 								Transactions
 							</span>
-							{(['all', 'income', 'expense', 'review'] as const).map((chip) => (
+							{(['all', 'income', 'expense', 'review', 'in-budget', 'outside-budget', 'adjustments'] as const).map((chip) => (
 								<button
 									key={chip}
 									onClick={() => {
@@ -308,9 +494,18 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 											: { background: 'var(--ledger-rule)', color: 'var(--ledger-muted)' }
 									}
 								>
-									{chip === 'review' ? 'Needs review' : chip.charAt(0).toUpperCase() + chip.slice(1)}
+									{chip === 'review'
+										? 'Needs review'
+										: chip === 'in-budget'
+											? 'In budget'
+											: chip === 'outside-budget'
+												? 'Outside budget'
+												: chip.charAt(0).toUpperCase() + chip.slice(1)}
 								</button>
 							))}
+							<p className="w-full text-[10px] leading-relaxed mt-1" style={{ color: 'var(--ledger-muted)' }}>
+								Swipe right to count or exclude · swipe left to delete
+							</p>
 						</div>
 
 						<div
@@ -367,8 +562,8 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 			)}
 
 			<main className="flex-1 overflow-y-auto pb-24 px-5 pt-2 min-h-0">
-				{error && (
-					<p className="text-xs mb-4" style={{ color: 'var(--ledger-negative)' }}>{error}</p>
+				{(error || actionError) && (
+					<p className="text-xs mb-4" style={{ color: 'var(--ledger-negative)' }}>{actionError ?? error}</p>
 				)}
 
 				{isLoading && transactions.length === 0 ? (
@@ -433,6 +628,10 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 													viewMode="monthly"
 													artworkPhase={artworkPhase}
 													onEditTransaction={onEditTransaction}
+													onDelete={handleDelete}
+													onSetBudgetTreatment={handleBudgetTreatment}
+													openRowId={openRowId}
+													setOpenRowId={setOpenRowId}
 												/>
 											))}
 										</div>
@@ -466,6 +665,10 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 											viewMode="daily"
 											artworkPhase={artworkPhase}
 											onEditTransaction={onEditTransaction}
+											onDelete={handleDelete}
+											onSetBudgetTreatment={handleBudgetTreatment}
+											openRowId={openRowId}
+											setOpenRowId={setOpenRowId}
 										/>
 									))}
 								</div>
@@ -486,6 +689,13 @@ export function TransactionsLedger({ onNavigate, onEditTransaction }: Transactio
 			>
 				<Plus size={24} />
 			</button>
+
+			{deletedTransaction && (
+				<div className="absolute left-5 right-20 bottom-5 z-30 rounded-[12px] px-4 py-3 flex items-center gap-3" style={{ background: 'var(--ledger-fg)', color: 'var(--ledger-bg)', boxShadow: '0 12px 32px rgba(0,0,0,0.22)' }} role="status">
+					<p className="text-xs font-semibold flex-1 truncate">Transaction deleted</p>
+					<button type="button" onClick={() => { void undoDelete(); }} className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-accent)' }}>Undo</button>
+				</div>
+			)}
 		</div>
 	);
 }

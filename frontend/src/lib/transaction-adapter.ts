@@ -1,3 +1,4 @@
+import type { EventDirection, TransactionType } from '../../../shared/types';
 import type { Transaction } from '../types/domain';
 
 export function normalizeOptionalId(value: string | null | undefined): string | null {
@@ -27,14 +28,18 @@ export function resolvePersistedCategoryId(
   );
 }
 
-export function areImmutableFieldsChanged(current: Transaction, next: Transaction): boolean {
-  if (current.amount !== next.amount) {
-    return true;
-  }
+export function areImmutableSourceFieldsChanged(current: Transaction, next: Transaction): boolean {
+	if (current.amount !== next.amount) {
+		return true;
+	}
 
-  if (current.type !== next.type) {
-    return true;
-  }
+	return current.date.getTime() !== next.date.getTime();
+}
 
-  return current.date.getTime() !== next.date.getTime();
+export function transactionDirection(transaction: Pick<Transaction, 'direction' | 'type'>): EventDirection {
+	return transaction.direction ?? (transaction.type === 'income' ? 'credit' : 'debit');
+}
+
+export function allowedTransactionTypes(direction: EventDirection): readonly TransactionType[] {
+	return direction === 'debit' ? ['expense', 'transfer'] : ['income', 'transfer'];
 }

@@ -12,16 +12,18 @@ import type {
   PaginatedResponse,
   PaymentMethod,
   ReviewTransactionRequest,
+  BudgetTreatment,
   TransactionFeedItem,
 } from '../../../shared/types';
 import { apiClient, toErrorMessage } from '../lib/api-client';
 import { paiseToRupees, rupeesToPaise } from '../lib/money';
 import type { Transaction } from '../types/domain';
 import {
-  areImmutableFieldsChanged,
+  areImmutableSourceFieldsChanged,
   normalizeOptionalId,
   normalizeOptionalText,
   resolvePersistedCategoryId,
+  transactionDirection,
 } from '../lib/transaction-adapter';
 
 interface UseTransactionsResult {
@@ -35,6 +37,8 @@ interface UseTransactionsResult {
     payload: ReviewTransactionRequest;
   }) => Promise<Transaction>;
   deleteTransaction: (id: string) => Promise<void>;
+  restoreTransaction: (id: string) => Promise<void>;
+  setBudgetTreatment: (id: string, treatment: BudgetTreatment) => Promise<Transaction>;
   isLoading: boolean;
   error: string | null;
 }
@@ -105,6 +109,7 @@ function mapFeedItemToUiTransaction(
     id: transaction.id,
     amount: paiseToRupees(transaction.amount_in_paise),
     type: transaction.type,
+    direction: item.financial_event.direction,
     category: categoryName,
     categoryId,
     categoryIcon,
@@ -130,6 +135,12 @@ function mapFeedItemToUiTransaction(
     status: transaction.status,
     classificationSource: transaction.classification_source,
     aiConfidenceScore: transaction.ai_confidence_score,
+    budgetTreatment: item.budget.treatment,
+    effectiveBudgetTreatment: item.budget.effective_treatment,
+    budgetTreatmentSource: item.budget.treatment_source,
+    budgetEffect: item.budget.effect,
+    budgetEffectAmount: paiseToRupees(item.budget.effect_in_paise),
+    budgetRelationship: item.budget.relationship,
   };
 }
 
@@ -237,9 +248,8 @@ function useRemoteTransactions(): UseTransactionsResult {
       transactions
         .filter(transaction => transaction.status === 'NEEDS_REVIEW')
         .sort((left, right) => {
-          const leftConfidence = left.aiConfidenceScore ?? Number.POSITIVE_INFINITY;
-          const rightConfidence = right.aiConfidenceScore ?? Number.POSITIVE_INFINITY;
-          return leftConfidence - rightConfidence;
+          const newestFirst = right.date.getTime() - left.date.getTime();
+          return newestFirst !== 0 ? newestFirst : right.id.localeCompare(left.id);
         }),
     [transactions],
   );
@@ -259,14 +269,15 @@ function useRemoteTransactions(): UseTransactionsResult {
         // must stay cleared.
         const categoryIdToPersist = resolvePersistedCategoryId(transactionInput);
 
-        if (areImmutableFieldsChanged(existing, transactionInput)) {
+        if (areImmutableSourceFieldsChanged(existing, transactionInput)) {
           if (!existing.isManual) {
-            throw new Error('Amount, type, and date cannot be changed for bank-detected transactions.');
+            throw new Error('Amount and date cannot be changed for bank-detected transactions.');
           }
 
           const recreated = await apiClient.createManualTransaction({
             amount_in_paise: rupeesToPaise(transactionInput.amount),
             type: transactionInput.type,
+            direction: transactionDirection(transactionInput),
             txn_date: transactionInput.date.toISOString(),
             account_id: accountIdToPersist,
             category_id: categoryIdToPersist,
@@ -275,13 +286,14 @@ function useRemoteTransactions(): UseTransactionsResult {
             payment_method: (transactionInput.paymentMethod ?? undefined) as PaymentMethod | undefined,
             instrument_id: transactionInput.instrumentLast4 ?? null,
             counterparty_raw: transactionInput.counterpartyRaw ?? null,
+            budget_treatment: transactionInput.budgetTreatment,
           });
 
           try {
             await apiClient.deleteTransaction(transactionInput.id);
           } catch (deleteError) {
             await queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
 
             const detail =
               deleteError instanceof Error ? deleteError.message : 'Please refresh and retry.';
@@ -294,9 +306,14 @@ function useRemoteTransactions(): UseTransactionsResult {
         }
 
         const updated = await apiClient.updateTransaction(transactionInput.id, {
+          type: transactionInput.type === existing.type ? undefined : transactionInput.type,
           account_id: accountIdToPersist,
           category_id: categoryIdToPersist,
           user_note: normalizeOptionalText(transactionInput.description),
+          budget_treatment:
+            transactionInput.budgetTreatment === existing.budgetTreatment
+              ? undefined
+              : transactionInput.budgetTreatment,
         });
 
         return updated;
@@ -306,6 +323,7 @@ function useRemoteTransactions(): UseTransactionsResult {
       const created = await apiClient.createManualTransaction({
         amount_in_paise: rupeesToPaise(transactionInput.amount),
         type: transactionInput.type,
+        direction: transactionDirection(transactionInput),
         txn_date: transactionInput.date.toISOString(),
         account_id: accountIdToPersist,
         category_id: categoryIdToPersist,
@@ -320,7 +338,7 @@ function useRemoteTransactions(): UseTransactionsResult {
       }
 
       const existing = transactionsById.get(transactionInput.id);
-      if (!existing || areImmutableFieldsChanged(existing, transactionInput)) {
+      if (!existing || areImmutableSourceFieldsChanged(existing, transactionInput)) {
         return { previous: null };
       }
 
@@ -333,6 +351,7 @@ function useRemoteTransactions(): UseTransactionsResult {
         ...item,
         transaction: {
           ...item.transaction,
+          type: transactionInput.type,
           account_id: accountId,
           category_id: categoryId,
           user_note: userNote,
@@ -359,6 +378,7 @@ function useRemoteTransactions(): UseTransactionsResult {
         void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       }
       void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ['budget'] });
     },
     onError: (_error, _transactionInput, context) => {
       if (context?.previous) {
@@ -366,6 +386,7 @@ function useRemoteTransactions(): UseTransactionsResult {
       }
       void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ['budget'] });
     },
   });
 
@@ -376,6 +397,36 @@ function useRemoteTransactions(): UseTransactionsResult {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ['budget'] });
+    },
+  });
+
+  const restoreTransactionMutation = useMutation({
+    mutationFn: async (transactionId: string) => apiClient.restoreTransaction(transactionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ['budget'] });
+    },
+  });
+
+  const budgetTreatmentMutation = useMutation({
+    mutationFn: async ({
+      transactionId,
+      treatment,
+    }: {
+      transactionId: string;
+      treatment: BudgetTreatment;
+    }) => apiClient.updateTransaction(transactionId, { budget_treatment: treatment }),
+    onSuccess: updated => {
+      if (!replaceCachedTransaction(updated)) {
+        void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['budget'] });
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ['budget'] });
     },
   });
 
@@ -407,6 +458,7 @@ function useRemoteTransactions(): UseTransactionsResult {
           ...item,
           transaction: {
             ...item.transaction,
+            type: payload.type ?? item.transaction.type,
             category_id: categoryId,
             merchant_id: merchantId,
             user_note:
@@ -450,6 +502,8 @@ function useRemoteTransactions(): UseTransactionsResult {
     categoriesQuery.error ??
     upsertTransactionMutation.error ??
     deleteTransactionMutation.error ??
+    restoreTransactionMutation.error ??
+    budgetTreatmentMutation.error ??
     reviewTransactionMutation.error;
 
   return {
@@ -467,12 +521,21 @@ function useRemoteTransactions(): UseTransactionsResult {
     deleteTransaction: async id => {
       await deleteTransactionMutation.mutateAsync(id);
     },
+    restoreTransaction: async id => {
+      await restoreTransactionMutation.mutateAsync(id);
+    },
+    setBudgetTreatment: async (id, treatment) => {
+      const updated = await budgetTreatmentMutation.mutateAsync({ transactionId: id, treatment });
+      return mapFeedItemToUiTransaction(updated, accountsById, categoriesById);
+    },
     isLoading:
       transactionsQuery.isLoading ||
       accountsQuery.isLoading ||
       categoriesQuery.isLoading ||
       upsertTransactionMutation.isPending ||
       deleteTransactionMutation.isPending ||
+      restoreTransactionMutation.isPending ||
+      budgetTreatmentMutation.isPending ||
       reviewTransactionMutation.isPending,
     error: firstError ? toErrorMessage(firstError) : null,
   };

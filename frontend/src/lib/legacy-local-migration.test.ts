@@ -74,6 +74,9 @@ function makeTransactionFeedItem(
       status: 'VERIFIED',
       classification_source: 'USER',
       ai_confidence_score: null,
+      budget_treatment: 'AUTO',
+      recurring_series_id: null,
+      user_deleted_at: null,
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
     },
@@ -113,6 +116,14 @@ function makeTransactionFeedItem(
           },
     merchant: null,
     raw_email: null,
+    budget: {
+      treatment: 'AUTO',
+      effective_treatment: 'INCLUDE',
+      treatment_source: 'SYSTEM_DEFAULT',
+      effect: 'SPEND',
+      effect_in_paise: 1000,
+      relationship: null,
+    },
   };
 }
 

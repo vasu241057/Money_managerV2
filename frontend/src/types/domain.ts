@@ -1,4 +1,13 @@
-import type { ClassificationSource, MerchantType, TransactionStatus } from '../../../shared/types';
+import type {
+  BudgetEffectKind,
+  BudgetTreatment,
+  BudgetTreatmentSource,
+  ClassificationSource,
+  EffectiveBudgetTreatment,
+  MerchantType,
+  TransactionBudgetRelationship,
+  TransactionStatus,
+} from '../../../shared/types';
 
 // No balance field: account balances are derived from transactions
 // (income − expense per account), never stored or entered.
@@ -24,6 +33,7 @@ export interface Transaction {
   id: string;
   amount: number;
   type: 'income' | 'expense' | 'transfer';
+  direction?: 'debit' | 'credit';
   category: string;
   categoryId?: string | null;
   categoryIcon?: string | null;
@@ -49,4 +59,10 @@ export interface Transaction {
   status?: TransactionStatus;
   classificationSource?: ClassificationSource;
   aiConfidenceScore?: number | null;
+  budgetTreatment?: BudgetTreatment;
+  effectiveBudgetTreatment?: EffectiveBudgetTreatment;
+  budgetTreatmentSource?: BudgetTreatmentSource;
+  budgetEffect?: BudgetEffectKind;
+  budgetEffectAmount?: number;
+  budgetRelationship?: TransactionBudgetRelationship | null;
 }

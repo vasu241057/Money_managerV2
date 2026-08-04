@@ -6,7 +6,9 @@ import type { ScreenId } from '../layout/BottomNav';
 import { useCategories } from '../../hooks/useCategories';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
 import { apiClient } from '../../lib/api-client';
-import type { GlobalMerchantListItem, MerchantType } from '../../../../shared/types';
+import type { GlobalMerchantListItem, MerchantType, TransactionType } from '../../../../shared/types';
+import { allowedTransactionTypes, transactionDirection } from '../../lib/transaction-adapter';
+import { TransactionTypeSelector } from '../ui/TransactionTypeSelector';
 
 interface ReviewQueueProps {
 	transaction: Transaction;
@@ -61,10 +63,12 @@ interface SelectedMerchant {
 export function ReviewQueue({ transaction, position, totalCount, onReviewed, onClose }: ReviewQueueProps) {
 	const { categories: allCategories, isLoading: categoriesLoading } = useCategories();
 	const { reviewTransaction, isLoading: reviewLoading } = useTransactions();
+	const [selectedType, setSelectedType] = useState<TransactionType>(transaction.type);
+	const direction = transactionDirection(transaction);
 
 	const categoriesForType = useMemo(
-		() => allCategories.filter((c) => c.type === transaction.type),
-		[allCategories, transaction.type],
+		() => allCategories.filter((c) => c.type === selectedType),
+		[allCategories, selectedType],
 	);
 
 	const [hasUserTouched, setHasUserTouched] = useState(false);
@@ -180,6 +184,14 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 		setMerchantQuery(m.canonical_name);
 	};
 
+	const handleTypeChange = (nextType: TransactionType) => {
+		if (nextType === selectedType) return;
+		setSelectedType(nextType);
+		setSelectedParentId(null);
+		setSelectedSubId(null);
+		setHasUserTouched(true);
+	};
+
 	const handleSave = async () => {
 		// Saving before categories load would send category_id: null — an
 		// explicit clear that verifies the transaction uncategorized.
@@ -187,12 +199,14 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 		setSubmitError(null);
 		const categoryIdToPersist = selectedSubId ?? selectedParentId ?? null;
 		const payload: {
+			type?: TransactionType;
 			category_id?: string | null;
 			merchant_id?: string | null;
 			user_note?: string | null;
 			apply_rule?: boolean;
 			rule_search_key?: string | null;
 		} = {
+			type: selectedType,
 			category_id: categoryIdToPersist,
 			merchant_id: selectedMerchant?.id ?? null,
 			user_note: note.trim() ? note : null,
@@ -218,10 +232,10 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 	const instrumentLast4 = transaction.instrumentLast4 ?? '';
 	const confidencePct = transaction.aiConfidenceScore != null ? Math.round(transaction.aiConfidenceScore * 100) : null;
 	const confidenceLabel = confidencePct != null ? `AI ${confidencePct}% confident` : 'Needs review';
-	const amountColor = transaction.type === 'income' ? 'var(--ledger-positive)' : 'var(--ledger-fg)';
-	const typePillBg = transaction.type === 'income' ? 'rgba(45, 122, 79, 0.12)' : 'rgba(196, 83, 54, 0.12)';
-	const typePillFg = transaction.type === 'income' ? 'var(--ledger-positive)' : 'var(--ledger-negative)';
-	const typeLabel = transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1);
+	const amountColor = selectedType === 'income' ? 'var(--ledger-positive)' : selectedType === 'transfer' ? 'var(--ledger-muted)' : 'var(--ledger-fg)';
+	const typePillBg = selectedType === 'income' ? 'rgba(45, 122, 79, 0.12)' : selectedType === 'transfer' ? 'rgba(13, 92, 75, 0.12)' : 'rgba(196, 83, 54, 0.12)';
+	const typePillFg = selectedType === 'income' ? 'var(--ledger-positive)' : selectedType === 'transfer' ? 'var(--ledger-accent)' : 'var(--ledger-negative)';
+	const typeLabel = selectedType.charAt(0).toUpperCase() + selectedType.slice(1);
 	const showDefaultPrompt = hasCategorySelected && !isAggregator;
 	const showAggregatorWarning = hasCategorySelected && isAggregator;
 
@@ -285,7 +299,7 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 					</div>
 
 					<h2 className="text-4xl tracking-tight font-bold tnum mb-4" style={{ color: amountColor }}>
-						{formatSignedRupees(transaction.amount, transaction.type)}
+						{formatSignedRupees(transaction.amount, selectedType)}
 					</h2>
 
 					<div className="space-y-1.5 text-xs leading-relaxed mb-4">
@@ -323,6 +337,20 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 				</div>
 
 				<div className="mb-6">
+					<p
+						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-3 px-1"
+						style={{ color: 'var(--ledger-muted)' }}
+					>
+						Type
+					</p>
+					<TransactionTypeSelector
+						value={selectedType}
+						allowedTypes={allowedTransactionTypes(direction)}
+						onChange={handleTypeChange}
+					/>
+				</div>
+
+				<div className="mb-6">
 					<div className="flex justify-between items-baseline px-1 mb-3">
 						<p
 							className="text-[10px] font-bold uppercase tracking-[0.2em]"
@@ -341,7 +369,7 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 					</div>
 					{categoriesForType.length === 0 ? (
 						<p className="text-xs px-1" style={{ color: 'var(--ledger-muted)' }}>
-							No {transaction.type} categories available
+							No {selectedType} categories available
 						</p>
 					) : (
 						<div className="flex gap-2 overflow-x-auto pb-2 -mb-2 no-scrollbar px-1">
@@ -522,10 +550,10 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 									</div>
 									<div className="pr-4">
 										<p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--ledger-fg)' }}>
-											Use this category for {selectedMerchant?.name ?? 'this merchant'} from now on?
+											Use this category for future {selectedType} transactions with {selectedMerchant?.name ?? 'this merchant'}?
 										</p>
 										<p className="text-[11px] leading-tight" style={{ color: 'var(--ledger-muted)' }}>
-											Future transactions with this search key will auto-use the same category and merchant.
+											The merchant is remembered for every direction; this category is remembered only for {selectedType}.
 										</p>
 									</div>
 								</div>

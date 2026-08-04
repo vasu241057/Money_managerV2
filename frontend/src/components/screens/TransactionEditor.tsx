@@ -4,6 +4,7 @@ import {
 	ChevronLeft,
 	Lock,
 	Loader2,
+	Link2,
 	Store,
 	Trash2,
 	UserRound,
@@ -11,7 +12,13 @@ import {
 import { useCategories } from '../../hooks/useCategories';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
-import type { TransactionType } from '../../../../shared/types';
+import type { BudgetTreatment, EventDirection, TransactionType } from '../../../../shared/types';
+import {
+	allowedTransactionTypes,
+	transactionDirection,
+} from '../../lib/transaction-adapter';
+import { TransactionTypeSelector } from '../ui/TransactionTypeSelector';
+import { useBudgetRelationshipActions, useRefundTargets } from '../../hooks/useBudget';
 
 interface TransactionEditorProps {
 	mode: 'add' | 'edit';
@@ -150,15 +157,28 @@ export function TransactionEditor({
 	const { categories: allCategories } = useCategories();
 	const { accounts } = useAccounts();
 	const { addTransaction, deleteTransaction, isLoading: txLoading } = useTransactions();
+	const {
+		unlinkRelationship,
+		linkRelationship,
+		isUnlinking,
+		isLinking,
+		error: unlinkError,
+	} = useBudgetRelationshipActions();
 
 	const isBankDetected = mode === 'edit' && !isManual;
-	const immutableLocked = isBankDetected;
+	const sourceFieldsLocked = isBankDetected || Boolean(editingTransaction?.budgetRelationship);
 	const hasMerchantIdentity = Boolean(
 		editingTransaction?.merchantName?.trim()
 		|| editingTransaction?.counterpartyRaw?.trim(),
 	);
 
 	const [type, setType] = useState<TransactionType>(editingTransaction?.type ?? 'expense');
+	const existingDirection = editingTransaction
+		? transactionDirection(editingTransaction)
+		: null;
+	const [transferDirection, setTransferDirection] = useState<EventDirection>(
+		existingDirection ?? 'debit',
+	);
 	const [amountStr, setAmountStr] = useState(
 		editingTransaction ? editingTransaction.amount.toFixed(2).replace(/\.00$/, '') : '',
 	);
@@ -175,7 +195,18 @@ export function TransactionEditor({
 		editingTransaction?.accountId ?? '',
 	);
 	const [note, setNote] = useState(editingTransaction?.description ?? '');
+	const [budgetTreatment, setBudgetTreatment] = useState<BudgetTreatment>(
+		editingTransaction?.budgetTreatment ?? 'AUTO',
+	);
 	const [submitError, setSubmitError] = useState<string | null>(null);
+	const [relationshipRemoved, setRelationshipRemoved] = useState(false);
+	const [linkPickerOpen, setLinkPickerOpen] = useState(false);
+	const [linkKind, setLinkKind] = useState<'REFUND' | 'REIMBURSEMENT'>('REFUND');
+	const [relationshipAddedLabel, setRelationshipAddedLabel] = useState<string | null>(null);
+	const { targets: refundTargets, isLoading: targetsLoading, error: targetsError } = useRefundTargets(
+		mode === 'edit' && editingTransaction?.type === 'income' ? editingTransaction.id : null,
+		linkPickerOpen,
+	);
 
 	const title = mode === 'edit' ? 'Edit Transaction' : 'Add Transaction';
 	const saveLabel = mode === 'edit' ? 'Update Transaction' : 'Save Transaction';
@@ -189,12 +220,30 @@ export function TransactionEditor({
 	const selectedParent = categoriesForType.find((c) => c.id === selectedParentId);
 	const subCategories = selectedParent?.subCategories ?? [];
 	const subCategoryIds = selectedParent?.subCategoryIds ?? {};
+	const allowedTypes = editingTransaction?.budgetRelationship
+		? [editingTransaction.type]
+		: existingDirection ? allowedTransactionTypes(existingDirection) : undefined;
+	const selectedDirection = type === 'transfer'
+		? transferDirection
+		: type === 'income' ? 'credit' : 'debit';
+
+	const handleTypeChange = (nextType: TransactionType) => {
+		if (nextType === type) return;
+		if (nextType === 'transfer') {
+			setTransferDirection(type === 'income' ? 'credit' : 'debit');
+		} else {
+			setTransferDirection(nextType === 'income' ? 'credit' : 'debit');
+		}
+		setType(nextType);
+		setSelectedParentId('');
+		setSelectedSubId('');
+	};
 
 	const handleSave = async () => {
 		if (txLoading) return;
 		setSubmitError(null);
 		const amount = parseAmountInput(amountStr);
-		if (!amount && !immutableLocked) return;
+		if (!amount && !sourceFieldsLocked) return;
 
 		try {
 			if (mode === 'edit' && editingTransaction) {
@@ -204,22 +253,25 @@ export function TransactionEditor({
 				const dateChanged = formatDateInput(editingTransaction.date) !== date;
 				await addTransaction({
 					...editingTransaction,
-					amount: immutableLocked ? editingTransaction.amount : (amount ?? editingTransaction.amount),
-					type: immutableLocked ? editingTransaction.type : type,
+					amount: sourceFieldsLocked ? editingTransaction.amount : (amount ?? editingTransaction.amount),
+					type,
+					direction: existingDirection ?? selectedDirection,
 					date:
-						immutableLocked || !dateChanged
+						sourceFieldsLocked || !dateChanged
 							? editingTransaction.date
 							: new Date(date + 'T12:00:00'),
 					categoryId: selectedParentId || null,
 					subCategoryId: selectedSubId || null,
 					accountId: selectedAccountId || null,
 					description: note || undefined,
+					budgetTreatment,
 				});
 			} else {
 				await addTransaction({
 					id: '',
 					amount: amount ?? 0,
 					type,
+					direction: selectedDirection,
 					category: 'Uncategorized',
 					categoryId: selectedParentId || null,
 					subCategoryId: selectedSubId || null,
@@ -246,7 +298,7 @@ export function TransactionEditor({
 		}
 	};
 
-	const canSave = immutableLocked || parseAmountInput(amountStr) !== null;
+	const canSave = sourceFieldsLocked || parseAmountInput(amountStr) !== null;
 
 	return (
 		<div
@@ -282,61 +334,54 @@ export function TransactionEditor({
 					>
 						<Lock size={14} className="shrink-0" style={{ color: 'var(--ledger-amber)' }} />
 						<p className="text-[10px] leading-none whitespace-nowrap" style={{ color: 'var(--ledger-amber)' }}>
-							Gmail import · Edit category, account &amp; note
+							Gmail import · Edit type, category, account &amp; note
 						</p>
 					</div>
 				)}
 
-				{/* TYPE TOGGLE */}
+				{/* TYPE */}
 				<div>
-					<div className={`flex gap-2 w-full ${immutableLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
-						<button
-							onClick={() => {
-								if (immutableLocked || type === 'expense') return;
-								setType('expense');
-								setSelectedParentId('');
-								setSelectedSubId('');
-							}}
-							disabled={immutableLocked}
-							className="flex-1 h-12 rounded-[10px] text-sm font-semibold flex items-center justify-center transition-colors"
-							style={
-								type === 'expense'
-									? { background: 'var(--ledger-negative)', color: '#fff' }
-									: { background: 'var(--ledger-card)', color: 'var(--ledger-muted)', border: '1px solid var(--ledger-rule)' }
-							}
-						>
-							Expense
-						</button>
-						<button
-							onClick={() => {
-								if (immutableLocked || type === 'income') return;
-								setType('income');
-								setSelectedParentId('');
-								setSelectedSubId('');
-							}}
-							disabled={immutableLocked}
-							className="flex-1 h-12 rounded-[10px] text-sm font-semibold flex items-center justify-center transition-colors"
-							style={
-								type === 'income'
-									? { background: 'var(--ledger-positive)', color: '#fff' }
-									: { background: 'var(--ledger-card)', color: 'var(--ledger-muted)', border: '1px solid var(--ledger-rule)' }
-							}
-						>
-							Income
-						</button>
-					</div>
-					{immutableLocked && (
+					<TransactionTypeSelector
+						value={type}
+						allowedTypes={allowedTypes}
+						onChange={handleTypeChange}
+					/>
+					{mode === 'add' && type === 'transfer' && (
+						<div className="grid grid-cols-2 gap-2 mt-3">
+							{(['debit', 'credit'] as const).map((direction) => (
+								<button
+									key={direction}
+									type="button"
+									onClick={() => setTransferDirection(direction)}
+									className="h-9 rounded-[9px] text-xs font-semibold"
+									style={transferDirection === direction
+										? { background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }
+										: { background: 'var(--ledger-card)', color: 'var(--ledger-muted)', border: '1px solid var(--ledger-rule)' }}
+								>
+									{direction === 'debit' ? 'Money out' : 'Money in'}
+								</button>
+							))}
+						</div>
+					)}
+					{sourceFieldsLocked && (
 						<p
 							className="text-[11px] italic mt-2 text-center px-4"
 							style={{ color: 'var(--ledger-muted)' }}
 						>
-							Amount, type, and date cannot be changed for bank-detected transactions.
+							{isBankDetected
+								? 'Amount and date come from the bank and cannot be changed.'
+								: 'Unlink the refund or reimbursement before changing amount or date.'}
+						</p>
+					)}
+					{editingTransaction?.budgetRelationship && (
+						<p className="text-[11px] italic mt-2 text-center px-4" style={{ color: 'var(--ledger-muted)' }}>
+							Unlink the refund or reimbursement before changing its type.
 						</p>
 					)}
 				</div>
 
 				{/* AMOUNT */}
-				<div className={`flex flex-col items-center ${immutableLocked ? 'opacity-60 pointer-events-none' : ''}`}>
+				<div className={`flex flex-col items-center ${sourceFieldsLocked ? 'opacity-60 pointer-events-none' : ''}`}>
 					<div className="flex items-baseline justify-center relative w-full px-8">
 						<span
 							className="text-2xl font-medium absolute left-4 top-1/2 -translate-y-1/2"
@@ -349,7 +394,7 @@ export function TransactionEditor({
 							inputMode="decimal"
 							value={amountStr}
 							onChange={(e) => setAmountStr(e.target.value)}
-							readOnly={immutableLocked}
+							readOnly={sourceFieldsLocked}
 							className="w-full text-center text-5xl tracking-tighter font-bold tnum bg-transparent outline-none py-2"
 							style={{ color: 'var(--ledger-fg)', fontSize: '16px' }}
 							placeholder="0"
@@ -366,7 +411,7 @@ export function TransactionEditor({
 				</div>
 
 				{/* DATE */}
-				<div className={immutableLocked ? 'opacity-60 pointer-events-none' : ''}>
+				<div className={sourceFieldsLocked ? 'opacity-60 pointer-events-none' : ''}>
 					<label className="block w-full">
 						<div
 							className="w-full rounded-[10px] px-4 py-3.5 flex justify-between items-center transition-colors cursor-pointer"
@@ -498,6 +543,54 @@ export function TransactionEditor({
 					<MerchantIdentityCard transaction={editingTransaction} />
 				)}
 
+				{mode === 'edit' && editingTransaction && (
+					<section aria-labelledby="monthly-plan-heading">
+						<p id="monthly-plan-heading" className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2 px-1" style={{ color: 'var(--ledger-muted)' }}>Monthly plan</p>
+						<div className="rounded-[10px] p-3.5" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+							<div className="grid grid-cols-3 gap-1 rounded-[9px] p-1" style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)' }} role="group" aria-label="Monthly plan treatment">
+								{([
+									['AUTO', 'Automatic'],
+									['INCLUDE', 'Count'],
+									['EXCLUDE', 'Outside'],
+								] as const).map(([value, label]) => (
+									<button key={value} type="button" onClick={() => setBudgetTreatment(value)} aria-pressed={budgetTreatment === value} className="rounded-[7px] px-1 py-2 text-[10px] font-bold transition-colors" style={budgetTreatment === value ? { background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' } : { color: 'var(--ledger-muted)' }}>{label}</button>
+								))}
+							</div>
+							<p className="text-[11px] leading-relaxed mt-3" style={{ color: 'var(--ledger-muted)' }}>
+								{budgetTreatment === 'INCLUDE'
+									? editingTransaction.type === 'income' ? 'This credit will reduce the month’s used budget.' : 'This transaction will count against the month’s limit.'
+									: budgetTreatment === 'EXCLUDE'
+										? 'This remains in cash flow and Analytics, but stays outside the budget.'
+										: editingTransaction.effectiveBudgetTreatment === 'INCLUDE'
+											? `Currently counted automatically by ${editingTransaction.budgetTreatmentSource === 'REFUND_RELATIONSHIP' ? 'its linked refund or purchase' : editingTransaction.budgetTreatmentSource === 'RECURRING_RULE' ? 'a recurring rule' : editingTransaction.budgetTreatmentSource === 'CATEGORY_RULE' ? 'its category rule' : 'the default expense rule'}.`
+											: 'Currently outside the budget automatically. Transfers and ordinary income have no effect by default.'}
+							</p>
+							{editingTransaction.budgetRelationship && !relationshipRemoved && (
+								<div className="mt-3 pt-3 flex items-start justify-between gap-3" style={{ borderTop: '1px solid var(--ledger-rule)' }}>
+									<div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: 'var(--ledger-accent)' }}>{editingTransaction.budgetRelationship.role === 'TARGET' && editingTransaction.budgetRelationship.related_count > 1 ? `${editingTransaction.budgetRelationship.related_count} linked refunds` : editingTransaction.budgetRelationship.kind === 'REFUND' ? 'Linked refund' : 'Linked reimbursement'}</p><p className="text-xs truncate mt-1" style={{ color: 'var(--ledger-fg)' }}>{editingTransaction.budgetRelationship.role === 'SOURCE' ? 'For' : editingTransaction.budgetRelationship.related_count > 1 ? 'Latest from' : 'From'} {editingTransaction.budgetRelationship.related_label}</p><p className="text-[9px] mt-1" style={{ color: 'var(--ledger-muted)' }}>{editingTransaction.budgetRelationship.created_by === 'AUTO' ? 'Matched automatically' : 'Linked by you'}</p></div>
+									<div className="text-right shrink-0"><span className="text-xs tnum block" style={{ color: 'var(--ledger-muted)' }}>₹{(editingTransaction.budgetRelationship.related_amount_in_paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span><button type="button" disabled={isUnlinking} onClick={() => { const relationshipId = editingTransaction.budgetRelationship?.id; if (!relationshipId) return; void unlinkRelationship(relationshipId).then(() => setRelationshipRemoved(true)).catch(cause => setSubmitError(cause instanceof Error ? cause.message : 'Could not unlink refund.')); }} className="text-[10px] font-bold mt-1" style={{ color: 'var(--ledger-negative)' }}>{editingTransaction.budgetRelationship.role === 'TARGET' && editingTransaction.budgetRelationship.related_count > 1 ? 'Unlink this' : 'Undo link'}</button></div>
+								</div>
+							)}
+							{editingTransaction.type === 'income'
+								&& (!editingTransaction.budgetRelationship || relationshipRemoved)
+								&& !relationshipAddedLabel && (
+								<div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--ledger-rule)' }}>
+									<button type="button" onClick={() => setLinkPickerOpen(open => !open)} className="w-full flex items-center justify-between gap-3 text-left"><span className="flex items-center gap-2 text-xs font-bold" style={{ color: 'var(--ledger-accent)' }}><Link2 size={14} /> Link to an expense</span><span className="text-[10px]" style={{ color: 'var(--ledger-muted)' }}>{linkPickerOpen ? 'Close' : 'Refund or payback'}</span></button>
+									{linkPickerOpen && (
+										<div className="mt-3">
+											<div className="grid grid-cols-2 gap-1 rounded-[8px] p-1 mb-2" style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)' }}>
+												{(['REFUND', 'REIMBURSEMENT'] as const).map(kind => <button key={kind} type="button" onClick={() => setLinkKind(kind)} className="rounded-[6px] py-1.5 text-[10px] font-bold" style={linkKind === kind ? { background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' } : { color: 'var(--ledger-muted)' }}>{kind === 'REFUND' ? 'Purchase refund' : 'Paid back'}</button>)}
+											</div>
+											{targetsLoading ? <div className="py-4 flex justify-center"><Loader2 size={15} className="animate-spin" style={{ color: 'var(--ledger-accent)' }} /></div> : refundTargets.length === 0 ? <p className="text-[11px] py-2" style={{ color: 'var(--ledger-muted)' }}>No eligible expense in the previous 120 days.</p> : <div className="max-h-48 overflow-y-auto rounded-[8px]" style={{ border: '1px solid var(--ledger-rule)' }}>{refundTargets.map((target, index) => <button key={target.transaction_id} type="button" disabled={isLinking} onClick={() => { const sourceId = editingTransaction.id; void linkRelationship(sourceId, target.transaction_id, linkKind).then(() => { setRelationshipAddedLabel(target.label); setLinkPickerOpen(false); }).catch(cause => setSubmitError(cause instanceof Error ? cause.message : 'Could not link transaction.')); }} className="w-full px-3 py-2.5 flex items-center justify-between gap-3 text-left" style={index < refundTargets.length - 1 ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}><span className="min-w-0"><span className="block text-xs font-semibold truncate">{target.label}</span><span className="block text-[10px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>{new Date(target.txn_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · ₹{(target.remaining_in_paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })} available</span></span><span className="text-xs font-bold tnum shrink-0">₹{(target.amount_in_paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span></button>)}</div>}
+										</div>
+									)}
+								</div>
+							)}
+							{relationshipAddedLabel && <p className="mt-3 pt-3 text-[11px]" style={{ borderTop: '1px solid var(--ledger-rule)', color: 'var(--ledger-positive)' }}>Linked to {relationshipAddedLabel}. The budget has been recalculated.</p>}
+						</div>
+					</section>
+				)}
+
 				{/* NOTE */}
 				<div>
 					<p
@@ -516,7 +609,7 @@ export function TransactionEditor({
 					/>
 				</div>
 
-				{mode === 'edit' && editingTransaction && !isBankDetected && (
+				{mode === 'edit' && editingTransaction && (
 					<button
 						onClick={() => { void handleDelete(); }}
 						disabled={txLoading}
@@ -542,8 +635,8 @@ export function TransactionEditor({
 					boxShadow: '0 -12px 24px -12px rgba(0, 0, 0, 0.12)',
 				}}
 			>
-				{submitError && (
-					<p className="text-xs mb-2" style={{ color: 'var(--ledger-negative)' }}>{submitError}</p>
+				{(submitError || unlinkError || targetsError) && (
+					<p className="text-xs mb-2" style={{ color: 'var(--ledger-negative)' }}>{submitError ?? unlinkError ?? targetsError}</p>
 				)}
 				<button
 					onClick={() => { void handleSave(); }}
