@@ -5,6 +5,7 @@ import type { SqlClient } from '../src/lib/db/client';
 import {
 	isTransactionTypeAllowedForDirection,
 	listTransactions,
+	normalizeTransactionSearchAmount,
 	parseCreateManualTransactionRequest,
 	parseListTransactionsQuery,
 	parseReviewTransactionRequest,
@@ -41,7 +42,15 @@ describe('transactions payload/query validation', () => {
 		expect(parseTransactionSearchAmountInPaise('12.345')).toBeNull();
 	});
 
-	it('applies full-ledger text/date/amount search to count and page queries', async () => {
+	it('normalizes partial amount searches without treating dates as amounts', () => {
+		expect(normalizeTransactionSearchAmount('  ₹2,575.50 ')).toBe('2575.50');
+		expect(normalizeTransactionSearchAmount('257')).toBe('257');
+		expect(normalizeTransactionSearchAmount('0')).toBe('0');
+		expect(normalizeTransactionSearchAmount('04/08/2026')).toBeNull();
+		expect(normalizeTransactionSearchAmount('merchant 257')).toBeNull();
+	});
+
+	it('applies partial text and amount search to count and page queries', async () => {
 		const queries: string[] = [];
 		const values: unknown[][] = [];
 		const sql = (async (strings: TemplateStringsArray, ...queryValues: unknown[]) => {
@@ -63,11 +72,34 @@ describe('transactions payload/query validation', () => {
 			expect(query).toContain('t.user_note ilike');
 			expect(query).toContain('gm.canonical_name ilike');
 			expect(query).toContain('fe.counterparty_raw ilike');
-			expect(query).toContain("at time zone 'Asia/Kolkata'");
 			expect(query).toContain('t.amount_in_paise');
+			expect(query).not.toContain("at time zone 'Asia/Kolkata'");
 		}
 		expect(values[0]).toContain('%Amazon%');
 		expect(values[1]).toContain('%Amazon%');
+	});
+
+	it('matches a partial numeric query against the displayed rupee amount', async () => {
+		const queries: string[] = [];
+		const values: unknown[][] = [];
+		const sql = (async (strings: TemplateStringsArray, ...queryValues: unknown[]) => {
+			const query = strings.join(' ').replace(/\s+/g, ' ').trim();
+			queries.push(query);
+			values.push(queryValues);
+			return query.startsWith('select count') ? [{ total: 0 }] : [];
+		}) as unknown as SqlClient;
+
+		await listTransactions(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			parseListTransactionsQuery({ q: '257', page: '1', limit: '25' }),
+		);
+
+		for (const query of queries) {
+			expect(query).toContain("to_char(t.amount_in_paise / 100.0, 'FM999999999999990.00') ilike");
+		}
+		expect(values[0]).toContain('%257%');
+		expect(values[1]).toContain('%257%');
 	});
 
 	it('rejects create payload with non-positive amount', () => {

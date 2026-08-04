@@ -219,13 +219,19 @@ function escapeSqlLikePattern(value: string): string {
 }
 
 export function parseTransactionSearchAmountInPaise(value: string | null): number | null {
-	if (value === null) return null;
-	const compact = value.replace(/[₹,\s]/g, '');
-	if (!/^\d+(?:\.\d{1,2})?$/.test(compact)) return null;
+	const compact = normalizeTransactionSearchAmount(value);
+	if (compact === null) return null;
 
 	const [rupees = '0', paise = ''] = compact.split('.');
 	const amount = Number(rupees) * 100 + Number(paise.padEnd(2, '0'));
 	return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+}
+
+export function normalizeTransactionSearchAmount(value: string | null): string | null {
+	if (value === null) return null;
+	const compact = value.replace(/[₹,\s]/g, '');
+	if (!/^\d+(?:\.\d{1,2})?$/.test(compact)) return null;
+	return compact;
 }
 
 function parseTransactionType(value: unknown, fieldName: string): TransactionRow['type'] {
@@ -1113,8 +1119,12 @@ export async function listTransactions(
 ): Promise<PaginatedResponse<TransactionFeedItem>> {
 	const hasSearch = input.q !== null;
 	const searchPattern = input.q === null ? null : `%${escapeSqlLikePattern(input.q)}%`;
+	const searchAmount = normalizeTransactionSearchAmount(input.q);
+	const searchAmountPattern = searchAmount === null
+		? null
+		: `%${escapeSqlLikePattern(searchAmount)}%`;
 	const searchAmountInPaise = parseTransactionSearchAmountInPaise(input.q);
-	const hasAmountSearch = searchAmountInPaise !== null;
+	const hasAmountSearch = searchAmount !== null;
 	const hasFromFilter = Boolean(input.from);
 	const hasToFilter = Boolean(input.to);
 	const hasStatusFilter = Boolean(input.status);
@@ -1141,16 +1151,11 @@ export async function listTransactions(
 				or gm.canonical_name ilike ${searchPattern} escape '\\'
 				or fe.counterparty_raw ilike ${searchPattern} escape '\\'
 				or fe.search_key ilike ${searchPattern} escape '\\'
-				or concat_ws(' ',
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'YYYY-MM-DD'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'DD/MM/YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'DD-MM-YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMDD Mon YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMDD FMMonth YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'Mon YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMMonth YYYY')
-				) ilike ${searchPattern} escape '\\'
-				or (${hasAmountSearch} and t.amount_in_paise = ${searchAmountInPaise})
+				or (${hasAmountSearch} and (
+					t.amount_in_paise = ${searchAmountInPaise}
+					or to_char(t.amount_in_paise / 100.0, 'FM999999999999990.00')
+						ilike ${searchAmountPattern} escape '\\'
+				))
 			)
 			and (not ${hasFromFilter} or t.txn_date >= ${input.from ?? null})
 			and (not ${hasToFilter} or t.txn_date <= ${input.to ?? null})
@@ -1347,16 +1352,11 @@ export async function listTransactions(
 				or gm.canonical_name ilike ${searchPattern} escape '\\'
 				or fe.counterparty_raw ilike ${searchPattern} escape '\\'
 				or fe.search_key ilike ${searchPattern} escape '\\'
-				or concat_ws(' ',
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'YYYY-MM-DD'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'DD/MM/YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'DD-MM-YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMDD Mon YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMDD FMMonth YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'Mon YYYY'),
-					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMMonth YYYY')
-				) ilike ${searchPattern} escape '\\'
-				or (${hasAmountSearch} and t.amount_in_paise = ${searchAmountInPaise})
+				or (${hasAmountSearch} and (
+					t.amount_in_paise = ${searchAmountInPaise}
+					or to_char(t.amount_in_paise / 100.0, 'FM999999999999990.00')
+						ilike ${searchAmountPattern} escape '\\'
+				))
 			)
 			and (not ${hasFromFilter} or t.txn_date >= ${input.from ?? null})
 			and (not ${hasToFilter} or t.txn_date <= ${input.to ?? null})

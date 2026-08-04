@@ -309,7 +309,7 @@ export interface PaginatedResponse<T> {
 }
 
 export interface ListTransactionsQuery extends PageRequest {
-	/** Searches merchant/counterparty, note, exact rupee amount, and local transaction date. */
+	/** Searches merchant/counterparty, note, and partial rupee amount. */
 	q?: string;
   from?: ISODateTimeString;
   to?: ISODateTimeString;
