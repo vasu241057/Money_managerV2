@@ -35,6 +35,8 @@ Routes:
 - `POST /oauth/google/start`
 - `POST /oauth/google/callback`
 - `GET/DELETE /oauth/google/connection`
+- `GET /ai-usage/summary` (configured admin only)
+- `GET /ai-usage?month=YYYY-MM&page=N` (configured admin only; user-scoped spend, processing, retries, and attempt receipts)
 - `POST /internal/ai/requires` (secret-protected internal webhook)
 
 Manual transaction writes are transaction-safe:
@@ -58,6 +60,7 @@ npx wrangler secret put GOOGLE_OAUTH_REDIRECT_URI
 npx wrangler secret put GOOGLE_OAUTH_STATE_SECRET
 npx wrangler secret put GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY
 npx wrangler secret put OPENROUTER_API_KEY
+npx wrangler secret put OPENROUTER_MANAGEMENT_API_KEY
 npx wrangler secret put OPENROUTER_MODEL
 npx wrangler secret put AI_AUTO_VERIFY_MIN_CONFIDENCE
 npx wrangler secret put AI_QUEUE_DELAY_SECONDS
@@ -65,6 +68,9 @@ npx wrangler secret put AI_REQUIRES_WEBHOOK_SECRET
 ```
 
 For local development, create `backend/.dev.vars` from `backend/.dev.vars.example`.
+
+`AI_USAGE_ADMIN_USER_ID` is a non-secret internal app UUID. It controls who can
+see the AI spend tile and ledger; non-matching authenticated users receive 404.
 
 Merchant mapping is disabled unless `MERCHANT_MAPPING_ENABLED` is explicitly
 set to `1`, `on`, `true`, or `yes`. The scheduler will not enqueue mapper jobs

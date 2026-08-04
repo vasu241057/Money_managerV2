@@ -8,6 +8,9 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-03-01",
 	"keep_vars": true,
+	"vars": {
+		"AI_USAGE_ADMIN_USER_ID": "a661a921-cdb0-503b-a810-4b25e4f15ca0"
+	},
 	"observability": {
 		"enabled": true
 	},

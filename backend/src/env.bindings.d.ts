@@ -15,7 +15,9 @@ declare namespace Cloudflare {
 		OPENCODE_GO_MODEL?: string;
 		AI_PROVIDER?: string;
 		OPENROUTER_API_KEY?: string;
+		OPENROUTER_MANAGEMENT_API_KEY?: string;
 		OPENROUTER_MODEL?: string;
+		AI_USAGE_ADMIN_USER_ID?: string;
 		AI_REQUIRES_WEBHOOK_SECRET?: string;
 		QUEUE_ALERT_RETRY_RATE_PERCENT?: string;
 		QUEUE_ALERT_POISON_ACK_COUNT?: string;

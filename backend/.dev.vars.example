@@ -23,9 +23,13 @@
 # AI_PROVIDER=opencode
 # OPENCODE_GO_API_KEY=...
 # OPENROUTER_API_KEY=...
+# Optional management key: enables purchased/remaining credit balance in Settings.
+# OPENROUTER_MANAGEMENT_API_KEY=...
 # Daily-jobs model per provider (sender classifier + merchant mapper):
 # OPENCODE_GO_MODEL=deepseek-v4-flash
-# OPENROUTER_MODEL=nvidia/llama-3.1-nemotron-70b-instruct:free
+# OPENROUTER_MODEL=deepseek/deepseek-v4-flash
+# Only this authenticated app user can open the AI usage dashboard:
+# AI_USAGE_ADMIN_USER_ID=a661a921-cdb0-503b-a810-4b25e4f15ca0
 
 # Per-tier attempt schedule before rotating to the next model tier
 # (default 2,2,1 -> max 5 attempts total across the 3-tier chain).
