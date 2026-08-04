@@ -1,6 +1,12 @@
 import type {
   AccountRow,
+  AiUsageDashboardResponse,
+  AiUsageSummaryResponse,
   AnalyticsSummaryResponse,
+  BudgetOverviewResponse,
+  CreateTransactionRelationshipRequest,
+  ConfirmRecurringPatternRequest,
+  DismissBudgetSuggestionRequest,
   CardStatementRow,
   CategoryRow,
   CreateAccountRequest,
@@ -17,11 +23,16 @@ import type {
   PaginatedResponse,
   ReviewTransactionRequest,
   ReviewTransactionResponse,
+  RefundTargetOption,
+  SetCategoryBudgetRuleRequest,
   TransactionFeedItem,
   UpdateAccountRequest,
   UpdateCategoryRequest,
   UpdateTransactionRequest,
+  UpdateRecurringSeriesRequest,
   UpdateUserCreditCardRequest,
+  UpsertBudgetPlanRequest,
+  UpsertMonthlyBudgetRequest,
   UserCreditCardRow,
 } from '../../../shared/types';
 import { getApiBaseUrl } from '../config/data-source';
@@ -120,9 +131,106 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const apiClient = {
+  async getAiUsageSummary(): Promise<AiUsageSummaryResponse> {
+    const response = await request<ApiEnvelope<AiUsageSummaryResponse>>('/ai-usage/summary');
+    return response.data;
+  },
+
+  async getAiUsageDashboard(month: string, page: number): Promise<AiUsageDashboardResponse> {
+    const response = await request<ApiEnvelope<AiUsageDashboardResponse>>(
+      `/ai-usage${buildQueryString({ month, page })}`,
+    );
+    return response.data;
+  },
+
   async getAnalyticsSummary(): Promise<AnalyticsSummaryResponse> {
     const response = await request<ApiEnvelope<AnalyticsSummaryResponse>>('/analytics/summary');
     return response.data;
+  },
+
+  async getBudgetOverview(month: string): Promise<BudgetOverviewResponse> {
+    const response = await request<ApiEnvelope<BudgetOverviewResponse>>(
+      `/budget${buildQueryString({ month })}`,
+    );
+    return response.data;
+  },
+
+  async upsertMonthlyBudget(
+    month: string,
+    payload: UpsertMonthlyBudgetRequest,
+  ): Promise<BudgetOverviewResponse> {
+    const response = await request<ApiEnvelope<BudgetOverviewResponse>>(`/budget/months/${month}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    return response.data;
+  },
+
+  async upsertBudgetPlan(
+    month: string,
+    payload: UpsertBudgetPlanRequest,
+  ): Promise<BudgetOverviewResponse> {
+    const response = await request<ApiEnvelope<BudgetOverviewResponse>>(
+      `/budget/months/${month}/plan`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+    return response.data;
+  },
+
+  async setCategoryBudgetRule(
+    categoryId: string,
+    payload: SetCategoryBudgetRuleRequest,
+  ): Promise<void> {
+    await request<void>(`/budget/category-rules/${categoryId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteCategoryBudgetRule(categoryId: string): Promise<void> {
+    await request<void>(`/budget/category-rules/${categoryId}`, { method: 'DELETE' });
+  },
+
+  async createTransactionRelationship(payload: CreateTransactionRelationshipRequest): Promise<void> {
+    await request<void>('/budget/relationships', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async listRelationshipTargets(sourceTransactionId: string): Promise<RefundTargetOption[]> {
+    const response = await request<ApiEnvelope<RefundTargetOption[]>>(
+      `/budget/relationship-targets/${sourceTransactionId}`,
+    );
+    return response.data;
+  },
+
+  async deleteTransactionRelationship(relationshipId: string): Promise<void> {
+    await request<void>(`/budget/relationships/${relationshipId}`, { method: 'DELETE' });
+  },
+
+  async dismissBudgetSuggestion(payload: DismissBudgetSuggestionRequest): Promise<void> {
+    await request<void>('/budget/suggestions/dismiss', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async confirmRecurringPattern(payload: ConfirmRecurringPatternRequest): Promise<void> {
+    await request<void>('/budget/recurring-series', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateRecurringSeries(seriesId: string, payload: UpdateRecurringSeriesRequest): Promise<void> {
+    await request<void>(`/budget/recurring-series/${seriesId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
   },
 
   async listCardStatements(): Promise<CardStatementRow[]> {

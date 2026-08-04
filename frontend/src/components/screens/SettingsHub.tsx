@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useAuth } from '@clerk/react';
 import {
 	ChevronRight, ChevronDown, Trash2, X, Plus, LogOut, Loader2,
-	EyeOff, RotateCcw, Pencil, Check,
+	EyeOff, RotateCcw, Pencil, Check, ReceiptText,
+	Gauge,
 } from 'lucide-react';
 import { useGmailConnection } from '../../hooks/useGmailConnection';
 import { SettingsSkeleton } from '../ui/Skeleton';
@@ -10,10 +11,13 @@ import { InstallAppCard } from '../ui/InstallAppCard';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useCreditCards } from '../../hooks/useCreditCards';
 import { useCategories } from '../../hooks/useCategories';
+import { useAiUsageSummary } from '../../hooks/useAiUsage';
 import type { OAuthSyncStatus } from '../../../../shared/types';
 
 interface SettingsHubProps {
 	onOpenAccounts: () => void;
+	onOpenBudget: () => void;
+	onOpenAiUsage: () => void;
 	onSignOut: () => void;
 }
 
@@ -68,8 +72,15 @@ function formatSyncAgo(timestampMs: number): string {
 	return `synced ${days}d ago`;
 }
 
+function formatUsd(value: number): string {
+	if (value > 0 && value < 0.01) return `$${value.toFixed(4)}`;
+	return `$${value.toFixed(2)}`;
+}
+
 export function SettingsHub({
 	onOpenAccounts,
+	onOpenBudget,
+	onOpenAiUsage,
 	onSignOut,
 }: SettingsHubProps) {
 	const { signOut } = useAuth();
@@ -93,6 +104,7 @@ export function SettingsHub({
 
 	const { accounts } = useAccounts();
 	const { creditCards } = useCreditCards();
+	const { summary: aiUsageSummary, isAdmin: isAiUsageAdmin } = useAiUsageSummary();
 	const {
 		categories: allCategories,
 		hiddenCategories,
@@ -133,6 +145,22 @@ export function SettingsHub({
 		{ label: 'Unrecognized', value: processingStats.raw_email_unrecognized_count, color: 'var(--ledger-muted)' },
 		{ label: 'Ignored', value: processingStats.raw_email_ignored_count, color: 'var(--ledger-muted)' },
 	];
+	const aiMonthCost =
+		aiUsageSummary?.account?.current_month_cost_usd ??
+		aiUsageSummary?.tracked_current_month_cost_usd ??
+		0;
+	const aiAllTimeCost =
+		aiUsageSummary?.account?.all_time_cost_usd ??
+		aiUsageSummary?.tracked_all_time_cost_usd ??
+		0;
+	const aiCreditTotal = aiUsageSummary?.account?.purchased_credits_usd ?? null;
+	const aiCreditRemaining = aiCreditTotal !== null
+		? aiUsageSummary?.account?.credits_remaining_usd ?? null
+		: aiUsageSummary?.account?.remaining_usd ?? null;
+	const hasAiCreditRunway = aiCreditTotal !== null && aiCreditTotal > 0 && aiCreditRemaining !== null;
+	const aiCreditUsedPercent = hasAiCreditRunway
+		? Math.min(100, Math.max(0, ((aiCreditTotal - aiCreditRemaining) / aiCreditTotal) * 100))
+		: 0;
 
 	return (
 		<div
@@ -162,6 +190,15 @@ export function SettingsHub({
 					<SettingsSkeleton />
 				) : (
 				<>
+				<section className="mb-8">
+					<p className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4" style={{ color: 'var(--ledger-muted)' }}>Planning</p>
+					<button type="button" onClick={onOpenBudget} className="w-full flex items-center gap-3 rounded-[10px] px-4 py-3.5 text-left" style={cardStyle}>
+						<span className="w-9 h-9 rounded-[9px] flex items-center justify-center shrink-0" style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}><Gauge size={18} /></span>
+						<span className="flex-1"><span className="block text-sm font-semibold">Monthly plan</span><span className="block text-[11px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>Flexible limit, fixed costs, and recurring rules</span></span>
+						<ChevronRight size={16} style={{ color: 'var(--ledger-muted)' }} />
+					</button>
+				</section>
+
 				<section className="mb-8">
 					<p
 						className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4"
@@ -312,6 +349,74 @@ export function SettingsHub({
 						</div>
 					</div>
 				</section>
+
+				{isAiUsageAdmin && aiUsageSummary && (
+					<section className="mb-8">
+						<p
+							className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4"
+							style={{ color: 'var(--ledger-muted)' }}
+						>
+							AI operations
+						</p>
+						<button
+							type="button"
+							onClick={onOpenAiUsage}
+							className="w-full rounded-[10px] overflow-hidden text-left active:scale-[0.99] transition-transform"
+							style={cardStyle}
+						>
+							<div className="px-4 py-3.5 flex items-center gap-3">
+								<div
+									className="w-9 h-9 rounded-[9px] flex items-center justify-center shrink-0"
+									style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}
+								>
+									<ReceiptText size={18} />
+								</div>
+								<div className="min-w-0 flex-1">
+									<p className="text-sm font-bold" style={{ color: 'var(--ledger-fg)' }}>
+										AI operations
+									</p>
+									<p className="text-[11px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+										{aiUsageSummary.tracked_current_month_request_count} calls
+										{aiCreditRemaining !== null ? ` · ${formatUsd(aiCreditRemaining)} remaining` : ' tracked this month'}
+									</p>
+								</div>
+								<ChevronRight size={16} style={{ color: 'var(--ledger-muted)' }} />
+							</div>
+							{hasAiCreditRunway && (
+								<div className="px-4 pb-3.5">
+									<div className="ai-runway-rail h-1.5 rounded-full overflow-hidden">
+										<div className="ai-runway-fill h-full rounded-full" style={{ width: `${aiCreditUsedPercent}%` }} />
+									</div>
+									<div className="flex justify-between mt-1.5 text-[9px] tnum" style={{ color: 'var(--ledger-muted)' }}>
+										<span>{formatUsd(aiCreditTotal - aiCreditRemaining)} used</span>
+										<span>{formatUsd(aiCreditTotal)} purchased</span>
+									</div>
+								</div>
+							)}
+							<div
+								className="grid grid-cols-2"
+								style={{ borderTop: '1px solid var(--ledger-rule)' }}
+							>
+								<div className="px-4 py-3" style={{ borderRight: '1px solid var(--ledger-rule)' }}>
+									<p className="text-lg font-bold tnum" style={{ color: 'var(--ledger-accent)' }}>
+										{formatUsd(aiMonthCost)}
+									</p>
+									<p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-muted)' }}>
+										This month
+									</p>
+								</div>
+								<div className="px-4 py-3">
+									<p className="text-lg font-bold tnum" style={{ color: 'var(--ledger-fg)' }}>
+										{formatUsd(aiAllTimeCost)}
+									</p>
+									<p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-muted)' }}>
+										All time
+									</p>
+								</div>
+							</div>
+						</button>
+					</section>
+				)}
 
 				<section className="mb-8">
 					<div className="flex items-center justify-between mb-4">

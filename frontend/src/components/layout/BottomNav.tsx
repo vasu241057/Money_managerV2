@@ -1,7 +1,7 @@
-import { Home, List as ListIcon, PieChart, Settings } from 'lucide-react';
+import { Gauge, Home, List as ListIcon, PieChart, Settings } from 'lucide-react';
 
 // 'review' and 'add' are overlay signals routed by App, never tabs.
-export type ScreenId = 'home' | 'ledger' | 'analytics' | 'settings' | 'review' | 'add';
+export type ScreenId = 'home' | 'ledger' | 'budget' | 'analytics' | 'settings' | 'review' | 'add';
 
 interface BottomNavProps {
 	activeTab: ScreenId;
@@ -11,6 +11,7 @@ interface BottomNavProps {
 const TABS: { id: ScreenId; label: string; icon: typeof Home }[] = [
 	{ id: 'home', label: 'Home', icon: Home },
 	{ id: 'ledger', label: 'Ledger', icon: ListIcon },
+	{ id: 'budget', label: 'Budget', icon: Gauge },
 	{ id: 'analytics', label: 'Analytics', icon: PieChart },
 	{ id: 'settings', label: 'Settings', icon: Settings },
 ];

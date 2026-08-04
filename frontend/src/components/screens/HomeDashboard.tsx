@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Plus, ArrowRight, ChevronRight } from 'lucide-react';
+import { Plus, ArrowRight, ChevronRight, Gauge } from 'lucide-react';
 import type { ScreenId } from '../layout/BottomNav';
 import { useTransactions, type Transaction } from '../../hooks/useTransactions';
 import { useAnalyticsSummary, monthKeyIST } from '../../hooks/useAnalyticsSummary';
+import { useBudget } from '../../hooks/useBudget';
 import { useGmailConnection } from '../../hooks/useGmailConnection';
 import { paiseToRupees } from '../../lib/money';
 import { HomeSkeleton, SkeletonTxnRow } from '../ui/Skeleton';
@@ -54,6 +55,7 @@ export function HomeDashboard({ onNavigate, onOpenReview, onEditTransaction }: H
 
 	const [heroRange, setHeroRange] = useState<'month' | 'all'>('month');
 	const { summary, isLoading: summaryLoading } = useAnalyticsSummary();
+	const { overview: budgetOverview } = useBudget(monthKeyIST(new Date()));
 	const recentArtworkPhase = useMerchantArtworkPhase('auto');
 
 	// Hero figures come from the server-computed summary — no need to wait
@@ -93,6 +95,23 @@ export function HomeDashboard({ onNavigate, onOpenReview, onEditTransaction }: H
 	const reviewLastThreeDaysCount = summary?.review.last_3_days ?? 0;
 	const reviewCount = summary?.review.total ?? reviewInbox.length;
 	const gmailConnected = connection?.sync_status === 'ACTIVE' || connection?.sync_status === 'DORMANT';
+	const planSummary = budgetOverview?.summary ?? null;
+	const [planYear, planMonthNumber] = monthKeyIST(new Date()).split('-').map(Number);
+	const todayInIndia = Number(new Intl.DateTimeFormat('en-CA', {
+		timeZone: 'Asia/Kolkata',
+		day: 'numeric',
+	}).format(new Date()));
+	const daysLeftInMonth = Math.max(
+		1,
+		new Date(Date.UTC(planYear, planMonthNumber, 0)).getUTCDate() - todayInIndia + 1,
+	);
+	const planRemainingPaise = planSummary?.remaining_in_paise ?? null;
+	const safePerDayPaise = planRemainingPaise === null
+		? null
+		: Math.max(0, Math.floor(planRemainingPaise / daysLeftInMonth));
+	const planUsedPercent = planSummary?.limit_in_paise
+		? Math.min(100, Math.max(0, (planSummary.used_in_paise / planSummary.limit_in_paise) * 100))
+		: 0;
 
 	return (
 		<div
@@ -212,6 +231,49 @@ export function HomeDashboard({ onNavigate, onOpenReview, onEditTransaction }: H
 						</div>
 					</div>
 				</section>
+
+				{/* MONTHLY PLAN — compact, but answers what is safe to spend today. */}
+				<button
+					type="button"
+					onClick={() => onNavigate('budget')}
+					className="w-full rounded-[12px] px-4 py-3.5 mb-5 text-left active:scale-[0.99] transition-transform"
+					style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+				>
+					<div className="flex items-center gap-3">
+						<span className="w-9 h-9 rounded-[9px] flex items-center justify-center shrink-0" style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}>
+							<Gauge size={18} />
+						</span>
+						<div className="flex-1 min-w-0">
+							<div className="flex items-center justify-between gap-3">
+								<p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--ledger-accent)' }}>Monthly plan</p>
+								{safePerDayPaise !== null && (
+									<p className="text-[10px] font-semibold tnum shrink-0" style={{ color: 'var(--ledger-muted)' }}>
+										₹{paiseToRupees(safePerDayPaise).toLocaleString('en-IN', { maximumFractionDigits: 0 })}/day safe
+									</p>
+								)}
+							</div>
+							{planSummary?.limit_in_paise != null ? (
+								<p className="text-sm font-semibold mt-1 truncate" style={{ color: (planRemainingPaise ?? 0) < 0 ? 'var(--ledger-negative)' : 'var(--ledger-fg)' }}>
+									₹{Math.abs(paiseToRupees(planRemainingPaise ?? 0)).toLocaleString('en-IN', { maximumFractionDigits: 0 })} {(planRemainingPaise ?? 0) < 0 ? 'over plan' : 'left'}
+								</p>
+							) : (
+								<p className="text-sm font-semibold mt-1" style={{ color: 'var(--ledger-fg)' }}>Set a flexible spending limit</p>
+							)}
+						</div>
+						<ChevronRight size={15} className="shrink-0" style={{ color: 'var(--ledger-muted)' }} />
+					</div>
+					{planSummary?.limit_in_paise != null && (
+						<div className="mt-3 pl-12">
+							<div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--ledger-rule)' }}>
+								<div className="h-full rounded-full" style={{ width: `${planUsedPercent}%`, background: planUsedPercent >= 100 ? 'var(--ledger-negative)' : 'var(--ledger-accent)' }} />
+							</div>
+							<div className="flex items-center justify-between mt-1.5 text-[9px] tnum" style={{ color: 'var(--ledger-muted)' }}>
+								<span>₹{paiseToRupees(planSummary.used_in_paise).toLocaleString('en-IN', { maximumFractionDigits: 0 })} counted</span>
+								<span>₹{paiseToRupees(planSummary.limit_in_paise).toLocaleString('en-IN', { maximumFractionDigits: 0 })} limit</span>
+							</div>
+						</div>
+					)}
+				</button>
 
 				{/* GMAIL SYNC */}
 				<div className="flex items-center gap-2 mb-5">

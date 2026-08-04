@@ -8,8 +8,10 @@ import { TransactionsLedger } from './components/screens/TransactionsLedger';
 import { TransactionEditor } from './components/screens/TransactionEditor';
 import { ReviewQueue, EmptyReviewQueue } from './components/screens/ReviewQueue';
 import { AnalyticsScreen } from './components/screens/AnalyticsScreen';
+import { BudgetScreen } from './components/screens/BudgetScreen';
 import { SettingsHub } from './components/screens/SettingsHub';
 import { AccountsCardsManager } from './components/screens/AccountsCardsManager';
+import { AiUsageDashboard } from './components/screens/AiUsageDashboard';
 import { parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
 import { ensureLegacyLocalDataMigrated } from './lib/legacy-local-migration';
 import { queryClient } from './lib/query-client';
@@ -21,7 +23,7 @@ import type { Transaction } from './hooks/useTransactions';
 import './styles/app.css';
 
 type Overlay = 'editor' | 'review' | null;
-type SettingsSubscreen = 'main' | 'accounts';
+type SettingsSubscreen = 'main' | 'accounts' | 'ai-usage';
 type ReviewScope = 'recent' | 'all';
 
 // Every screen and overlay owns a URL so a refresh (or back/forward) lands
@@ -43,10 +45,14 @@ function parseRoute(pathname: string): RouteState {
 		reviewScope: 'all',
 	};
 	if (pathname === '/ledger') return { ...base, screen: 'ledger' };
+	if (pathname === '/budget') return { ...base, screen: 'budget' };
 	if (pathname === '/analytics') return { ...base, screen: 'analytics' };
 	if (pathname === '/settings') return { ...base, screen: 'settings' };
 	if (pathname === '/settings/accounts') {
 		return { ...base, screen: 'settings', settingsSubscreen: 'accounts' };
+	}
+	if (pathname === '/settings/ai-usage') {
+		return { ...base, screen: 'settings', settingsSubscreen: 'ai-usage' };
 	}
 	if (pathname === '/review/recent') {
 		return { ...base, overlay: 'review', reviewScope: 'recent' };
@@ -60,15 +66,18 @@ function parseRoute(pathname: string): RouteState {
 
 function pathForScreen(screen: ScreenId, settingsSubscreen: SettingsSubscreen): string {
 	if (screen === 'ledger') return '/ledger';
+	if (screen === 'budget') return '/budget';
 	if (screen === 'analytics') return '/analytics';
 	if (screen === 'settings') {
-		return settingsSubscreen === 'accounts' ? '/settings/accounts' : '/settings';
+		if (settingsSubscreen === 'accounts') return '/settings/accounts';
+		if (settingsSubscreen === 'ai-usage') return '/settings/ai-usage';
+		return '/settings';
 	}
 	return '/';
 }
 
 function syncPath(path: string, replace = false) {
-	if (window.location.pathname !== path) {
+	if (`${window.location.pathname}${window.location.search}` !== path) {
 		window.history[replace ? 'replaceState' : 'pushState'](null, '', path);
 	}
 }
@@ -182,6 +191,12 @@ function LedgerApp() {
 		syncPath(scope === 'recent' ? '/review/recent' : '/review');
 	};
 
+	const openBudgetLedger = () => {
+		setActiveScreen('ledger');
+		setSettingsSubscreen('main');
+		syncPath('/ledger?budget=in');
+	};
+
 	const handleHomeNavigate = (screen: ScreenId) => {
 		if (screen === 'add') {
 			openEditor('add');
@@ -219,14 +234,23 @@ function LedgerApp() {
 				<AnalyticsScreen onEditTransaction={(t) => openEditor('edit', t)} />
 			)}
 
+			{activeScreen === 'budget' && (
+				<BudgetScreen onOpenBudgetLedger={openBudgetLedger} />
+			)}
+
 			{activeScreen === 'settings' && settingsSubscreen === 'main' && (
 				<SettingsHub
 					onOpenAccounts={() => navigateToScreen('settings', 'accounts')}
+					onOpenBudget={() => navigateToScreen('budget')}
+					onOpenAiUsage={() => navigateToScreen('settings', 'ai-usage')}
 					onSignOut={() => navigateToScreen('home')}
 				/>
 			)}
 			{activeScreen === 'settings' && settingsSubscreen === 'accounts' && (
 				<AccountsCardsManager onBack={() => navigateToScreen('settings', 'main')} />
+			)}
+			{activeScreen === 'settings' && settingsSubscreen === 'ai-usage' && (
+				<AiUsageDashboard onBack={() => navigateToScreen('settings', 'main')} />
 			)}
 
 			<BottomNav
