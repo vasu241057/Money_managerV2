@@ -96,6 +96,7 @@ function LedgerApp() {
 	const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 	const [reviewedCount, setReviewedCount] = useState(0);
 	const [reviewScope, setReviewScope] = useState<ReviewScope>(initialRoute.reviewScope);
+	const [reviewTargetId, setReviewTargetId] = useState<string | null>(null);
 	const [settingsSubscreen, setSettingsSubscreen] = useState<SettingsSubscreen>(
 		initialRoute.settingsSubscreen,
 	);
@@ -108,9 +109,14 @@ function LedgerApp() {
 
 	const { reviewInbox, transactions, isFeedComplete } = useTransactions();
 	const scopedReviewInbox = useMemo(() => {
-		if (reviewScope === 'all') return reviewInbox;
-		return reviewInbox.filter((transaction) => isInLastThreeCalendarDaysIST(transaction.date));
-	}, [reviewInbox, reviewScope]);
+		const scoped = reviewScope === 'all'
+			? reviewInbox
+			: reviewInbox.filter((transaction) => isInLastThreeCalendarDaysIST(transaction.date));
+		if (!reviewTargetId) return scoped;
+		const targetIndex = scoped.findIndex(transaction => transaction.id === reviewTargetId);
+		if (targetIndex <= 0) return scoped;
+		return [scoped[targetIndex]!, ...scoped.slice(0, targetIndex), ...scoped.slice(targetIndex + 1)];
+	}, [reviewInbox, reviewScope, reviewTargetId]);
 
 	useEffect(() => {
 		// One-time legacy localStorage migration. Runs detached: it never
@@ -144,6 +150,7 @@ function LedgerApp() {
 			setActiveScreen(route.screen);
 			setSettingsSubscreen(route.settingsSubscreen);
 			setReviewedCount(0);
+			setReviewTargetId(null);
 			setReviewScope(route.reviewScope);
 			if (route.overlay === 'editor') {
 				if (route.editorTxnId === 'new') {
@@ -181,12 +188,14 @@ function LedgerApp() {
 		setEditingTransaction(null);
 		setPendingTxnId(null);
 		setReviewedCount(0);
+		setReviewTargetId(null);
 		syncPath(pathForScreen(activeScreen, settingsSubscreen));
 	};
 
-	const openReview = (scope: ReviewScope = 'all') => {
+	const openReview = (scope: ReviewScope = 'all', targetId: string | null = null) => {
 		setReviewedCount(0);
 		setReviewScope(scope);
+		setReviewTargetId(targetId);
 		setOverlay('review');
 		syncPath(scope === 'recent' ? '/review/recent' : '/review');
 	};
@@ -227,6 +236,7 @@ function LedgerApp() {
 						}
 					}}
 					onEditTransaction={(t) => openEditor('edit', t)}
+					onReviewTransaction={(t) => openReview('all', t.id)}
 				/>
 			)}
 

@@ -360,6 +360,7 @@ export const apiClient = {
       `/transactions${buildQueryString({
         page: query.page,
         limit: query.limit,
+		q: query.q,
         from: query.from,
         to: query.to,
         status: query.status,

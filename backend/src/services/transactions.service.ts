@@ -185,6 +185,7 @@ interface CountRow {
 interface ParsedListTransactionsQuery {
 	page: number;
 	limit: number;
+	q: string | null;
 	from?: string;
 	to?: string;
 	status?: TransactionStatus;
@@ -192,6 +193,39 @@ interface ParsedListTransactionsQuery {
 	account_id?: string;
 	category_id?: string;
 	credit_card_id?: string;
+}
+
+const MAX_TRANSACTION_SEARCH_LENGTH = 120;
+
+function parseOptionalTransactionSearch(value: unknown): string | null {
+	if (value === undefined) return null;
+	if (typeof value !== 'string') {
+		throw badRequest('INVALID_QUERY', 'q must be a string');
+	}
+
+	const normalized = value.trim();
+	if (!normalized) return null;
+	if (normalized.length > MAX_TRANSACTION_SEARCH_LENGTH) {
+		throw badRequest(
+			'INVALID_QUERY',
+			`q must be at most ${MAX_TRANSACTION_SEARCH_LENGTH} characters`,
+		);
+	}
+	return normalized;
+}
+
+function escapeSqlLikePattern(value: string): string {
+	return value.replace(/[\\%_]/g, match => `\\${match}`);
+}
+
+export function parseTransactionSearchAmountInPaise(value: string | null): number | null {
+	if (value === null) return null;
+	const compact = value.replace(/[₹,\s]/g, '');
+	if (!/^\d+(?:\.\d{1,2})?$/.test(compact)) return null;
+
+	const [rupees = '0', paise = ''] = compact.split('.');
+	const amount = Number(rupees) * 100 + Number(paise.padEnd(2, '0'));
+	return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
 }
 
 function parseTransactionType(value: unknown, fieldName: string): TransactionRow['type'] {
@@ -856,6 +890,7 @@ async function getTransactionFeedItemById(
 export function parseListTransactionsQuery(query: Record<string, unknown>): ParsedListTransactionsQuery {
 	const page = parsePage(query.page);
 	const limit = parseLimit(query.limit);
+	const q = parseOptionalTransactionSearch(query.q);
 	const from = parseOptionalIsoDateTime(query.from, 'from');
 	const to = parseOptionalIsoDateTime(query.to, 'to');
 	const status =
@@ -873,6 +908,7 @@ export function parseListTransactionsQuery(query: Record<string, unknown>): Pars
 	return {
 		page,
 		limit,
+		q,
 		from,
 		to,
 		status,
@@ -1075,6 +1111,10 @@ export async function listTransactions(
 	userId: string,
 	input: ParsedListTransactionsQuery,
 ): Promise<PaginatedResponse<TransactionFeedItem>> {
+	const hasSearch = input.q !== null;
+	const searchPattern = input.q === null ? null : `%${escapeSqlLikePattern(input.q)}%`;
+	const searchAmountInPaise = parseTransactionSearchAmountInPaise(input.q);
+	const hasAmountSearch = searchAmountInPaise !== null;
 	const hasFromFilter = Boolean(input.from);
 	const hasToFilter = Boolean(input.to);
 	const hasStatusFilter = Boolean(input.status);
@@ -1090,9 +1130,28 @@ export async function listTransactions(
 		join public.financial_events as fe
 			on fe.id = t.financial_event_id
 			and fe.user_id = t.user_id
+		left join public.global_merchants as gm
+			on gm.id = t.merchant_id
 		where t.user_id = ${userId}
 			and fe.status = 'ACTIVE'
 			and t.user_deleted_at is null
+			and (
+				not ${hasSearch}
+				or t.user_note ilike ${searchPattern} escape '\\'
+				or gm.canonical_name ilike ${searchPattern} escape '\\'
+				or fe.counterparty_raw ilike ${searchPattern} escape '\\'
+				or fe.search_key ilike ${searchPattern} escape '\\'
+				or concat_ws(' ',
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'YYYY-MM-DD'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'DD/MM/YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'DD-MM-YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMDD Mon YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMDD FMMonth YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'Mon YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMMonth YYYY')
+				) ilike ${searchPattern} escape '\\'
+				or (${hasAmountSearch} and t.amount_in_paise = ${searchAmountInPaise})
+			)
 			and (not ${hasFromFilter} or t.txn_date >= ${input.from ?? null})
 			and (not ${hasToFilter} or t.txn_date <= ${input.to ?? null})
 			and (not ${hasStatusFilter} or t.status = ${input.status ?? null})
@@ -1282,6 +1341,23 @@ export async function listTransactions(
 		where t.user_id = ${userId}
 			and fe.status = 'ACTIVE'
 			and t.user_deleted_at is null
+			and (
+				not ${hasSearch}
+				or t.user_note ilike ${searchPattern} escape '\\'
+				or gm.canonical_name ilike ${searchPattern} escape '\\'
+				or fe.counterparty_raw ilike ${searchPattern} escape '\\'
+				or fe.search_key ilike ${searchPattern} escape '\\'
+				or concat_ws(' ',
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'YYYY-MM-DD'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'DD/MM/YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'DD-MM-YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMDD Mon YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMDD FMMonth YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'Mon YYYY'),
+					to_char(t.txn_date at time zone 'Asia/Kolkata', 'FMMonth YYYY')
+				) ilike ${searchPattern} escape '\\'
+				or (${hasAmountSearch} and t.amount_in_paise = ${searchAmountInPaise})
+			)
 			and (not ${hasFromFilter} or t.txn_date >= ${input.from ?? null})
 			and (not ${hasToFilter} or t.txn_date <= ${input.to ?? null})
 			and (not ${hasStatusFilter} or t.status = ${input.status ?? null})

@@ -39,8 +39,17 @@ interface UseTransactionsResult {
   deleteTransaction: (id: string) => Promise<void>;
   restoreTransaction: (id: string) => Promise<void>;
   setBudgetTreatment: (id: string, treatment: BudgetTreatment) => Promise<Transaction>;
+	loadMore: () => Promise<void>;
+	hasMore: boolean;
+	isFetchingMore: boolean;
+	isInitialLoading: boolean;
   isLoading: boolean;
   error: string | null;
+}
+
+interface UseTransactionsOptions {
+	search?: string;
+	autoLoadAll?: boolean;
 }
 
 const TRANSACTIONS_QUERY_KEY = ['transactions'] as const;
@@ -146,8 +155,12 @@ function mapFeedItemToUiTransaction(
 
 const FEED_PAGE_LIMIT = 100;
 
-function useRemoteTransactions(): UseTransactionsResult {
+function useRemoteTransactions(options: UseTransactionsOptions = {}): UseTransactionsResult {
   const queryClient = useQueryClient();
+	const search = options.search?.trim() ?? '';
+	const transactionsQueryKey = search
+		? [...TRANSACTIONS_QUERY_KEY, { q: search }] as const
+		: TRANSACTIONS_QUERY_KEY;
 
   const updateCachedTransaction = (
     transactionId: string,
@@ -155,11 +168,12 @@ function useRemoteTransactions(): UseTransactionsResult {
   ): TransactionFeedItem | null => {
     let previous: TransactionFeedItem | null = null;
 
-    queryClient.setQueryData<TransactionFeedCache>(TRANSACTIONS_QUERY_KEY, current => {
+	queryClient.setQueriesData<TransactionFeedCache>({ queryKey: TRANSACTIONS_QUERY_KEY }, current => {
       if (!current) {
         return current;
       }
 
+	  let cacheChanged = false;
       const pages = current.pages.map(page => {
         let pageChanged = false;
         const data = page.data.map(item => {
@@ -167,7 +181,8 @@ function useRemoteTransactions(): UseTransactionsResult {
             return item;
           }
 
-          previous = item;
+		  previous ??= item;
+		  cacheChanged = true;
           pageChanged = true;
           return update(item);
         });
@@ -175,7 +190,7 @@ function useRemoteTransactions(): UseTransactionsResult {
         return pageChanged ? { ...page, data } : page;
       });
 
-      return previous ? { ...current, pages } : current;
+	  return cacheChanged ? { ...current, pages } : current;
     });
 
     return previous;
@@ -207,10 +222,14 @@ function useRemoteTransactions(): UseTransactionsResult {
   // Paged so the first 100 rows render immediately; the effect below pumps
   // the remaining pages in the background instead of blocking first paint.
   const transactionsQuery = useInfiniteQuery({
-    queryKey: TRANSACTIONS_QUERY_KEY,
+	queryKey: transactionsQueryKey,
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => {
-      return apiClient.listTransactions({ page: pageParam, limit: FEED_PAGE_LIMIT });
+		return apiClient.listTransactions({
+			page: pageParam,
+			limit: FEED_PAGE_LIMIT,
+			q: search || undefined,
+		});
     },
     getNextPageParam: (lastPage, _pages, lastPageParam) =>
       lastPage.has_more ? lastPageParam + 1 : undefined,
@@ -219,10 +238,10 @@ function useRemoteTransactions(): UseTransactionsResult {
 
   const { hasNextPage, isFetchingNextPage, isError: feedHasError, fetchNextPage } = transactionsQuery;
   useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage && !feedHasError) {
+	if (options.autoLoadAll !== false && hasNextPage && !isFetchingNextPage && !feedHasError) {
       void fetchNextPage();
     }
-  }, [hasNextPage, isFetchingNextPage, feedHasError, fetchNextPage]);
+	}, [options.autoLoadAll, hasNextPage, isFetchingNextPage, feedHasError, fetchNextPage]);
 
   const accountsById = useMemo(() => {
     const rows = accountsQuery.data ?? [];
@@ -377,6 +396,10 @@ function useRemoteTransactions(): UseTransactionsResult {
       if (!replaceCachedTransaction(updated)) {
         void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       }
+	  void queryClient.invalidateQueries({
+		  queryKey: TRANSACTIONS_QUERY_KEY,
+		  predicate: query => query.queryKey.length > TRANSACTIONS_QUERY_KEY.length,
+	  });
       void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: ['budget'] });
     },
@@ -394,8 +417,42 @@ function useRemoteTransactions(): UseTransactionsResult {
     mutationFn: async (transactionId: string) => {
       return apiClient.deleteTransaction(transactionId);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+    onMutate: async transactionId => {
+	  await queryClient.cancelQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+	  const snapshots = queryClient.getQueriesData<TransactionFeedCache>({
+		  queryKey: TRANSACTIONS_QUERY_KEY,
+	  });
+	  queryClient.setQueriesData<TransactionFeedCache>({ queryKey: TRANSACTIONS_QUERY_KEY }, current => {
+		  if (!current) return current;
+		  let removedCount = 0;
+		  const pages = current.pages.map(page => {
+			  const data = page.data.filter(item => {
+				  const keep = item.transaction.id !== transactionId;
+				  if (!keep) removedCount += 1;
+				  return keep;
+			  });
+			  return data.length === page.data.length ? page : { ...page, data };
+		  });
+		  if (removedCount === 0) return current;
+		  const total = Math.max(0, (current.pages[0]?.total ?? 0) - removedCount);
+		  return {
+			  ...current,
+			  pages: pages.map(page => ({
+				  ...page,
+				  total,
+				  has_more: page.page * page.limit < total,
+			  })),
+		  };
+	  });
+	  return { snapshots };
+    },
+	onError: (_error, _transactionId, context) => {
+	  for (const [queryKey, data] of context?.snapshots ?? []) {
+		  queryClient.setQueryData(queryKey, data);
+	  }
+    },
+	onSettled: () => {
+	  void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: ['budget'] });
     },
@@ -485,6 +542,10 @@ function useRemoteTransactions(): UseTransactionsResult {
       if (!replaceCachedTransaction(reviewed)) {
         void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       }
+	  void queryClient.invalidateQueries({
+		  queryKey: TRANSACTIONS_QUERY_KEY,
+		  predicate: query => query.queryKey.length > TRANSACTIONS_QUERY_KEY.length,
+	  });
       void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
     },
     onError: (_error, _variables, context) => {
@@ -528,6 +589,15 @@ function useRemoteTransactions(): UseTransactionsResult {
       const updated = await budgetTreatmentMutation.mutateAsync({ transactionId: id, treatment });
       return mapFeedItemToUiTransaction(updated, accountsById, categoriesById);
     },
+	loadMore: async () => {
+		if (transactionsQuery.hasNextPage && !transactionsQuery.isFetchingNextPage) {
+			await transactionsQuery.fetchNextPage();
+		}
+	},
+	hasMore: Boolean(transactionsQuery.hasNextPage),
+	isFetchingMore: transactionsQuery.isFetchingNextPage,
+	isInitialLoading:
+	  transactionsQuery.isLoading || accountsQuery.isLoading || categoriesQuery.isLoading,
     isLoading:
       transactionsQuery.isLoading ||
       accountsQuery.isLoading ||
@@ -543,6 +613,6 @@ function useRemoteTransactions(): UseTransactionsResult {
 
 export { type Transaction };
 
-export function useTransactions(): UseTransactionsResult {
-  return useRemoteTransactions();
+export function useTransactions(options: UseTransactionsOptions = {}): UseTransactionsResult {
+  return useRemoteTransactions(options);
 }

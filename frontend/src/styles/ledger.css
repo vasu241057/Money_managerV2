@@ -1,0 +1,83 @@
+.ledger-swipe-row {
+	--swipe-progress: 0;
+	isolation: isolate;
+}
+
+.ledger-swipe-action {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 100ms linear;
+}
+
+.ledger-swipe-action--budget {
+	justify-content: flex-start;
+}
+
+.ledger-swipe-action--delete {
+	justify-content: flex-end;
+}
+
+.ledger-swipe-row[data-swipe-direction='right'] .ledger-swipe-action--budget,
+.ledger-swipe-row[data-swipe-direction='left'] .ledger-swipe-action--delete {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.ledger-swipe-action__content {
+	width: 88px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	transform: scale(calc(0.88 + (var(--swipe-progress) * 0.12)));
+	opacity: calc(0.45 + (var(--swipe-progress) * 0.55));
+	transition: transform 90ms linear, opacity 90ms linear;
+}
+
+.ledger-swipe-foreground {
+	z-index: 1;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.ledger-swipe-row[data-swipe-direction='right'] .ledger-swipe-foreground,
+.ledger-swipe-row[data-swipe-direction='left'] .ledger-swipe-foreground {
+	will-change: transform;
+}
+
+.ledger-swipe-row[data-committing='right'] .ledger-swipe-action--budget .ledger-swipe-action__content,
+.ledger-swipe-row[data-committing='left'] .ledger-swipe-action--delete .ledger-swipe-action__content {
+	transform: scale(1.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ledger-swipe-action,
+	.ledger-swipe-action__content,
+	.ledger-swipe-foreground {
+		transition-duration: 1ms !important;
+	}
+}
+
+.ledger-scroll {
+	overscroll-behavior-y: contain;
+	scroll-behavior: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.ledger-search:focus-within {
+	border-color: color-mix(in srgb, var(--ledger-accent) 55%, var(--ledger-rule)) !important;
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--ledger-accent) 10%, transparent);
+}
+
+.ledger-search input[type='search']::-webkit-search-cancel-button {
+	display: none;
+}
+
+.ledger-render-section {
+	contain: layout paint style;
+}

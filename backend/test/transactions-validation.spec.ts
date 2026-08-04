@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
+import type { SqlClient } from '../src/lib/db/client';
+
 import {
 	isTransactionTypeAllowedForDirection,
+	listTransactions,
 	parseCreateManualTransactionRequest,
 	parseListTransactionsQuery,
 	parseReviewTransactionRequest,
+	parseTransactionSearchAmountInPaise,
 	parseUpdateTransactionRequest,
 	prepareTransactionRelationUpdate,
 	resolveManualTransactionDirection,
@@ -18,6 +22,52 @@ describe('transactions payload/query validation', () => {
 				to: '2026-03-07T10:00:00.000Z',
 			}),
 		).toThrow('from must be earlier than or equal to to');
+	});
+
+	it('normalizes an optional transaction search query', () => {
+		expect(parseListTransactionsQuery({ q: '  Amazon India  ' })).toMatchObject({
+			q: 'Amazon India',
+		});
+		expect(parseListTransactionsQuery({ q: '   ' })).toMatchObject({ q: null });
+		expect(() => parseListTransactionsQuery({ q: 'x'.repeat(121) })).toThrow(
+			'q must be at most 120 characters',
+		);
+	});
+
+	it('recognizes exact rupee amount searches without confusing dates', () => {
+		expect(parseTransactionSearchAmountInPaise('₹1,250.50')).toBe(125_050);
+		expect(parseTransactionSearchAmountInPaise('6000')).toBe(600_000);
+		expect(parseTransactionSearchAmountInPaise('04/08/2026')).toBeNull();
+		expect(parseTransactionSearchAmountInPaise('12.345')).toBeNull();
+	});
+
+	it('applies full-ledger text/date/amount search to count and page queries', async () => {
+		const queries: string[] = [];
+		const values: unknown[][] = [];
+		const sql = (async (strings: TemplateStringsArray, ...queryValues: unknown[]) => {
+			const query = strings.join(' ').replace(/\s+/g, ' ').trim();
+			queries.push(query);
+			values.push(queryValues);
+			return query.startsWith('select count') ? [{ total: 0 }] : [];
+		}) as unknown as SqlClient;
+
+		const response = await listTransactions(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			parseListTransactionsQuery({ q: 'Amazon', page: '1', limit: '25' }),
+		);
+
+		expect(response).toMatchObject({ data: [], total: 0, page: 1, limit: 25, has_more: false });
+		expect(queries).toHaveLength(2);
+		for (const query of queries) {
+			expect(query).toContain('t.user_note ilike');
+			expect(query).toContain('gm.canonical_name ilike');
+			expect(query).toContain('fe.counterparty_raw ilike');
+			expect(query).toContain("at time zone 'Asia/Kolkata'");
+			expect(query).toContain('t.amount_in_paise');
+		}
+		expect(values[0]).toContain('%Amazon%');
+		expect(values[1]).toContain('%Amazon%');
 	});
 
 	it('rejects create payload with non-positive amount', () => {

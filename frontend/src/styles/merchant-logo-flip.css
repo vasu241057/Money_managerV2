@@ -20,7 +20,6 @@
   transform-origin: 50% 50%;
   transform-style: preserve-3d;
   -webkit-transform-style: preserve-3d;
-  will-change: transform;
 }
 
 .ledger-artwork__rotor--flip-to-merchant {
