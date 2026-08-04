@@ -1,7 +1,7 @@
 # Future Fixes & Deferred Work
 
 > Decisions and known issues explicitly deferred, with why. Ordered roughly
-> by when they'll matter. Last updated: July 12, 2026.
+> by when they'll matter. Last updated: August 4, 2026.
 
 ## Multi-tenant checklist (before any second user)
 
@@ -20,6 +20,17 @@
 5. **Root-assignability guard** — the engine no longer assigns the
    Income/Expense/Transfer roots, but the transactions API still accepts
    them; add validation once the new FE ships.
+
+## Implemented decisions
+
+**Internal-transfer confirmation (Phase 2, August 4):** `transfer` means only
+movement inside the user's own financial ecosystem, never generic P2P.
+`TRANSFER_INSTITUTION` identity is context, not proof. Explicit transfer
+category suggestions always require review; users can switch a detected debit
+between Expense/Transfer and a detected credit between Income/Transfer. The
+ledger renders `↔` only from `transactions.type = 'transfer'`. New writes are
+guarded in the API and database against direction/category mismatches.
+Historical rows are deliberately unchanged.
 
 ## Product features agreed, not yet built
 

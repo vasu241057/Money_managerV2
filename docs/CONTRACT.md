@@ -25,7 +25,9 @@ The following are source-of-truth entities and corresponding TS interfaces in `s
 - `user_credit_cards` -> `UserCreditCardRow`
 - `global_merchants` -> `GlobalMerchantRow`
 - `global_merchant_aliases` -> `GlobalMerchantAliasRow`
+- `global_merchant_category_defaults` -> `GlobalMerchantCategoryDefaultRow`
 - `user_merchant_rules` -> `UserMerchantRuleRow`
+- `user_merchant_rule_categories` -> `UserMerchantRuleCategoryRow`
 - `raw_emails` -> `RawEmailRow`
 - `mv_stale_pending_extraction` -> `StalePendingExtractionRow`
 - `financial_events` -> `FinancialEventRow`
@@ -81,7 +83,22 @@ Declared in `shared/types.ts`:
 - Merchant overrides: `UpsertUserMerchantRuleRequest`
 - OAuth: `GoogleOAuthStartResponse`, `GoogleOAuthCallbackRequest`, `GoogleOAuthConnectionResponse`
   - `GoogleOAuthConnectionStatusResponse`
+- Admin AI operations: `AiUsageSummaryResponse`, `AiUsageDashboardResponse`, `AiUsageEvent`, `AiUsageModelBreakdown`, `AiProcessingSummary`, `AiProcessingRun`, `AiProcessingAttempt`
 - Internal AI webhook: `AiRequiresWebhookRequest`, `AiRequiresWebhookResponse`
+
+Transaction classification invariants:
+
+- Money direction is immutable after creation. A `debit` financial event can
+  be `expense` or `transfer`; a `credit` event can be `income` or `transfer`.
+- `transactions.category_id`, when present, must reference a category whose
+  `type` equals `transactions.type`. A category type change is rejected when
+  it would invalidate a transaction or typed merchant default.
+- Manual creation accepts an optional `direction`; it defaults to `credit` for
+  income and `debit` otherwise. Transfer creation should send the user's
+  explicit Money out (`debit`) or Money in (`credit`) choice.
+- PATCH and review accept `type`, but cannot cross the direction matrix above.
+- Review rules keep one merchant/search identity and store category defaults
+  separately per transaction type.
 
 ### Auth context for backend CRUD (Milestone 4)
 
@@ -198,3 +215,30 @@ Milestone 1 baseline is complete when:
   - `QUEUE_ALERT_POISON_ACK_COUNT` (default `3`)
   - `QUEUE_ALERT_FINAL_RETRY_COUNT` (default `1`)
 - Operational dashboards and SLO runbook are documented in `docs/OPERATIONS.md`.
+
+## 12. Monthly Spending Plan Contract
+
+- Cash flow and the spending plan are separate views. Analytics keeps showing
+  real income, expense, and transfer movement; the budget answers how much of a
+  user-defined flexible limit remains.
+- Resolution order is fixed and centralized:
+  `transaction override > refund/reimbursement relationship > recurring rule > category rule > system default`.
+- System defaults count expenses and leave ordinary income/transfers outside.
+  An explicitly included credit is a budget adjustment.
+- Initial setup saves the monthly limit and all fixed-cost category choices in
+  one database transaction. Parent fixed-cost choices explicitly cover their
+  child categories, so the displayed total and saved treatment cannot diverge.
+- A linked credit inherits the treatment of its expense. Multiple partial
+  credits may link to one expense, but their total adjustment is capped at the
+  purchase amount. Cross-month credits are attributed back to the purchase
+  month, so the original month recalculates when the relationship is created.
+- Automatic refund linking is restricted to exactly one capable purchase on
+  the same card with the same merchant identity, within 120 days. Ambiguous
+  matches remain user-confirmed suggestions.
+- Recurring suggestions require at least three consistent debit expenses with
+  the same merchant/search identity and category, weekly or monthly timing,
+  and no more than 15% observed amount variation. Nothing changes until the
+  user confirms the suggestion. Confirmation must exactly match the pattern
+  revalidated by the server; unrelated submitted transactions are rejected.
+- User deletion sets `transactions.user_deleted_at`; it never deletes the
+  immutable `financial_events` row. Restore clears the timestamp.

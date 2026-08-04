@@ -37,7 +37,7 @@ money-manager/
 | **Clerk** | Authentication | JWT-based. JWKS: `big-mosquito-76.clerk.accounts.dev` |
 | **Cloudflare Queues** | Async job processing | 1 queue: `money-manager-email-sync` (DLQ: `money-manager-email-sync-dlq`) |
 | **Google OAuth** | Gmail access | Client ID: `611255820334-d25utocn5qima99l4o8hhe2346c732ee.apps...` |
-| **OpenCode Go / OpenRouter** | AI model access | Provider selected by `AI_PROVIDER` (default `opencode`; `openrouter` switches URL + key + model defaults in one flip). Email extraction + daily sender/merchant classification. OpenRouter defaults use `:free` models |
+| **OpenCode Go / OpenRouter** | AI model access | Provider selected by `AI_PROVIDER` (default `opencode`; `openrouter` switches URL + key + model defaults in one flip). Email extraction + daily sender/merchant classification. The OpenRouter normalizer uses paid DeepSeek first, then free Nemotron and GPT-OSS fallbacks |
 
 Cron triggers (wrangler.jsonc): `*/10 * * * *` (email sync dispatch) and `30 21 * * *` (= 03:00 IST — daily sender classification + merchant mapping).
 
@@ -53,15 +53,23 @@ Cron triggers (wrangler.jsonc): `*/10 * * * *` (email sync dispatch) and `30 21 
 | `categories` | Income/expense categories | `user_id` null = system category. Parent-child tree, RESTRICT delete. Exhaustive three-level system taxonomy: structural roots → parents (Food, Transport, Housing, Investments, …) → optional subcategories (Groceries, Food Delivery, Fuel, Rent, Crypto, …) incl. per-type generics Miscellaneous/Other Income/Other Transfer. A transaction or merchant stores one `category_id`: it may point directly to a parent such as Food (no subcategory selected) or to one of its children. The UI derives the displayed parent/subcategory from the tree. Roots are structural only — the engine never assigns them. Names are unique per type (the mapper enum + AI prompt rely on this). No per-user category is auto-created at signup anymore |
 | `user_credit_cards` | Card identity (first4 + last4 + label + issuer) | Links to `card` account (NOT NULL). POST `/credit-cards` may omit `account_id`: the sole unregistered same-last4 card account is adopted, else a backing account (name = card label, type card) is created automatically. The engine links transactions to cards by last4 (issuer tie-break); a DB trigger keeps `transactions.credit_card_id`/`account_id` consistent. Also carries `billing_cycle_day` (auto-derived from captured statement periods) and `pdf_password` (encrypted; statement-PDF fallback) |
 | `card_statements` | One row per card billing cycle (total due, min due, due date, period) | Harvested from statement emails by the normalizer (AI flags `statement` in its answer; fields resolved locally from masked tokens — see `lib/statements.ts`). Missing fields fall back to the statement PDF: attachment fetched from Gmail via the email's own connection, decrypted with the card's stored `pdf_password`, coordinate-label-matched in pure code (`lib/pdf-statement.ts` + `services/statement-pdf.service.ts`, unpdf) — the PDF is never persisted and never reaches any AI. Card match by last4 among active cards; ambiguous/missing → parked (`credit_card_id` null), linked at card registration via the relink path. `source='USER'` rows are never overwritten by email harvests. Statement emails never learn templates and are marked PROCESSED |
-| `global_merchants` | Canonical merchant name + type + default category | Types: MERCHANT/TRANSFER_INSTITUTION/AGGREGATOR/P2P. `source` is SEED/MANUAL/AI; `confirmed` and `dissent_count` implement probation for AI mappings. Unconfirmed mappings may name transactions and suggest a category, but their aliases cannot auto-verify. A human review that keeps the suggestion confirms it globally; a contradictory review increments dissent and demotes it. The daily mapper may assign `default_category_id` only for MERCHANT rows; seed/manual values are never overwritten |
+| `global_merchants` | Canonical merchant identity | Types: MERCHANT/TRANSFER_INSTITUTION/AGGREGATOR/P2P. `source` is SEED/MANUAL/AI; `confirmed` and `dissent_count` implement probation for AI mappings. Unconfirmed mappings may name transactions and suggest a category, but their aliases cannot auto-verify. A human review that keeps the suggestion confirms it globally; a contradictory review increments dissent and demotes it. The legacy `default_category_id` remains during the typed-default compatibility window |
+| `global_merchant_category_defaults` | Per-type global merchant categories | One system category per `(merchant_id, transaction_type)`. Existing legacy defaults are backfilled by their category's own type. The daily mapper writes expense defaults only for true MERCHANT rows |
 | `global_merchant_aliases` | Search key → merchant mapping | `search_key` is PK, canonical uppercase-alphanumeric format |
 | `merchant_mapping_attempts` | Merchant-mapper retry cooldown | One row per attempted unknown search key. Unresolved keys wait 10 days before another paid lookup instead of being retried every day |
 | `usage_counters` | Daily mapper observability | Per-day counters such as `tavily_searches`, `merchant_ai_calls`, `merchants_mapped`, and `merchants_skipped_unsure` |
-| `user_merchant_rules` | Per-user classification overrides | Unique per `(user_id, search_key)`. Written on review with `apply_rule`; consulted by both the template and AI paths |
+| `ai_usage_events` | Admin-only AI attempt ledger | One user-scoped, metadata-only row per provider attempt: logical call/attempt number, provider/model, outcome, tokens, provider-reported cost, latency, and generation id. Prompt and response content are never stored. RLS is enabled with no public policies |
+| `ai_call_runs` | User-scoped logical AI calls | Correlates all provider attempts for one email-normalization call, including batch size, first-try success, retry recovery, and final failure. RLS is enabled with no public policies |
+| `user_merchant_rules` | Per-user merchant identity overrides | Unique per `(user_id, search_key)`. Written on review with `apply_rule`; merchant identity is shared across money-flow types. The legacy `custom_category_id` remains during the compatibility window |
+| `user_merchant_rule_categories` | Per-type user category overrides | One category per `(user_merchant_rule_id, transaction_type)`, so the same recognized counterparty can remember separate income, expense, and transfer categories without overwriting another type |
 | `sender_rules` | **Exhaustive** sender allowlist | pattern + ALLOW/DENY + BANK/FINTECH/WALLET/OTHER + SEED/AI/USER. Seeded by migration; grown by daily AI job. **No inline fallback in code** — a load failure retries the sync |
-| `raw_emails` | Gmail email metadata + (gated) text | Unique per `(user_id, source_id)`. Has `from_address` + `subject`. Status: PENDING_EXTRACTION/PROCESSED/IGNORED/UNRECOGNIZED/FAILED. Sender-gated rows are metadata-only (`clean_text=''`, IGNORED) |
+| `raw_emails` | Gmail email metadata + (gated) text | Unique per `(user_id, source_id)`. Has `from_address` + `subject`. Status: PENDING_EXTRACTION/PROCESSED/IGNORED/UNRECOGNIZED/FAILED. Completed extraction records its TEMPLATE/AI route, logical AI call id, and completion time for the private processing dashboard. Sender-gated rows are metadata-only (`clean_text=''`, IGNORED) |
 | `financial_events` | **Immutable** transaction facts | Linked to raw_email. Status: ACTIVE/REVERSED |
-| `transactions` | **Mutable** user-facing projection | Linked 1:1 to financial_event. Status: VERIFIED/NEEDS_REVIEW |
+| `transactions` | **Mutable** user-facing projection | Linked 1:1 to financial_event. Status: VERIFIED/NEEDS_REVIEW. `budget_treatment` is AUTO/INCLUDE/EXCLUDE; `user_deleted_at` hides the projection without deleting its immutable financial event |
+| `monthly_budgets` | Monthly flexible-spending limits | A month without its own row inherits the latest earlier limit |
+| `user_category_budget_rules` | User budget defaults by category | INCLUDE/EXCLUDE; transaction and recurring overrides take precedence |
+| `recurring_series` | User-confirmed weekly/monthly patterns | Suggested only after at least three consistent charges; ACTIVE/PAUSED controls whether its treatment applies |
+| `transaction_relationships` | Refund/reimbursement links | One incoming credit can link to one expense; an expense can have multiple partial credits, capped at the purchase amount |
 
 **Key rule:** `transactions` is the canonical entity name. The term "expenses" is deprecated.
 
@@ -101,9 +109,30 @@ All routes under `/api/*`, authenticated via Clerk JWT (`Authorization: Bearer <
 |--------|-------|---------|
 | GET | `/transactions` | List with filters (date range, type, status, account, category) |
 | POST | `/transactions` | Create manual transaction |
-| PATCH | `/transactions/:id` | Update transaction |
+| PATCH | `/transactions/:id` | Update transaction, including `budget_treatment` |
 | POST | `/transactions/:id/review` | Review + classify. `apply_rule: true` writes a `user_merchant_rules` row used by both the template and AI paths |
-| DELETE | `/transactions/:id` | Soft delete (status change) |
+| DELETE | `/transactions/:id` | Hide the mutable projection with `user_deleted_at` (immutable financial event retained) |
+| POST | `/transactions/:id/restore` | Restore a user-hidden transaction |
+
+### Monthly Budget
+| Method | Route | Purpose |
+|--------|-------|---------|
+| GET | `/budget?month=YYYY-MM` | Month limit, counted spending, linked adjustments, remaining amount, category totals, and suggestions |
+| PUT | `/budget/months/:month/plan` | Atomically save the month limit and the fixed-cost category choices shown during setup |
+| PUT | `/budget/months/:month` | Set the month limit; later months inherit it until explicitly changed |
+| PUT / DELETE | `/budget/category-rules/:categoryId` | Set or remove a category-level INCLUDE/EXCLUDE default |
+| POST | `/budget/relationships` | Link an incoming credit to an earlier expense as REFUND or REIMBURSEMENT |
+| GET | `/budget/relationship-targets/:sourceTransactionId` | Eligible expenses from the preceding 120 days |
+| DELETE | `/budget/relationships/:relationshipId` | Unlink a refund/reimbursement |
+| POST | `/budget/suggestions/dismiss` | Dismiss a refund or recurring-pattern suggestion |
+| POST | `/budget/recurring-series` | Confirm a server-revalidated recurring suggestion |
+| PATCH | `/budget/recurring-series/:seriesId` | Change treatment or pause/resume a recurring rule |
+
+### AI Usage (configured admin only; non-admins receive 404)
+| Method | Route | Purpose |
+|--------|-------|---------|
+| GET | `/ai-usage/summary` | OpenRouter purchased/remaining credits, key month usage, account all-time usage, and locally tracked request totals |
+| GET | `/ai-usage?month=YYYY-MM&page=N` | User-scoped monthly spend/model totals, email/template/transaction funnel, logical-call retry health, recent attempt timelines, and paginated token/cost receipts |
 
 ### Frontend transaction cache
 
@@ -262,11 +291,11 @@ Pending emails are grouped per user and sent up to `AI_NORMALIZER_BATCH_SIZE` (d
 
 ### Tier fallback
 
-`AI_NORMALIZER_TIERS` (default `deepseek-v4-flash,deepseek-v4-pro,qwen3.7-plus`). HTTP 429 triggers **immediate** tier cooldown + rotation (`RateLimitedModelError`); other failures rotate after `AI_NORMALIZER_TIER_ROTATE_FAILURES`. Max `AI_NORMALIZER_MAX_RETRIES` total attempts — defaulting to rotate × tier-count (9) so the whole chain is exercised before giving up.
+`AI_NORMALIZER_TIERS` is provider-specific (see the configuration table below). HTTP 402 (insufficient credits) and 429 trigger **immediate** tier cooldown + rotation; other transient failures use the configured per-tier attempt schedule. `AI_NORMALIZER_MAX_RETRIES` caps total attempts and defaults to the schedule total (2+2+1 = 5).
 
 ### Identity graph (`lib/identity.ts`, shared by template + AI paths and review)
 
-Search keys are canonical uppercase-alphanumeric (`toSearchKey`), identical across the template path, the AI path, and the review service — so `user_merchant_rules` and `global_merchant_aliases` written anywhere resolve everywhere. Category precedence: user rule > AI's per-email pick (validated against the user's + system category IDs; a hallucinated/missing pick resolves to null — never masqueraded as Miscellaneous) > global-alias default > system per-type generic (Miscellaneous / Other Income / Other Transfer — never a bare root). A selected category may be a parent or a child; selecting Food directly intentionally means "Food, with no subcategory." The AI prompt offers the system taxonomy as parents with their subcategories alongside the user's own (roots excluded), so fresh users with no custom categories can classify at either level.
+Search keys are canonical uppercase-alphanumeric (`toSearchKey`), identical across the template path, the AI path, and the review service — so `user_merchant_rules` and `global_merchant_aliases` written anywhere resolve everywhere. Merchant identity is direction-independent, while remembered categories are keyed by transaction type in `user_merchant_rule_categories` and `global_merchant_category_defaults`. Category precedence within the resolved transaction type is: typed user rule > AI's per-email pick (validated against the user's + system category IDs **and required to match the transaction type**; a hallucinated, missing, or cross-type pick resolves to null) > typed global-alias default > system per-type generic (Miscellaneous / Other Income / Other Transfer — never a bare root). A selected category may be a parent or a child; selecting Food directly intentionally means "Food, with no subcategory." The AI prompt offers the system taxonomy as parents with their subcategories alongside the user's own (roots excluded), so fresh users with no custom categories can classify at either level.
 
 ### Instrument linking (`resolveInstrumentLink` in `lib/identity.ts`)
 
@@ -293,11 +322,11 @@ user's registered instruments, locally, with nothing sent to the model:
 
 ### Auto-verify: identity-based, NOT confidence-based
 
-A transaction auto-verifies only when BOTH hold: an identity signal (a `user_merchant_rules` hit or a **confirmed, non-AGGREGATOR** `global_merchant_aliases` hit) AND a genuinely resolved category — from the rule, a real AI pick, or the alias default. A fresh AI merchant mapping is on probation (`confirmed=false`): it can supply the display name and suggested category, but its alias is not an identity signal until a human accepts it. **The system fallback never verifies**: a known merchant without a real category stays NEEDS_REVIEW so the user still gets to categorize it. **An AGGREGATOR alias is never an identity signal** — recognizing Razorpay says nothing about the real merchant behind it; only the user's own rule can verify such transactions. An AI pick equal to the per-type generic counts as fallback, not as a pick. A category the user has **hidden** resolves as null for them no matter who proposed it (rule, AI, or alias default) — a deleted category never lands on their transactions; the chain falls through to the fallback and the transaction reaches review. **Amounts over ₹10,00,000 always face review** — the threshold is a review trigger, never a validity cap: large amounts are persisted and forced NEEDS_REVIEW (even on a rule hit), and a big amount is not a template defect (it no longer strikes/disables templates). Model self-reported confidence is stored (`ai_confidence_score`) for review-inbox triage ordering only. `TRANSFER_INSTITUTION` alias hits flip the type to `transfer`.
+A transaction auto-verifies only when BOTH hold: an identity signal (a `user_merchant_rules` hit or a **confirmed, non-AGGREGATOR/non-TRANSFER_INSTITUTION** `global_merchant_aliases` hit) AND a genuinely resolved category — from the rule, a real AI pick, or the alias default. A fresh AI merchant mapping is on probation (`confirmed=false`): it can supply the display name and suggested category, but its alias is not an identity signal until a human accepts it. **The system fallback never verifies**: a known merchant without a real category stays NEEDS_REVIEW so the user still gets to categorize it. **AGGREGATOR and TRANSFER_INSTITUTION aliases are not identity proof** — recognizing Razorpay says nothing about the real merchant, and recognizing a bank/CRED does not prove the movement is between the user's own accounts; only the user's rule can verify an ordinary income/expense. An AI pick equal to the per-type generic counts as fallback, not as a pick. A category the user has **hidden** resolves as null for them no matter who proposed it (rule, AI, or alias default) — a deleted category never lands on their transactions; the chain falls through to the fallback and the transaction reaches review. **Amounts over ₹10,00,000 always face review** — the threshold is a review trigger, never a validity cap: large amounts are persisted and forced NEEDS_REVIEW (even on a rule hit), and a big amount is not a template defect (it no longer strikes/disables templates). Model self-reported confidence is stored (`ai_confidence_score`) for review-inbox triage ordering only. Only an explicit transfer-typed category suggestion can propose `transfer`, and every proposed transfer stays NEEDS_REVIEW for the user.
 
 ### Cross-email dedup (`lib/txn-dedup.ts`)
 
-One payment often produces two alerts (bank + payment app). At persist time (template and AI hits alike): if another raw email already produced an ACTIVE event with the same user + amount + direction within ±`TXN_DEDUP_WINDOW_MINUTES` (default 10), the new transaction is forced to NEEDS_REVIEW — even a user-rule hit doesn't override it.
+One payment often produces two alerts (bank + payment app). At persist time (template and AI hits alike), ordinary same-user + amount + direction matches inside ±`TXN_DEDUP_WINDOW_MINUTES` (default 10) force the newer transaction to NEEDS_REVIEW. For transfer suggestions only, the narrower bank-alert/payment-receipt shape is combined when exactly one side has an account: the account-linked row wins and the weaker receipt projection is skipped/deleted while its raw email and REVERSED financial event remain for audit. Matching account-linked rows are never combined. A per-user/amount/direction transaction lock makes concurrent arrivals deterministic.
 
 ---
 
@@ -347,7 +376,9 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 | `OPENCODE_GO_API_KEY` | — | Key for the `opencode` provider; missing key = AI leg skipped with error log (templates still resolve) |
 | `OPENCODE_GO_MODEL` | `deepseek-v4-flash` | Daily jobs model on `opencode` (sender classifier + merchant mapper) |
 | `OPENROUTER_API_KEY` | — | Key for the `openrouter` provider |
-| `OPENROUTER_MODEL` | `nvidia/llama-3.1-nemotron-70b-instruct:free` | Daily jobs model on `openrouter`. Free-roster ids churn — verify at openrouter.ai/models |
+| `OPENROUTER_MANAGEMENT_API_KEY` | — | Optional management key used only to read total credits purchased/remaining; never used for inference |
+| `OPENROUTER_MODEL` | `deepseek/deepseek-v4-flash` | Daily jobs model on `openrouter` |
+| `AI_USAGE_ADMIN_USER_ID` | configured in `wrangler.jsonc` | Internal app user UUID allowed to read the private AI usage dashboard; every other authenticated user receives 404 |
 
 ### Sender gate & sync
 | Variable | Default | Purpose |
@@ -360,7 +391,7 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `EMAIL_TEMPLATES` | on | `off` disables template matching + learning (debug/rollback only — everything goes to AI) |
-| `AI_NORMALIZER_TIERS` | per provider: `deepseek-v4-flash,deepseek-v4-pro,qwen3.7-plus` (opencode) / `deepseek/deepseek-r1:free,nvidia/llama-3.1-nemotron-70b-instruct:free,meta-llama/llama-3.3-70b-instruct:free` (openrouter) | Comma-separated model chain; overrides for whichever provider is active |
+| `AI_NORMALIZER_TIERS` | per provider: `deepseek-v4-flash,deepseek-v4-pro,qwen3.7-plus` (opencode) / `deepseek/deepseek-v4-flash,nvidia/nemotron-3-ultra-550b-a55b:free,openai/gpt-oss-120b:free` (openrouter) | Comma-separated model chain; overrides for whichever provider is active. A 402 immediately advances to the next tier |
 | `AI_NORMALIZER_TIER_ATTEMPTS` | `2,2,1` | Per-tier attempt schedule before rotating (padded/truncated to the chain length). Legacy `AI_NORMALIZER_TIER_ROTATE_FAILURES` still works as a uniform per-tier value when this is unset |
 | `AI_NORMALIZER_TIER_COOLDOWN_MS` | `300000` | Cooldown on drained tier (5 min) |
 | `AI_NORMALIZER_MAX_RETRIES` | schedule sum (5) | Total retries across all tiers; the default spends the whole schedule once so the last tier is always reachable |
@@ -413,6 +444,8 @@ cd backend && npm run typecheck
 | `backend/src/workers/queue.worker.ts` | Queue message router + batch metrics |
 | `backend/src/workers/queue.messages.ts` | Job validation + builders |
 | `backend/src/workers/queue.errors.ts` | Poison/Transient error types |
+| `backend/src/services/ai-usage.service.ts` | Best-effort user-scoped attempt/call accounting, OpenRouter key totals, processing health, monthly/model aggregation, and event pagination |
+| `backend/src/routes/ai-usage.ts` | Admin-only AI operations summary and detailed dashboard endpoints |
 
 ### Backend Infrastructure
 | File | Purpose |
@@ -435,6 +468,8 @@ cd backend && npm run typecheck
 |------|---------|
 | `frontend/src/hooks/useTransactions.ts` | Paged transaction feed, optimistic edit/review cache patches, server-response reconciliation, rollback, and background analytics/feed invalidation |
 | `frontend/src/components/screens/TransactionsLedger.tsx` | Daily/monthly ledger presentation; merchant primary label, account/category/note secondary metadata, review tag, category-specific icons |
+| `frontend/src/hooks/useAiUsage.ts` | Admin discovery plus cached operations-summary and monthly-dashboard queries |
+| `frontend/src/components/screens/AiUsageDashboard.tsx` | Spend/Processing views with monthly funnel, retry recovery, model totals, and expandable attempt receipts |
 
 ### Database Migrations (apply in order; the seed is load-bearing)
 | File | Purpose |
@@ -455,6 +490,10 @@ cd backend && npm run typecheck
 | `20260719120000_card_statements.sql` | Card billing-cycle metadata plus idempotent email/user statement storage; unmatched last4 rows park until card registration |
 | `20260719150000_merchant_provenance.sql` | Adds SEED/MANUAL/AI provenance, confirmation probation, and dissent tracking to global merchants. Its final blanket update is a **one-time historical backfill; never rerun after AI mappings exist** |
 | `20260720090000_mapper_usage_and_cooldown.sql` | Adds daily mapper usage counters and per-search-key retry cooldown state |
+| `20260802090000_typed_merchant_category_defaults.sql` | Separates merchant identity from per-type user/global category defaults and backfills legacy defaults using each category's existing type |
+| `20260804120000_ai_usage_events.sql` | Adds the metadata-only, backend-readable AI request/cost ledger used by the admin dashboard |
+| `20260804150000_budget_planner.sql` | Adds monthly limits, transaction/category/recurring treatments, refund relationships, suggestions, and recoverable transaction hiding |
+| `20260804170000_ai_processing_operations.sql` | Adds user-scoped logical AI calls, numbered attempt correlation, and raw-email processing route/timestamps for the private operations dashboard |
 
 ---
 
@@ -482,7 +521,7 @@ cd backend && npm run typecheck
 
 ---
 
-## 13. Change Log (July 4–24, 2026)
+## 13. Change Log (July 4–August 4, 2026)
 
 1. **Correctness:** hybrid engine no-op fixed (deferred terminal statuses); 429 → immediate tier rotation; AI category IDs validated against the user's real categories.
 2. **Privacy/cost:** sender gate with metadata-first two-phase fetch (personal bodies never downloaded); `sender_rules` DB-exhaustive allowlist; content logging removed; `<N#>` placeholder masking (no digits reach the provider); masked-mode batching (default 4 emails/call).
@@ -502,6 +541,8 @@ cd backend && npm run typecheck
 16. **Merchant probation and mapper controls (July 19–20):** global merchants gained provenance, confirmation, and dissent. Fresh AI aliases may name/categorize but cannot auto-verify until human confirmation. Unknown-key retries now cool down for 10 days and daily usage counters expose mapper/search activity.
 17. **Ledger hierarchy and data curation (July 20–24):** the ledger now separates merchant, payment account/card, category, review tag, amount, and note; daily groups and collapsible month navigation remove the prior spacing/navigation problems; category icons are selected from category/subcategory semantics. Live curation removed Restaurants in favor of Food, left District uncategorized, and mapped CTRLX aliases/48 linked transactions to Ownly with direct parent Food.
 18. **Optimistic transaction editing (July 24, commit `7748a5d`):** ordinary edits and reviews patch the affected cached row immediately, reconcile it with the backend response, roll back on failure, and refresh analytics in the background. The old full-feed blocking refetch was removed from this path. User notes render as secondary ledger metadata while the merchant stays primary.
+19. **Direction-aware categorization (August 2):** merchant identity stays shared, while user and global category defaults are stored independently for income, expense, and transfer. Every lookup validates the selected category against its transaction type.
+20. **User-controlled transfers (August 4):** bank/CRED identity no longer forces transfer; only an explicit transfer-category suggestion can propose it, every suggestion requires review, edit/review honor debit=Expense/Transfer and credit=Income/Transfer, and database/API guards reject direction/category mismatches. Narrow account-linked transfer dedup combines future bank-alert/payment-receipt pairs without rewriting history.
 
 ---
 
