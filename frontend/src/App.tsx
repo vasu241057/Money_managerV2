@@ -12,6 +12,8 @@ import { BudgetScreen } from './components/screens/BudgetScreen';
 import { SettingsHub } from './components/screens/SettingsHub';
 import { AccountsCardsManager } from './components/screens/AccountsCardsManager';
 import { AiUsageDashboard } from './components/screens/AiUsageDashboard';
+import { CategorySettings } from './components/screens/CategorySettings';
+import { GmailConnectionSettings } from './components/screens/GmailConnectionSettings';
 import { parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
 import { ensureLegacyLocalDataMigrated } from './lib/legacy-local-migration';
 import { queryClient } from './lib/query-client';
@@ -23,7 +25,7 @@ import type { Transaction } from './hooks/useTransactions';
 import './styles/app.css';
 
 type Overlay = 'editor' | 'review' | null;
-type SettingsSubscreen = 'main' | 'accounts' | 'ai-usage';
+type SettingsSubscreen = 'main' | 'accounts' | 'categories' | 'connection' | 'ai-usage';
 type ReviewScope = 'recent' | 'all';
 
 // Every screen and overlay owns a URL so a refresh (or back/forward) lands
@@ -51,6 +53,12 @@ function parseRoute(pathname: string): RouteState {
 	if (pathname === '/settings/accounts') {
 		return { ...base, screen: 'settings', settingsSubscreen: 'accounts' };
 	}
+	if (pathname === '/settings/categories') {
+		return { ...base, screen: 'settings', settingsSubscreen: 'categories' };
+	}
+	if (pathname === '/settings/connection') {
+		return { ...base, screen: 'settings', settingsSubscreen: 'connection' };
+	}
 	if (pathname === '/settings/ai-usage') {
 		return { ...base, screen: 'settings', settingsSubscreen: 'ai-usage' };
 	}
@@ -70,6 +78,8 @@ function pathForScreen(screen: ScreenId, settingsSubscreen: SettingsSubscreen): 
 	if (screen === 'analytics') return '/analytics';
 	if (screen === 'settings') {
 		if (settingsSubscreen === 'accounts') return '/settings/accounts';
+		if (settingsSubscreen === 'categories') return '/settings/categories';
+		if (settingsSubscreen === 'connection') return '/settings/connection';
 		if (settingsSubscreen === 'ai-usage') return '/settings/ai-usage';
 		return '/settings';
 	}
@@ -252,12 +262,20 @@ function LedgerApp() {
 				<SettingsHub
 					onOpenAccounts={() => navigateToScreen('settings', 'accounts')}
 					onOpenBudget={() => navigateToScreen('budget')}
+					onOpenCategories={() => navigateToScreen('settings', 'categories')}
+					onOpenConnection={() => navigateToScreen('settings', 'connection')}
 					onOpenAiUsage={() => navigateToScreen('settings', 'ai-usage')}
 					onSignOut={() => navigateToScreen('home')}
 				/>
 			)}
 			{activeScreen === 'settings' && settingsSubscreen === 'accounts' && (
 				<AccountsCardsManager onBack={() => navigateToScreen('settings', 'main')} />
+			)}
+			{activeScreen === 'settings' && settingsSubscreen === 'categories' && (
+				<CategorySettings onBack={() => navigateToScreen('settings', 'main')} />
+			)}
+			{activeScreen === 'settings' && settingsSubscreen === 'connection' && (
+				<GmailConnectionSettings onBack={() => navigateToScreen('settings', 'main')} />
 			)}
 			{activeScreen === 'settings' && settingsSubscreen === 'ai-usage' && (
 				<AiUsageDashboard onBack={() => navigateToScreen('settings', 'main')} />
