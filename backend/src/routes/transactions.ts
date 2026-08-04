@@ -8,13 +8,14 @@ import { asyncHandler } from '../lib/http/async';
 import { parseUuid } from '../lib/http/validation';
 import {
 	createManualTransaction,
-	deleteManualTransaction,
+	deleteTransaction,
 	listTransactions,
 	parseCreateManualTransactionRequest,
 	parseListTransactionsQuery,
 	parseReviewTransactionRequest,
 	parseUpdateTransactionRequest,
 	reviewTransaction,
+	restoreTransaction,
 	updateTransaction,
 } from '../services/transactions.service';
 
@@ -83,7 +84,19 @@ export function createTransactionsRouter(): Router {
 			const config = getAppConfig(runtimeEnv);
 			const sql = getSqlClient(config);
 
-			await deleteManualTransaction(sql, userId, transactionId);
+			await deleteTransaction(sql, userId, transactionId);
+			res.status(204).send();
+		}),
+	);
+
+	router.post(
+		'/:transactionId/restore',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			const transactionId = parseUuid(req.params.transactionId, 'transactionId');
+			const config = getAppConfig(runtimeEnv);
+			const sql = getSqlClient(config);
+			await restoreTransaction(sql, userId, transactionId);
 			res.status(204).send();
 		}),
 	);

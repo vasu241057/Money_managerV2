@@ -30,7 +30,8 @@ interface MonthCategoryRowRaw {
 interface MonthAccountRowRaw {
 	month: unknown;
 	account_id: unknown;
-	amount: unknown;
+	expense: unknown;
+	credit: unknown;
 	cnt: unknown;
 }
 
@@ -70,6 +71,7 @@ export async function getAnalyticsSummary(
 				count(*)::int as cnt
 			from public.transactions as t
 			where t.user_id = ${userId}
+				and t.user_deleted_at is null
 			group by 1, 2
 		`,
 		sql<MonthCategoryRowRaw[]>`
@@ -82,6 +84,7 @@ export async function getAnalyticsSummary(
 			from public.transactions as t
 			left join public.categories as c on c.id = t.category_id
 			where t.user_id = ${userId}
+				and t.user_deleted_at is null
 				and t.type = 'expense'
 			group by 1, t.category_id, c.name
 		`,
@@ -89,11 +92,27 @@ export async function getAnalyticsSummary(
 			select
 				to_char(t.txn_date at time zone ${SUMMARY_TIME_ZONE}, 'YYYY-MM') as month,
 				t.account_id,
-				sum(t.amount_in_paise)::bigint as amount,
+				coalesce(
+					sum(t.amount_in_paise) filter (where t.type = 'expense'),
+					0
+				)::bigint as expense,
+				coalesce(
+					sum(t.amount_in_paise) filter (
+						where t.type = 'income' and a.type = 'card'
+					),
+					0
+				)::bigint as credit,
 				count(*)::int as cnt
 			from public.transactions as t
+			left join public.accounts as a
+				on a.id = t.account_id
+				and a.user_id = t.user_id
 			where t.user_id = ${userId}
-				and t.type = 'expense'
+				and t.user_deleted_at is null
+				and (
+					t.type = 'expense'
+					or (t.type = 'income' and a.type = 'card')
+				)
 			group by 1, t.account_id
 		`,
 		sql<AccountAllTimeRowRaw[]>`
@@ -103,6 +122,7 @@ export async function getAnalyticsSummary(
 				coalesce(sum(t.amount_in_paise) filter (where t.type = 'expense'), 0)::bigint as expense
 			from public.transactions as t
 			where t.user_id = ${userId}
+				and t.user_deleted_at is null
 				and t.account_id is not null
 			group by t.account_id
 		`,
@@ -115,6 +135,7 @@ export async function getAnalyticsSummary(
 				)::int as last_3_days
 			from public.transactions as t
 			where t.user_id = ${userId}
+				and t.user_deleted_at is null
 				and t.status = 'NEEDS_REVIEW'
 		`,
 	]);
@@ -160,9 +181,13 @@ export async function getAnalyticsSummary(
 
 	for (const row of accountRows) {
 		const month = monthFor(toRequiredString(row.month, 'summary.month'));
+		const expense = toSafeInteger(row.expense, 'summary.expense');
+		const credit = toSafeInteger(row.credit, 'summary.credit');
 		const slice: MonthlyAccountSlice = {
 			account_id: toNullableString(row.account_id, 'summary.account_id'),
-			amount_in_paise: toSafeInteger(row.amount, 'summary.amount'),
+			expense_in_paise: expense,
+			credit_in_paise: credit,
+			net_spend_in_paise: expense - credit,
 			txn_count: toSafeInteger(row.cnt, 'summary.cnt'),
 		};
 		month.expense_by_account.push(slice);
@@ -185,7 +210,7 @@ export async function getAnalyticsSummary(
 	);
 	for (const month of months) {
 		month.expense_by_category.sort((a, b) => b.amount_in_paise - a.amount_in_paise);
-		month.expense_by_account.sort((a, b) => b.amount_in_paise - a.amount_in_paise);
+		month.expense_by_account.sort((a, b) => b.net_spend_in_paise - a.net_spend_in_paise);
 	}
 
 	return {

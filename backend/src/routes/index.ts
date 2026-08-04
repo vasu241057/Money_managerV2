@@ -2,7 +2,9 @@ import { Router } from 'express';
 
 import { requireAuthenticatedUser } from '../lib/auth';
 import { createAccountsRouter } from './accounts';
+import { createAiUsageRouter } from './ai-usage';
 import { createAnalyticsRouter } from './analytics';
+import { createBudgetRouter } from './budget';
 import { createCardStatementsRouter } from './card-statements';
 import { createCategoriesRouter } from './categories';
 import { createCreditCardsRouter } from './credit-cards';
@@ -22,7 +24,9 @@ export function createRoutes(): Router {
 	router.use('/internal/requeue', createInternalRequeueRouter());
 	router.use('/internal', createInternalOpsRouter());
 	router.use('/accounts', requireAuthenticatedUser, createAccountsRouter());
+	router.use('/ai-usage', requireAuthenticatedUser, createAiUsageRouter());
 	router.use('/analytics', requireAuthenticatedUser, createAnalyticsRouter());
+	router.use('/budget', requireAuthenticatedUser, createBudgetRouter());
 	router.use('/categories', requireAuthenticatedUser, createCategoriesRouter());
 	router.use('/credit-cards', requireAuthenticatedUser, createCreditCardsRouter());
 	router.use('/card-statements', requireAuthenticatedUser, createCardStatementsRouter());

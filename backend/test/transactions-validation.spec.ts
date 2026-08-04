@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	isTransactionTypeAllowedForDirection,
 	parseCreateManualTransactionRequest,
 	parseListTransactionsQuery,
 	parseReviewTransactionRequest,
 	parseUpdateTransactionRequest,
 	prepareTransactionRelationUpdate,
+	resolveManualTransactionDirection,
 } from '../src/services/transactions.service';
 
 describe('transactions payload/query validation', () => {
@@ -26,6 +28,28 @@ describe('transactions payload/query validation', () => {
 				txn_date: new Date().toISOString(),
 			}),
 		).toThrow('amount_in_paise must be a positive integer');
+	});
+
+	it('parses an explicit budget treatment for manual fact recreation', () => {
+		expect(parseCreateManualTransactionRequest({
+			amount_in_paise: 100,
+			type: 'expense',
+			txn_date: '2026-08-04T10:00:00.000Z',
+			budget_treatment: 'EXCLUDE',
+		})).toMatchObject({ budget_treatment: 'EXCLUDE' });
+	});
+
+	it('enforces the immutable direction/type matrix', () => {
+		expect(isTransactionTypeAllowedForDirection('expense', 'debit')).toBe(true);
+		expect(isTransactionTypeAllowedForDirection('transfer', 'debit')).toBe(true);
+		expect(isTransactionTypeAllowedForDirection('income', 'debit')).toBe(false);
+		expect(isTransactionTypeAllowedForDirection('income', 'credit')).toBe(true);
+		expect(isTransactionTypeAllowedForDirection('transfer', 'credit')).toBe(true);
+		expect(isTransactionTypeAllowedForDirection('expense', 'credit')).toBe(false);
+		expect(resolveManualTransactionDirection('transfer', 'credit')).toBe('credit');
+		expect(() => resolveManualTransactionDirection('expense', 'credit')).toThrow(
+			'credit transactions may only be income or transfer',
+		);
 	});
 
 	it('rejects update payload when empty', () => {
@@ -53,6 +77,7 @@ describe('transactions payload/query validation', () => {
 	it('parses review payload fields', () => {
 		expect(
 			parseReviewTransactionRequest({
+				type: 'transfer',
 				category_id: '00000000-0000-4000-8000-000000000101',
 				merchant_id: null,
 				user_note: 'looks correct',
@@ -60,6 +85,7 @@ describe('transactions payload/query validation', () => {
 				rule_search_key: 'zomato',
 			}),
 		).toEqual({
+			type: 'transfer',
 			category_id: '00000000-0000-4000-8000-000000000101',
 			merchant_id: null,
 			user_note: 'looks correct',

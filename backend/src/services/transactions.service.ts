@@ -1,8 +1,10 @@
 import type {
 	AccountRow,
+	BudgetTreatment,
 	CategoryRow,
 	ClassificationSource,
 	CreateManualTransactionRequest,
+	EventDirection,
 	FinancialEventRow,
 	GlobalMerchantRow,
 	PaginatedResponse,
@@ -11,10 +13,12 @@ import type {
 	ReviewTransactionRequest,
 	ReviewTransactionResponse,
 	TransactionFeedItem,
+	TransactionBudgetRelationship,
 	TransactionRow,
 	TransactionStatus,
 	UpdateTransactionRequest,
 } from '../../../shared/types';
+import { calculateBudget, type BudgetCalculationTransaction } from './budget-calculator';
 import type { SqlClient } from '../lib/db/client';
 import {
 	toIsoDateTime,
@@ -50,6 +54,7 @@ const PAYMENT_METHODS = new Set([
 	'cash',
 	'unknown',
 ] as const);
+const BUDGET_TREATMENTS = new Set(['AUTO', 'INCLUDE', 'EXCLUDE'] as const);
 const SEARCH_KEY_MAX_LENGTH = 120;
 
 interface TransactionFeedRowRaw {
@@ -67,6 +72,9 @@ interface TransactionFeedRowRaw {
 	transaction_status: unknown;
 	transaction_classification_source: unknown;
 	transaction_ai_confidence_score: unknown;
+	transaction_budget_treatment: unknown;
+	transaction_recurring_series_id: unknown;
+	transaction_user_deleted_at: unknown;
 	transaction_created_at: unknown;
 	transaction_updated_at: unknown;
 
@@ -109,6 +117,28 @@ interface TransactionFeedRowRaw {
 	raw_email_source_id: unknown;
 	raw_email_internal_date: unknown;
 	raw_email_status: unknown;
+
+	category_budget_treatment: unknown;
+	recurring_budget_treatment: unknown;
+	recurring_status: unknown;
+
+	budget_relationship_id: unknown;
+	budget_relationship_kind: unknown;
+	budget_relationship_role: unknown;
+	budget_related_transaction_id: unknown;
+	budget_related_amount_in_paise: unknown;
+	budget_related_calculation_amount_in_paise: unknown;
+	budget_related_txn_date: unknown;
+	budget_related_label: unknown;
+	budget_relationship_created_by: unknown;
+	budget_relationship_confidence: unknown;
+	budget_relationship_related_count: unknown;
+	budget_related_type: unknown;
+	budget_related_direction: unknown;
+	budget_related_treatment: unknown;
+	budget_related_category_treatment: unknown;
+	budget_related_recurring_treatment: unknown;
+	budget_related_recurring_status: unknown;
 }
 
 interface TransactionStatusRow {
@@ -123,10 +153,19 @@ interface ReviewContextRow {
 	transaction_status: TransactionStatus;
 	transaction_category_id: string | null;
 	transaction_merchant_id: string | null;
+	transaction_type: TransactionRow['type'];
+	financial_event_direction: EventDirection;
+	budget_relationship_as_source: unknown;
+	budget_relationship_as_target: unknown;
 	financial_event_search_key: string | null;
 }
 
 interface TransactionUpdateStateRow extends TransactionStatusRow {
+	transaction_category_id: string | null;
+	transaction_type: TransactionRow['type'];
+	financial_event_direction: EventDirection;
+	budget_relationship_as_source: unknown;
+	budget_relationship_as_target: unknown;
 	transaction_account_id: string | null;
 	transaction_credit_card_id: string | null;
 	current_credit_card_account_id: string | null;
@@ -163,6 +202,92 @@ function parseTransactionType(value: unknown, fieldName: string): TransactionRow
 	return value as TransactionRow['type'];
 }
 
+function parseEventDirection(value: unknown, fieldName: string): EventDirection {
+	if (value !== 'debit' && value !== 'credit') {
+		throw badRequest('INVALID_PAYLOAD', `${fieldName} must be debit or credit`);
+	}
+
+	return value;
+}
+
+export function isTransactionTypeAllowedForDirection(
+	type: TransactionRow['type'],
+	direction: EventDirection,
+): boolean {
+	return type === 'transfer' || (direction === 'debit' ? type === 'expense' : type === 'income');
+}
+
+function assertTransactionTypeMatchesDirection(
+	type: TransactionRow['type'],
+	direction: EventDirection,
+): void {
+	if (!isTransactionTypeAllowedForDirection(type, direction)) {
+		throw badRequest(
+			'TRANSACTION_TYPE_DIRECTION_MISMATCH',
+			`${direction} transactions may only be ${direction === 'debit' ? 'expense or transfer' : 'income or transfer'}`,
+		);
+	}
+}
+
+function assertTransactionTypeMatchesBudgetRelationship(
+	type: TransactionRow['type'],
+	relationshipAsSource: unknown,
+	relationshipAsTarget: unknown,
+): void {
+	if (relationshipAsSource === true && type !== 'income') {
+		throw badRequest(
+			'TRANSACTION_RELATIONSHIP_TYPE_MISMATCH',
+			'Unlink the refund or reimbursement before changing this incoming credit type',
+		);
+	}
+	if (relationshipAsTarget === true && type !== 'expense') {
+		throw badRequest(
+			'TRANSACTION_RELATIONSHIP_TYPE_MISMATCH',
+			'Unlink its refunds or reimbursements before changing this expense type',
+		);
+	}
+}
+
+export function resolveManualTransactionDirection(
+	type: TransactionRow['type'],
+	direction?: EventDirection,
+): EventDirection {
+	const resolved = direction ?? (type === 'income' ? 'credit' : 'debit');
+	assertTransactionTypeMatchesDirection(type, resolved);
+	return resolved;
+}
+
+async function assertCategoryMatchesTransactionType(
+	sql: SqlClient,
+	userId: string,
+	categoryId: string | null,
+	type: TransactionRow['type'],
+): Promise<void> {
+	if (!categoryId) return;
+
+	const rows = await sql<Array<{ type: unknown }>>`
+		select c.type
+		from public.categories as c
+		where c.id = ${categoryId}
+			and (c.user_id = ${userId} or (c.user_id is null and c.is_system = true))
+		limit 1
+	`;
+	if (rows.length === 0) {
+		throw badRequest(
+			'CATEGORY_NOT_AVAILABLE',
+			'category_id must reference an available system or user category',
+		);
+	}
+
+	const categoryType = toRequiredString(rows[0]?.type, 'categories.type');
+	if (categoryType !== type) {
+		throw badRequest(
+			'TRANSACTION_CATEGORY_TYPE_MISMATCH',
+			`A ${type} transaction requires a ${type} category`,
+		);
+	}
+}
+
 function parsePaymentMethod(value: unknown, fieldName: string): PaymentMethod {
 	if (typeof value !== 'string' || !PAYMENT_METHODS.has(value as PaymentMethod)) {
 		throw badRequest(
@@ -180,6 +305,14 @@ function parseTransactionStatus(value: unknown, fieldName: string): TransactionS
 	}
 
 	return value as TransactionStatus;
+}
+
+function parseBudgetTreatment(value: unknown, fieldName: string): BudgetTreatment {
+	if (typeof value !== 'string' || !BUDGET_TREATMENTS.has(value as BudgetTreatment)) {
+		throw badRequest('INVALID_PAYLOAD', `${fieldName} must be AUTO, INCLUDE, or EXCLUDE`);
+	}
+
+	return value as BudgetTreatment;
 }
 
 function parseClassificationSource(value: unknown, fieldName: string): ClassificationSource {
@@ -233,6 +366,9 @@ function normalizeSearchKey(value: string | null | undefined): string | null {
 }
 
 function mapTransactionFeedRow(row: TransactionFeedRowRaw): TransactionFeedItem {
+	const transactionBudgetTreatment = row.transaction_budget_treatment === undefined
+		? 'AUTO'
+		: parseBudgetTreatment(row.transaction_budget_treatment, 'transactions.budget_treatment');
 	const transaction: TransactionRow = {
 		id: toRequiredString(row.transaction_id, 'transactions.id'),
 		user_id: toRequiredString(row.transaction_user_id, 'transactions.user_id'),
@@ -266,6 +402,14 @@ function mapTransactionFeedRow(row: TransactionFeedRowRaw): TransactionFeedItem 
 			row.transaction_ai_confidence_score,
 			'transactions.ai_confidence_score',
 		),
+		budget_treatment: transactionBudgetTreatment,
+		recurring_series_id: toNullableString(
+			row.transaction_recurring_series_id,
+			'transactions.recurring_series_id',
+		),
+		user_deleted_at: row.transaction_user_deleted_at === undefined
+			? null
+			: toNullableString(row.transaction_user_deleted_at, 'transactions.user_deleted_at'),
 		created_at: toIsoDateTime(row.transaction_created_at, 'transactions.created_at'),
 		updated_at: toIsoDateTime(row.transaction_updated_at, 'transactions.updated_at'),
 	};
@@ -320,6 +464,120 @@ function mapTransactionFeedRow(row: TransactionFeedRowRaw): TransactionFeedItem 
 	);
 	const creditCardId = toNullableString(row.credit_card_id, 'user_credit_cards.id');
 	const rawEmailId = toNullableString(row.raw_email_id, 'raw_emails.id');
+	const relationshipId = toNullableString(
+		row.budget_relationship_id,
+		'transaction_relationships.id',
+	);
+	const relationshipRole = row.budget_relationship_role === 'SOURCE' ? 'SOURCE' : 'TARGET';
+	const relationship: TransactionBudgetRelationship | null = relationshipId === null
+		? null
+		: {
+				id: relationshipId,
+				kind: toRequiredString(
+					row.budget_relationship_kind,
+					'transaction_relationships.kind',
+				) as TransactionBudgetRelationship['kind'],
+				role: relationshipRole,
+				related_transaction_id: toRequiredString(
+					row.budget_related_transaction_id,
+					'transaction_relationships.related_transaction_id',
+				),
+				related_amount_in_paise: toSafeInteger(
+					row.budget_related_amount_in_paise,
+					'transaction_relationships.related_amount_in_paise',
+				),
+				related_txn_date: toIsoDateTime(
+					row.budget_related_txn_date,
+					'transaction_relationships.related_txn_date',
+				),
+				related_label: toRequiredString(
+					row.budget_related_label,
+					'transaction_relationships.related_label',
+				),
+				created_by: toRequiredString(
+					row.budget_relationship_created_by,
+					'transaction_relationships.created_by',
+				) as TransactionBudgetRelationship['created_by'],
+				confidence: toNullableNumber(
+					row.budget_relationship_confidence,
+					'transaction_relationships.confidence',
+				) ?? 0,
+				related_count: toSafeInteger(
+					row.budget_relationship_related_count ?? 1,
+					'transaction_relationships.related_count',
+				),
+			};
+
+	const currentCalculation: BudgetCalculationTransaction = {
+		id: transaction.id,
+		amountInPaise: transaction.amount_in_paise,
+		type: transaction.type,
+		direction: financialEvent.direction,
+		treatment: transaction.budget_treatment,
+		categoryTreatment:
+			row.category_budget_treatment === 'INCLUDE' || row.category_budget_treatment === 'EXCLUDE'
+				? row.category_budget_treatment
+				: null,
+		recurringTreatment:
+			row.recurring_status === 'ACTIVE'
+				&& (row.recurring_budget_treatment === 'AUTO'
+					|| row.recurring_budget_treatment === 'INCLUDE'
+					|| row.recurring_budget_treatment === 'EXCLUDE')
+					? row.recurring_budget_treatment
+					: null,
+	};
+	const calculationTransactions = [currentCalculation];
+	const calculationRelationships: Array<{
+		sourceTransactionId: string;
+		targetTransactionId: string;
+	}> = [];
+	if (relationship) {
+		const relatedType = toRequiredString(
+			row.budget_related_type,
+			'transactions.related_type',
+		) as TransactionRow['type'];
+		const relatedDirection = toRequiredString(
+			row.budget_related_direction,
+			'financial_events.related_direction',
+		) as EventDirection;
+		calculationTransactions.push({
+			id: relationship.related_transaction_id,
+			amountInPaise: toSafeInteger(
+				row.budget_related_calculation_amount_in_paise
+					?? relationship.related_amount_in_paise,
+				'transaction_relationships.related_calculation_amount_in_paise',
+			),
+			type: relatedType,
+			direction: relatedDirection,
+			treatment: parseBudgetTreatment(
+				row.budget_related_treatment,
+				'transactions.related_budget_treatment',
+			),
+			categoryTreatment:
+				row.budget_related_category_treatment === 'INCLUDE'
+					|| row.budget_related_category_treatment === 'EXCLUDE'
+					? row.budget_related_category_treatment
+					: null,
+			recurringTreatment:
+				row.budget_related_recurring_status === 'ACTIVE'
+					&& (row.budget_related_recurring_treatment === 'AUTO'
+						|| row.budget_related_recurring_treatment === 'INCLUDE'
+						|| row.budget_related_recurring_treatment === 'EXCLUDE')
+						? row.budget_related_recurring_treatment
+						: null,
+		});
+		calculationRelationships.push({
+			sourceTransactionId: relationship.role === 'SOURCE'
+				? transaction.id
+				: relationship.related_transaction_id,
+			targetTransactionId: relationship.role === 'TARGET'
+				? transaction.id
+				: relationship.related_transaction_id,
+		});
+	}
+	const budgetResult = calculateBudget(calculationTransactions, calculationRelationships);
+	const resolvedBudget = budgetResult.transactions.get(transaction.id);
+	if (!resolvedBudget) throw new Error('Budget treatment could not be resolved');
 
 	return {
 		transaction,
@@ -392,15 +650,15 @@ function mapTransactionFeedRow(row: TransactionFeedRowRaw): TransactionFeedItem 
 							'raw_emails.status',
 						) as RawEmailRow['status'],
 					},
+		budget: {
+			treatment: transaction.budget_treatment,
+			effective_treatment: resolvedBudget.effectiveTreatment,
+			treatment_source: resolvedBudget.treatmentSource,
+			effect: resolvedBudget.effect,
+			effect_in_paise: resolvedBudget.effectInPaise,
+			relationship,
+		},
 	};
-}
-
-function getTransactionDirection(type: TransactionRow['type']): FinancialEventRow['direction'] {
-	if (type === 'income') {
-		return 'credit';
-	}
-
-	return 'debit';
 }
 
 async function getTransactionFeedItemById(
@@ -424,6 +682,9 @@ async function getTransactionFeedItemById(
 			t.status as transaction_status,
 			t.classification_source as transaction_classification_source,
 			t.ai_confidence_score as transaction_ai_confidence_score,
+			t.budget_treatment as transaction_budget_treatment,
+			t.recurring_series_id as transaction_recurring_series_id,
+			t.user_deleted_at as transaction_user_deleted_at,
 			t.created_at as transaction_created_at,
 			t.updated_at as transaction_updated_at,
 
@@ -465,7 +726,29 @@ async function getTransactionFeedItemById(
 			re.id as raw_email_id,
 			re.source_id as raw_email_source_id,
 			re.internal_date as raw_email_internal_date,
-			re.status as raw_email_status
+			re.status as raw_email_status,
+
+			ucbr.treatment as category_budget_treatment,
+			rs.budget_treatment as recurring_budget_treatment,
+			rs.status as recurring_status,
+
+			br.relationship_id as budget_relationship_id,
+			br.kind as budget_relationship_kind,
+			br.role as budget_relationship_role,
+			br.related_transaction_id as budget_related_transaction_id,
+			br.related_amount_in_paise as budget_related_amount_in_paise,
+			br.related_calculation_amount_in_paise as budget_related_calculation_amount_in_paise,
+			br.related_txn_date as budget_related_txn_date,
+			br.related_label as budget_related_label,
+			br.created_by as budget_relationship_created_by,
+			br.confidence as budget_relationship_confidence,
+			br.related_count as budget_relationship_related_count,
+			br.related_type as budget_related_type,
+			br.related_direction as budget_related_direction,
+			br.related_treatment as budget_related_treatment,
+			br.related_category_treatment as budget_related_category_treatment,
+			br.related_recurring_treatment as budget_related_recurring_treatment,
+			br.related_recurring_status as budget_related_recurring_status
 		from public.transactions as t
 		join public.financial_events as fe
 			on fe.id = t.financial_event_id
@@ -489,8 +772,76 @@ async function getTransactionFeedItemById(
 		left join public.raw_emails as re
 			on re.id = fe.raw_email_id
 			and re.user_id = fe.user_id
+		left join public.user_category_budget_rules as ucbr
+			on ucbr.user_id = t.user_id
+			and ucbr.category_id = t.category_id
+		left join public.recurring_series as rs
+			on rs.id = t.recurring_series_id
+			and rs.user_id = t.user_id
+		left join lateral (
+			select
+				tr.id as relationship_id,
+				tr.kind,
+				case when tr.source_transaction_id = t.id then 'SOURCE' else 'TARGET' end as role,
+				rt.id as related_transaction_id,
+				rt.amount_in_paise as related_amount_in_paise,
+				case
+					when tr.source_transaction_id = t.id then greatest(
+						0,
+						rt.amount_in_paise - coalesce((
+							select sum(other_source.amount_in_paise)
+							from public.transaction_relationships as other_rel
+							join public.transactions as other_source
+								on other_source.id = other_rel.source_transaction_id
+								and other_source.user_id = other_rel.user_id
+								and other_source.user_deleted_at is null
+							where other_rel.user_id = tr.user_id
+								and other_rel.target_transaction_id = rt.id
+								and other_rel.source_transaction_id <> t.id
+						), 0)
+					)
+					else rt.amount_in_paise
+				end as related_calculation_amount_in_paise,
+				rt.txn_date as related_txn_date,
+				coalesce(rgm.canonical_name, rfe.counterparty_raw, rc.name, 'Transaction') as related_label,
+				tr.created_by,
+				tr.confidence,
+				count(*) over ()::int as related_count,
+				rt.type as related_type,
+				rfe.direction as related_direction,
+				rt.budget_treatment as related_treatment,
+				rucbr.treatment as related_category_treatment,
+				rrs.budget_treatment as related_recurring_treatment,
+				rrs.status as related_recurring_status
+			from public.transaction_relationships as tr
+			join public.transactions as rt
+				on rt.id = case
+					when tr.source_transaction_id = t.id then tr.target_transaction_id
+					else tr.source_transaction_id
+				end
+				and rt.user_id = tr.user_id
+				and rt.user_deleted_at is null
+			join public.financial_events as rfe
+				on rfe.id = rt.financial_event_id
+				and rfe.user_id = rt.user_id
+			left join public.categories as rc on rc.id = rt.category_id
+			left join public.global_merchants as rgm on rgm.id = rt.merchant_id
+			left join public.user_category_budget_rules as rucbr
+				on rucbr.user_id = rt.user_id
+				and rucbr.category_id = rt.category_id
+			left join public.recurring_series as rrs
+				on rrs.id = rt.recurring_series_id
+				and rrs.user_id = rt.user_id
+			where tr.user_id = t.user_id
+				and (tr.source_transaction_id = t.id or tr.target_transaction_id = t.id)
+			order by
+				case when tr.source_transaction_id = t.id then 0 else 1 end,
+				tr.created_at desc
+			limit 1
+		) as br on true
 		where t.user_id = ${userId}
 			and fe.status = 'ACTIVE'
+			and t.user_deleted_at is null
 			and t.id = ${transactionId}
 		limit 1
 	`;
@@ -540,6 +891,10 @@ export function parseCreateManualTransactionRequest(
 	return {
 		amount_in_paise: parsePositiveInteger(body.amount_in_paise, 'amount_in_paise'),
 		type: parseTransactionType(body.type, 'type'),
+		direction:
+			body.direction === undefined
+				? undefined
+				: parseEventDirection(body.direction, 'direction'),
 		txn_date: parseIsoDateTime(body.txn_date, 'txn_date'),
 		account_id: parseNullableUuid(body.account_id, 'account_id'),
 		category_id: parseNullableUuid(body.category_id, 'category_id'),
@@ -551,12 +906,20 @@ export function parseCreateManualTransactionRequest(
 				: parsePaymentMethod(body.payment_method, 'payment_method'),
 		instrument_id: parseNullableString(body.instrument_id, 'instrument_id'),
 		counterparty_raw: parseNullableString(body.counterparty_raw, 'counterparty_raw'),
+		budget_treatment:
+			body.budget_treatment === undefined
+				? undefined
+				: parseBudgetTreatment(body.budget_treatment, 'budget_treatment'),
 	};
 }
 
 export function parseUpdateTransactionRequest(payload: unknown): UpdateTransactionRequest {
 	const body = asRecord(payload);
 	const updateRequest: UpdateTransactionRequest = {};
+
+	if (body.type !== undefined) {
+		updateRequest.type = parseTransactionType(body.type, 'type');
+	}
 
 	if (body.account_id !== undefined) {
 		updateRequest.account_id = parseNullableUuid(body.account_id, 'account_id');
@@ -596,6 +959,13 @@ export function parseUpdateTransactionRequest(payload: unknown): UpdateTransacti
 		);
 	}
 
+	if (body.budget_treatment !== undefined) {
+		updateRequest.budget_treatment = parseBudgetTreatment(
+			body.budget_treatment,
+			'budget_treatment',
+		);
+	}
+
 	if (Object.keys(updateRequest).length === 0) {
 		throw badRequest(
 			'INVALID_PAYLOAD',
@@ -609,6 +979,10 @@ export function parseUpdateTransactionRequest(payload: unknown): UpdateTransacti
 export function parseReviewTransactionRequest(payload: unknown): ReviewTransactionRequest {
 	const body = asRecord(payload);
 	const reviewRequest: ReviewTransactionRequest = {};
+
+	if (body.type !== undefined) {
+		reviewRequest.type = parseTransactionType(body.type, 'type');
+	}
 
 	if (body.category_id !== undefined) {
 		reviewRequest.category_id = parseNullableUuid(body.category_id, 'category_id');
@@ -718,6 +1092,7 @@ export async function listTransactions(
 			and fe.user_id = t.user_id
 		where t.user_id = ${userId}
 			and fe.status = 'ACTIVE'
+			and t.user_deleted_at is null
 			and (not ${hasFromFilter} or t.txn_date >= ${input.from ?? null})
 			and (not ${hasToFilter} or t.txn_date <= ${input.to ?? null})
 			and (not ${hasStatusFilter} or t.status = ${input.status ?? null})
@@ -747,6 +1122,9 @@ export async function listTransactions(
 			t.status as transaction_status,
 			t.classification_source as transaction_classification_source,
 			t.ai_confidence_score as transaction_ai_confidence_score,
+			t.budget_treatment as transaction_budget_treatment,
+			t.recurring_series_id as transaction_recurring_series_id,
+			t.user_deleted_at as transaction_user_deleted_at,
 			t.created_at as transaction_created_at,
 			t.updated_at as transaction_updated_at,
 
@@ -788,7 +1166,29 @@ export async function listTransactions(
 			re.id as raw_email_id,
 			re.source_id as raw_email_source_id,
 			re.internal_date as raw_email_internal_date,
-			re.status as raw_email_status
+			re.status as raw_email_status,
+
+			ucbr.treatment as category_budget_treatment,
+			rs.budget_treatment as recurring_budget_treatment,
+			rs.status as recurring_status,
+
+			br.relationship_id as budget_relationship_id,
+			br.kind as budget_relationship_kind,
+			br.role as budget_relationship_role,
+			br.related_transaction_id as budget_related_transaction_id,
+			br.related_amount_in_paise as budget_related_amount_in_paise,
+			br.related_calculation_amount_in_paise as budget_related_calculation_amount_in_paise,
+			br.related_txn_date as budget_related_txn_date,
+			br.related_label as budget_related_label,
+			br.created_by as budget_relationship_created_by,
+			br.confidence as budget_relationship_confidence,
+			br.related_count as budget_relationship_related_count,
+			br.related_type as budget_related_type,
+			br.related_direction as budget_related_direction,
+			br.related_treatment as budget_related_treatment,
+			br.related_category_treatment as budget_related_category_treatment,
+			br.related_recurring_treatment as budget_related_recurring_treatment,
+			br.related_recurring_status as budget_related_recurring_status
 		from public.transactions as t
 		join public.financial_events as fe
 			on fe.id = t.financial_event_id
@@ -812,8 +1212,76 @@ export async function listTransactions(
 		left join public.raw_emails as re
 			on re.id = fe.raw_email_id
 			and re.user_id = fe.user_id
+		left join public.user_category_budget_rules as ucbr
+			on ucbr.user_id = t.user_id
+			and ucbr.category_id = t.category_id
+		left join public.recurring_series as rs
+			on rs.id = t.recurring_series_id
+			and rs.user_id = t.user_id
+		left join lateral (
+			select
+				tr.id as relationship_id,
+				tr.kind,
+				case when tr.source_transaction_id = t.id then 'SOURCE' else 'TARGET' end as role,
+				rt.id as related_transaction_id,
+				rt.amount_in_paise as related_amount_in_paise,
+				case
+					when tr.source_transaction_id = t.id then greatest(
+						0,
+						rt.amount_in_paise - coalesce((
+							select sum(other_source.amount_in_paise)
+							from public.transaction_relationships as other_rel
+							join public.transactions as other_source
+								on other_source.id = other_rel.source_transaction_id
+								and other_source.user_id = other_rel.user_id
+								and other_source.user_deleted_at is null
+							where other_rel.user_id = tr.user_id
+								and other_rel.target_transaction_id = rt.id
+								and other_rel.source_transaction_id <> t.id
+						), 0)
+					)
+					else rt.amount_in_paise
+				end as related_calculation_amount_in_paise,
+				rt.txn_date as related_txn_date,
+				coalesce(rgm.canonical_name, rfe.counterparty_raw, rc.name, 'Transaction') as related_label,
+				tr.created_by,
+				tr.confidence,
+				count(*) over ()::int as related_count,
+				rt.type as related_type,
+				rfe.direction as related_direction,
+				rt.budget_treatment as related_treatment,
+				rucbr.treatment as related_category_treatment,
+				rrs.budget_treatment as related_recurring_treatment,
+				rrs.status as related_recurring_status
+			from public.transaction_relationships as tr
+			join public.transactions as rt
+				on rt.id = case
+					when tr.source_transaction_id = t.id then tr.target_transaction_id
+					else tr.source_transaction_id
+				end
+				and rt.user_id = tr.user_id
+				and rt.user_deleted_at is null
+			join public.financial_events as rfe
+				on rfe.id = rt.financial_event_id
+				and rfe.user_id = rt.user_id
+			left join public.categories as rc on rc.id = rt.category_id
+			left join public.global_merchants as rgm on rgm.id = rt.merchant_id
+			left join public.user_category_budget_rules as rucbr
+				on rucbr.user_id = rt.user_id
+				and rucbr.category_id = rt.category_id
+			left join public.recurring_series as rrs
+				on rrs.id = rt.recurring_series_id
+				and rrs.user_id = rt.user_id
+			where tr.user_id = t.user_id
+				and (tr.source_transaction_id = t.id or tr.target_transaction_id = t.id)
+			order by
+				case when tr.source_transaction_id = t.id then 0 else 1 end,
+				tr.created_at desc
+			limit 1
+		) as br on true
 		where t.user_id = ${userId}
 			and fe.status = 'ACTIVE'
+			and t.user_deleted_at is null
 			and (not ${hasFromFilter} or t.txn_date >= ${input.from ?? null})
 			and (not ${hasToFilter} or t.txn_date <= ${input.to ?? null})
 			and (not ${hasStatusFilter} or t.status = ${input.status ?? null})
@@ -846,6 +1314,13 @@ export async function createManualTransaction(
 ): Promise<TransactionFeedItem> {
 	return sql.begin(async (tx) => {
 		const transactionSql = tx as unknown as SqlClient;
+		const direction = resolveManualTransactionDirection(input.type, input.direction);
+		await assertCategoryMatchesTransactionType(
+			transactionSql,
+			userId,
+			input.category_id ?? null,
+			input.type,
+		);
 
 		const financialEventRows = await transactionSql<{ id: string }[]>`
 			insert into public.financial_events (
@@ -866,7 +1341,7 @@ export async function createManualTransaction(
 				${userId},
 				null,
 				0,
-				${getTransactionDirection(input.type)},
+				${direction},
 				${input.amount_in_paise},
 				'INR',
 				${input.txn_date},
@@ -898,7 +1373,8 @@ export async function createManualTransaction(
 				user_note,
 				status,
 				classification_source,
-				ai_confidence_score
+				ai_confidence_score,
+				budget_treatment
 			)
 			values (
 				${userId},
@@ -913,7 +1389,8 @@ export async function createManualTransaction(
 				${input.user_note ?? null},
 				'VERIFIED',
 				'USER',
-				null
+				null,
+				${input.budget_treatment ?? 'AUTO'}
 			)
 			returning id
 		`;
@@ -948,6 +1425,19 @@ export async function updateTransaction(
 			t.status as transaction_status,
 			t.financial_event_id,
 			fe.raw_email_id,
+			t.category_id as transaction_category_id,
+			t.type as transaction_type,
+			fe.direction as financial_event_direction,
+			exists (
+				select 1 from public.transaction_relationships as source_rel
+				where source_rel.user_id = t.user_id
+					and source_rel.source_transaction_id = t.id
+			) as budget_relationship_as_source,
+			exists (
+				select 1 from public.transaction_relationships as target_rel
+				where target_rel.user_id = t.user_id
+					and target_rel.target_transaction_id = t.id
+			) as budget_relationship_as_target,
 			t.account_id as transaction_account_id,
 			t.credit_card_id as transaction_credit_card_id,
 			ucc.account_id as current_credit_card_account_id
@@ -961,6 +1451,7 @@ export async function updateTransaction(
 			and ucc.user_id = t.user_id
 		where t.id = ${transactionId}
 			and t.user_id = ${userId}
+			and t.user_deleted_at is null
 		limit 1
 	`;
 
@@ -971,6 +1462,23 @@ export async function updateTransaction(
 	const current = statusRows[0];
 	if (input.status) {
 		validateTransactionStatusTransition(current.transaction_status, input.status);
+	}
+
+	const nextType = input.type ?? current.transaction_type;
+	const nextCategoryId =
+		input.category_id === undefined
+			? current.transaction_category_id
+			: (input.category_id ?? null);
+	if (input.type !== undefined) {
+		assertTransactionTypeMatchesDirection(nextType, current.financial_event_direction);
+		assertTransactionTypeMatchesBudgetRelationship(
+			nextType,
+			current.budget_relationship_as_source,
+			current.budget_relationship_as_target,
+		);
+	}
+	if (input.type !== undefined || input.category_id !== undefined) {
+		await assertCategoryMatchesTransactionType(sql, userId, nextCategoryId, nextType);
 	}
 
 	let targetCreditCardAccountId: string | null | undefined;
@@ -994,6 +1502,7 @@ export async function updateTransaction(
 		targetCreditCardAccountId,
 	});
 
+	const hasTypeUpdate = input.type !== undefined;
 	const hasAccountUpdate = relationUpdate.shouldUpdateAccount;
 	const hasCategoryUpdate = input.category_id !== undefined;
 	const hasMerchantUpdate = input.merchant_id !== undefined;
@@ -1002,10 +1511,16 @@ export async function updateTransaction(
 	const hasStatusUpdate = input.status !== undefined;
 	const hasClassificationSourceUpdate = input.classification_source !== undefined;
 	const hasAiConfidenceScoreUpdate = input.ai_confidence_score !== undefined;
+	const hasBudgetTreatmentUpdate = input.budget_treatment !== undefined;
 
 	await sql`
 		update public.transactions as t
 		set
+			type = case when ${hasTypeUpdate} then ${input.type ?? null} else t.type end,
+			recurring_series_id = case
+				when ${hasTypeUpdate} and ${input.type ?? null} is distinct from t.type then null
+				else t.recurring_series_id
+			end,
 			account_id = case when ${hasAccountUpdate} then ${relationUpdate.accountId} else t.account_id end,
 			category_id = case when ${hasCategoryUpdate} then ${input.category_id ?? null} else t.category_id end,
 			merchant_id = case when ${hasMerchantUpdate} then ${input.merchant_id ?? null} else t.merchant_id end,
@@ -1013,15 +1528,22 @@ export async function updateTransaction(
 			user_note = case when ${hasUserNoteUpdate} then ${input.user_note ?? null} else t.user_note end,
 			status = case when ${hasStatusUpdate} then ${input.status ?? null} else t.status end,
 			classification_source = case
+				when ${hasTypeUpdate} then 'USER'
 				when ${hasClassificationSourceUpdate} then ${input.classification_source ?? null}
 				else t.classification_source
 			end,
 			ai_confidence_score = case
+				when ${hasTypeUpdate} then null
 				when ${hasAiConfidenceScoreUpdate} then ${input.ai_confidence_score ?? null}
 				else t.ai_confidence_score
+			end,
+			budget_treatment = case
+				when ${hasBudgetTreatmentUpdate} then ${input.budget_treatment ?? null}
+				else t.budget_treatment
 			end
 		where t.id = ${transactionId}
 			and t.user_id = ${userId}
+			and t.user_deleted_at is null
 	`;
 
 	const updatedTransaction = await getTransactionFeedItemById(sql, userId, transactionId);
@@ -1046,6 +1568,18 @@ export async function reviewTransaction(
 				t.status as transaction_status,
 				t.category_id as transaction_category_id,
 				t.merchant_id as transaction_merchant_id,
+				t.type as transaction_type,
+				fe.direction as financial_event_direction,
+				exists (
+					select 1 from public.transaction_relationships as source_rel
+					where source_rel.user_id = t.user_id
+						and source_rel.source_transaction_id = t.id
+				) as budget_relationship_as_source,
+				exists (
+					select 1 from public.transaction_relationships as target_rel
+					where target_rel.user_id = t.user_id
+						and target_rel.target_transaction_id = t.id
+				) as budget_relationship_as_target,
 				fe.search_key as financial_event_search_key
 			from public.transactions as t
 			join public.financial_events as fe
@@ -1054,6 +1588,7 @@ export async function reviewTransaction(
 				and fe.status = 'ACTIVE'
 			where t.id = ${transactionId}
 				and t.user_id = ${userId}
+				and t.user_deleted_at is null
 			limit 1
 			for update
 		`;
@@ -1073,6 +1608,8 @@ export async function reviewTransaction(
 		const hasCategoryUpdate = input.category_id !== undefined;
 		const hasMerchantUpdate = input.merchant_id !== undefined;
 		const hasUserNoteUpdate = input.user_note !== undefined;
+		const hasTypeUpdate = input.type !== undefined;
+		const nextType = input.type ?? context.transaction_type;
 
 		const nextCategoryId =
 			input.category_id !== undefined
@@ -1083,9 +1620,34 @@ export async function reviewTransaction(
 				? (input.merchant_id ?? null)
 				: context.transaction_merchant_id;
 
+		assertTransactionTypeMatchesDirection(nextType, context.financial_event_direction);
+		if (hasTypeUpdate) {
+			assertTransactionTypeMatchesBudgetRelationship(
+				nextType,
+				context.budget_relationship_as_source,
+				context.budget_relationship_as_target,
+			);
+		}
+		if (hasTypeUpdate || hasCategoryUpdate) {
+			await assertCategoryMatchesTransactionType(
+				transactionSql,
+				userId,
+				nextCategoryId,
+				nextType,
+			);
+		}
+
 		await transactionSql`
 			update public.transactions as t
 			set
+				type = case
+					when ${hasTypeUpdate} then ${input.type ?? null}
+					else t.type
+				end,
+				recurring_series_id = case
+					when ${hasTypeUpdate} and ${input.type ?? null} is distinct from t.type then null
+					else t.recurring_series_id
+				end,
 				category_id = case
 					when ${hasCategoryUpdate} then ${input.category_id ?? null}
 					else t.category_id
@@ -1099,9 +1661,11 @@ export async function reviewTransaction(
 					else t.user_note
 				end,
 				status = 'VERIFIED',
-				classification_source = 'USER'
+				classification_source = 'USER',
+				ai_confidence_score = case when ${hasTypeUpdate} then null else t.ai_confidence_score end
 			where t.id = ${transactionId}
 				and t.user_id = ${userId}
+				and t.user_deleted_at is null
 				and t.status = 'NEEDS_REVIEW'
 		`;
 
@@ -1175,7 +1739,7 @@ export async function reviewTransaction(
 			);
 		}
 
-		await transactionSql`
+		const ruleRows = await transactionSql<Array<{ id: unknown }>>`
 			insert into public.user_merchant_rules (
 				user_id,
 				search_key,
@@ -1193,7 +1757,23 @@ export async function reviewTransaction(
 				merchant_id = excluded.merchant_id,
 				custom_category_id = excluded.custom_category_id,
 				updated_at = now()
+			returning id
 		`;
+
+		const ruleId = toRequiredString(ruleRows[0]?.id, 'user_merchant_rules.id');
+		if (nextCategoryId) {
+			await transactionSql`
+				insert into public.user_merchant_rule_categories (
+					user_merchant_rule_id,
+					transaction_type,
+					category_id
+				)
+				values (${ruleId}, ${nextType}, ${nextCategoryId})
+				on conflict (user_merchant_rule_id, transaction_type) do update
+				set category_id = excluded.category_id,
+					updated_at = now()
+			`;
+		}
 
 		return {
 			transaction: updatedTransaction,
@@ -1203,52 +1783,38 @@ export async function reviewTransaction(
 	});
 }
 
-export async function deleteManualTransaction(
+export async function deleteTransaction(
 	sql: SqlClient,
 	userId: string,
 	transactionId: string,
 ): Promise<void> {
-	await sql.begin(async (tx) => {
-		const transactionSql = tx as unknown as SqlClient;
+	const rows = await sql<Array<{ id: unknown }>>`
+		update public.transactions as t
+		set user_deleted_at = now()
+		where t.id = ${transactionId}
+			and t.user_id = ${userId}
+			and t.user_deleted_at is null
+		returning t.id
+	`;
+	if (rows.length === 0) {
+		throw notFound('TRANSACTION_NOT_FOUND', 'Transaction not found');
+	}
+}
 
-		const rows = await transactionSql<TransactionStatusRow[]>`
-			select
-				t.id as transaction_id,
-				t.status as transaction_status,
-				t.financial_event_id,
-				fe.raw_email_id
-			from public.transactions as t
-			join public.financial_events as fe
-				on fe.id = t.financial_event_id
-				and fe.user_id = t.user_id
-				and fe.status = 'ACTIVE'
-			where t.id = ${transactionId}
-				and t.user_id = ${userId}
-			for update
-		`;
-
-		if (rows.length === 0) {
-			throw notFound('TRANSACTION_NOT_FOUND', 'Transaction not found');
-		}
-
-		if (rows[0].raw_email_id !== null) {
-			throw conflict(
-				'TRANSACTION_NOT_MANUAL',
-				'Only manual transactions can be deleted through this endpoint',
-			);
-		}
-
-		await transactionSql`
-			delete from public.transactions as t
-			where t.id = ${transactionId}
-				and t.user_id = ${userId}
-		`;
-
-		await transactionSql`
-			update public.financial_events as fe
-			set status = 'REVERSED'
-			where fe.id = ${rows[0].financial_event_id}
-				and fe.user_id = ${userId}
-		`;
-	});
+export async function restoreTransaction(
+	sql: SqlClient,
+	userId: string,
+	transactionId: string,
+): Promise<void> {
+	const rows = await sql<Array<{ id: unknown }>>`
+		update public.transactions as t
+		set user_deleted_at = null
+		where t.id = ${transactionId}
+			and t.user_id = ${userId}
+			and t.user_deleted_at is not null
+		returning t.id
+	`;
+	if (rows.length === 0) {
+		throw notFound('TRANSACTION_NOT_FOUND', 'Deleted transaction not found');
+	}
 }

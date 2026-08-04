@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SqlClient } from '../src/lib/db/client';
-import { reviewTransaction } from '../src/services/transactions.service';
+import { reviewTransaction, updateTransaction } from '../src/services/transactions.service';
 
 type QueryResult = unknown;
 type QueryHandler = (query: string, values: unknown[]) => QueryResult | Promise<QueryResult>;
@@ -102,6 +102,8 @@ describe('reviewTransaction', () => {
 					transaction_status: 'NEEDS_REVIEW',
 					transaction_category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
 					transaction_merchant_id: null,
+					transaction_type: 'expense',
+					financial_event_direction: 'debit',
 					financial_event_search_key: 'unknown-shop',
 				},
 			],
@@ -134,9 +136,12 @@ describe('reviewTransaction', () => {
 					transaction_status: 'NEEDS_REVIEW',
 					transaction_category_id: null,
 					transaction_merchant_id: null,
+					transaction_type: 'expense',
+					financial_event_direction: 'debit',
 					financial_event_search_key: 'zomato-pay',
 				},
 			],
+			() => [{ type: 'expense' }],
 			() => [],
 			() => [
 				transactionFeedRow({
@@ -148,6 +153,11 @@ describe('reviewTransaction', () => {
 			() => [],
 			(_query, values) => {
 				ruleInsertValues = values;
+				return [{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }];
+			},
+			(query, values) => {
+				expect(query).toContain('insert into public.user_merchant_rule_categories');
+				expect(values).toContain('expense');
 				return [];
 			},
 		]);
@@ -166,7 +176,8 @@ describe('reviewTransaction', () => {
 		expect(result.applied_search_key).toBe('ZOMATOPAY');
 		expect(ruleInsertValues).toContain('ZOMATOPAY');
 		expect(ruleInsertValues).toContain('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
-		expect(queries[4]).toContain('insert into public.user_merchant_rules');
+		expect(queries[5]).toContain('insert into public.user_merchant_rules');
+		expect(queries[6]).toContain('insert into public.user_merchant_rule_categories');
 	});
 
 	it('rejects rule write when no search key is available', async () => {
@@ -177,9 +188,12 @@ describe('reviewTransaction', () => {
 					transaction_status: 'NEEDS_REVIEW',
 					transaction_category_id: null,
 					transaction_merchant_id: null,
+					transaction_type: 'expense',
+					financial_event_direction: 'debit',
 					financial_event_search_key: null,
 				},
 			],
+			() => [{ type: 'expense' }],
 			() => [],
 			() => [transactionFeedRow()],
 		]);
@@ -199,7 +213,73 @@ describe('reviewTransaction', () => {
 			errorCode: 'REVIEW_RULE_SEARCH_KEY_REQUIRED',
 		});
 
-		expect(queries).toHaveLength(3);
+		expect(queries).toHaveLength(4);
+	});
+
+	it('lets the user change a debit expense to transfer with a transfer category', async () => {
+		const TRANSFER_CATEGORY = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+		let updateValues: unknown[] = [];
+		const { sql } = createSqlForReviewTests([
+			() => [{
+				transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				transaction_status: 'NEEDS_REVIEW',
+				transaction_category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+				transaction_merchant_id: null,
+				transaction_type: 'expense',
+				financial_event_direction: 'debit',
+				financial_event_search_key: 'icicibank',
+			}],
+			() => [{ type: 'transfer' }],
+			(_query, values) => {
+				updateValues = values;
+				return [];
+			},
+			() => [transactionFeedRow({
+				transaction_type: 'transfer',
+				transaction_category_id: TRANSFER_CATEGORY,
+				category_id: TRANSFER_CATEGORY,
+				category_name: 'Card Bill Payment',
+				category_type: 'transfer',
+			})],
+			() => [],
+		]);
+
+		const result = await reviewTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ type: 'transfer', category_id: TRANSFER_CATEGORY },
+		);
+
+		expect(updateValues).toContain('transfer');
+		expect(updateValues).toContain(TRANSFER_CATEGORY);
+		expect(result.transaction.transaction.type).toBe('transfer');
+		expect(result.transaction.transaction.classification_source).toBe('USER');
+	});
+
+	it('rejects changing a debit transaction directly to income', async () => {
+		const { sql, queries } = createSqlForReviewTests([
+			() => [{
+				transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				transaction_status: 'NEEDS_REVIEW',
+				transaction_category_id: null,
+				transaction_merchant_id: null,
+				transaction_type: 'expense',
+				financial_event_direction: 'debit',
+				financial_event_search_key: null,
+			}],
+		]);
+
+		await expect(reviewTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ type: 'income', category_id: null },
+		)).rejects.toMatchObject({
+			statusCode: 400,
+			errorCode: 'TRANSACTION_TYPE_DIRECTION_MISMATCH',
+		});
+		expect(queries).toHaveLength(1);
 	});
 
 	it('rejects review when transaction is already resolved', async () => {
@@ -210,6 +290,8 @@ describe('reviewTransaction', () => {
 					transaction_status: 'VERIFIED',
 					transaction_category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
 					transaction_merchant_id: null,
+					transaction_type: 'expense',
+					financial_event_direction: 'debit',
 					financial_event_search_key: 'zomato',
 				},
 			],
@@ -239,6 +321,8 @@ describe('reviewTransaction', () => {
 					transaction_status: 'NEEDS_REVIEW',
 					transaction_category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
 					transaction_merchant_id: MERCHANT,
+					transaction_type: 'expense',
+					financial_event_direction: 'debit',
 					financial_event_search_key: 'bundltech',
 				},
 			],
@@ -283,6 +367,8 @@ describe('reviewTransaction', () => {
 					transaction_status: 'NEEDS_REVIEW',
 					transaction_category_id: null,
 					transaction_merchant_id: ALIAS_MERCHANT,
+					transaction_type: 'expense',
+					financial_event_direction: 'debit',
 					financial_event_search_key: 'bundltech',
 				},
 			],
@@ -314,6 +400,8 @@ describe('reviewTransaction', () => {
 					transaction_status: 'NEEDS_REVIEW',
 					transaction_category_id: null,
 					transaction_merchant_id: MERCHANT,
+					transaction_type: 'expense',
+					financial_event_direction: 'debit',
 					financial_event_search_key: 'zomato',
 				},
 			],
@@ -331,5 +419,176 @@ describe('reviewTransaction', () => {
 
 		// probation select ran, but no confirm/dissent write followed
 		expect(queries).toHaveLength(4);
+	});
+});
+
+describe('updateTransaction classification', () => {
+	it('rejects a direction-crossing type patch before writing', async () => {
+		const { sql, queries } = createSqlForReviewTests([
+			() => [{
+				transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				transaction_status: 'VERIFIED',
+				financial_event_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+				raw_email_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+				transaction_category_id: null,
+				transaction_type: 'expense',
+				financial_event_direction: 'debit',
+				transaction_account_id: null,
+				transaction_credit_card_id: null,
+				current_credit_card_account_id: null,
+			}],
+		]);
+
+		await expect(updateTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ type: 'income', category_id: null },
+		)).rejects.toMatchObject({
+			statusCode: 400,
+			errorCode: 'TRANSACTION_TYPE_DIRECTION_MISMATCH',
+		});
+		expect(queries).toHaveLength(1);
+	});
+
+	it('rejects a category whose type differs from the selected type', async () => {
+		const { sql, queries } = createSqlForReviewTests([
+			() => [{
+				transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				transaction_status: 'VERIFIED',
+				financial_event_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+				raw_email_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+				transaction_category_id: null,
+				transaction_type: 'expense',
+				financial_event_direction: 'debit',
+				transaction_account_id: null,
+				transaction_credit_card_id: null,
+				current_credit_card_account_id: null,
+			}],
+			() => [{ type: 'income' }],
+		]);
+
+		await expect(updateTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' },
+		)).rejects.toMatchObject({
+			statusCode: 400,
+			errorCode: 'TRANSACTION_CATEGORY_TYPE_MISMATCH',
+		});
+		expect(queries).toHaveLength(2);
+	});
+
+	it('allows a note-only edit on an untouched historical mismatch', async () => {
+		const { sql, queries } = createSqlForReviewTests([
+			() => [{
+				transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				transaction_status: 'VERIFIED',
+				financial_event_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+				raw_email_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+				transaction_category_id: null,
+				transaction_type: 'income',
+				financial_event_direction: 'debit',
+				transaction_account_id: null,
+				transaction_credit_card_id: null,
+				current_credit_card_account_id: null,
+			}],
+			() => [],
+			() => [transactionFeedRow({
+				transaction_type: 'income',
+				transaction_category_id: null,
+				category_id: null,
+				category_name: null,
+				category_type: null,
+				transaction_user_note: 'keep this note',
+			})],
+		]);
+
+		const result = await updateTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ user_note: 'keep this note' },
+		);
+
+		expect(result.transaction.user_note).toBe('keep this note');
+		expect(queries).toHaveLength(3);
+	});
+
+	it('patches a compatible imported type change and marks it as user-classified', async () => {
+		const TRANSFER_CATEGORY = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+		let updateValues: unknown[] = [];
+		const { sql, queries } = createSqlForReviewTests([
+			() => [{
+				transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				transaction_status: 'NEEDS_REVIEW',
+				financial_event_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+				raw_email_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+				transaction_category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+				transaction_type: 'expense',
+				financial_event_direction: 'debit',
+				transaction_account_id: null,
+				transaction_credit_card_id: null,
+				current_credit_card_account_id: null,
+			}],
+			() => [{ type: 'transfer' }],
+			(_query, values) => {
+				updateValues = values;
+				return [];
+			},
+			() => [transactionFeedRow({
+				transaction_type: 'transfer',
+				transaction_category_id: TRANSFER_CATEGORY,
+				transaction_classification_source: 'USER',
+				transaction_ai_confidence_score: null,
+				category_id: TRANSFER_CATEGORY,
+				category_name: 'Card Bill Payment',
+				category_type: 'transfer',
+			})],
+		]);
+
+		const result = await updateTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ type: 'transfer', category_id: TRANSFER_CATEGORY },
+		);
+
+		expect(updateValues).toContain('transfer');
+		expect(queries[2]).toContain('recurring_series_id');
+		expect(result.transaction.type).toBe('transfer');
+		expect(result.transaction.classification_source).toBe('USER');
+		expect(result.transaction.ai_confidence_score).toBeNull();
+	});
+
+	it('rejects changing the type of a linked expense before writing', async () => {
+		const { sql, queries } = createSqlForReviewTests([
+			() => [{
+				transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				transaction_status: 'VERIFIED',
+				financial_event_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+				raw_email_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+				transaction_category_id: null,
+				transaction_type: 'expense',
+				financial_event_direction: 'debit',
+				budget_relationship_as_source: false,
+				budget_relationship_as_target: true,
+				transaction_account_id: null,
+				transaction_credit_card_id: null,
+				current_credit_card_account_id: null,
+			}],
+		]);
+
+		await expect(updateTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{ type: 'transfer', category_id: null },
+		)).rejects.toMatchObject({
+			statusCode: 400,
+			errorCode: 'TRANSACTION_RELATIONSHIP_TYPE_MISMATCH',
+		});
+		expect(queries).toHaveLength(1);
 	});
 });

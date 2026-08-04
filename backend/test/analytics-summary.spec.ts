@@ -46,10 +46,13 @@ describe('getAnalyticsSummary', () => {
 				{ month: '2026-05', category_id: CAT_ID, category_name: 'Groceries', amount: '90000', cnt: 2 },
 				{ month: '2026-05', category_id: null, category_name: null, amount: '60000', cnt: 1 },
 			],
-			// expense by account
-			() => [
-				{ month: '2026-05', account_id: ACC_ID, amount: '150000', cnt: 3 },
-			],
+			// Card-account spend includes incoming card credits (refunds/cashback).
+			(query) => {
+				expect(query).toContain("t.type = 'income' and a.type = 'card'");
+				return [
+					{ month: '2026-05', account_id: ACC_ID, expense: '150000', credit: '20000', cnt: 4 },
+				];
+			},
 			// per-account all-time
 			() => [
 				{ account_id: ACC_ID, income: '500000', expense: '170000' },
@@ -75,7 +78,13 @@ describe('getAnalyticsSummary', () => {
 			{ category_id: null, category_name: null, amount_in_paise: 60000, txn_count: 1 },
 		]);
 		expect(may?.expense_by_account).toEqual([
-			{ account_id: ACC_ID, amount_in_paise: 150000, txn_count: 3 },
+			{
+				account_id: ACC_ID,
+				expense_in_paise: 150000,
+				credit_in_paise: 20000,
+				net_spend_in_paise: 130000,
+				txn_count: 4,
+			},
 		]);
 
 		expect(summary.all_time).toEqual({ income_in_paise: 500000, expense_in_paise: 170000 });
