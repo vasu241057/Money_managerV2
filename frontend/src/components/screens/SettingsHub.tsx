@@ -5,6 +5,7 @@ import {
 	LogOut,
 	Mail,
 	ReceiptText,
+	Store,
 	Tags,
 	WalletCards,
 	type LucideIcon,
@@ -15,12 +16,14 @@ import { useAiUsageSummary } from '../../hooks/useAiUsage';
 import { useCategories } from '../../hooks/useCategories';
 import { useCreditCards } from '../../hooks/useCreditCards';
 import { useGmailConnection } from '../../hooks/useGmailConnection';
+import { useUserMerchants } from '../../hooks/useUserMerchants';
 import { InstallAppCard } from '../ui/InstallAppCard';
 
 interface SettingsHubProps {
 	onOpenAccounts: () => void;
 	onOpenBudget: () => void;
 	onOpenCategories: () => void;
+	onOpenMerchants: () => void;
 	onOpenConnection: () => void;
 	onOpenAiUsage: () => void;
 	onSignOut: () => void;
@@ -112,6 +115,7 @@ export function SettingsHub({
 	onOpenAccounts,
 	onOpenBudget,
 	onOpenCategories,
+	onOpenMerchants,
 	onOpenConnection,
 	onOpenAiUsage,
 	onSignOut,
@@ -128,6 +132,7 @@ export function SettingsHub({
 		connection,
 		isLoading: connectionLoading,
 	} = useGmailConnection();
+	const { merchants: userMerchants, isLoading: merchantsLoading } = useUserMerchants();
 	const { summary: aiUsageSummary, isAdmin: isAiUsageAdmin } = useAiUsageSummary();
 
 	const accountCount = accounts.filter(account => account.type !== 'card').length;
@@ -139,6 +144,12 @@ export function SettingsHub({
 	const categoryDescription = categoriesLoading && categories.length === 0
 		? 'Loading categories…'
 		: `${expenseCount} expense · ${incomeCount} income${hiddenCategories.length > 0 ? ` · ${hiddenCategories.length} hidden` : ''}`;
+	const mappedMerchantCount = userMerchants.filter(
+		merchant => merchant.breakdown.some(entry => entry.rule_category_id !== null),
+	).length;
+	const merchantDescription = merchantsLoading && userMerchants.length === 0
+		? 'Loading merchants…'
+		: `${userMerchants.length} merchant${userMerchants.length === 1 ? '' : 's'} · ${mappedMerchantCount} mapped`;
 	const connectionDescription = connectionLoading && !connection
 		? 'Checking connection…'
 		: connection
@@ -174,6 +185,12 @@ export function SettingsHub({
 							title="Categories"
 							description={categoryDescription}
 							onClick={onOpenCategories}
+						/>
+						<SettingsRow
+							icon={Store}
+							title="Merchants"
+							description={merchantDescription}
+							onClick={onOpenMerchants}
 							isLast
 						/>
 					</SettingsGroup>

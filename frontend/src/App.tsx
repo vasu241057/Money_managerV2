@@ -13,6 +13,7 @@ import { SettingsHub } from './components/screens/SettingsHub';
 import { AccountsCardsManager } from './components/screens/AccountsCardsManager';
 import { AiUsageDashboard } from './components/screens/AiUsageDashboard';
 import { CategorySettings } from './components/screens/CategorySettings';
+import { MerchantSettings } from './components/screens/MerchantSettings';
 import { GmailConnectionSettings } from './components/screens/GmailConnectionSettings';
 import { parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
 import { ensureLegacyLocalDataMigrated } from './lib/legacy-local-migration';
@@ -25,7 +26,7 @@ import type { Transaction } from './hooks/useTransactions';
 import './styles/app.css';
 
 type Overlay = 'editor' | 'review' | null;
-type SettingsSubscreen = 'main' | 'accounts' | 'categories' | 'connection' | 'ai-usage';
+type SettingsSubscreen = 'main' | 'accounts' | 'categories' | 'merchants' | 'connection' | 'ai-usage';
 type ReviewScope = 'recent' | 'all';
 
 // Every screen and overlay owns a URL so a refresh (or back/forward) lands
@@ -56,6 +57,9 @@ function parseRoute(pathname: string): RouteState {
 	if (pathname === '/settings/categories') {
 		return { ...base, screen: 'settings', settingsSubscreen: 'categories' };
 	}
+	if (pathname === '/settings/merchants') {
+		return { ...base, screen: 'settings', settingsSubscreen: 'merchants' };
+	}
 	if (pathname === '/settings/connection') {
 		return { ...base, screen: 'settings', settingsSubscreen: 'connection' };
 	}
@@ -79,6 +83,7 @@ function pathForScreen(screen: ScreenId, settingsSubscreen: SettingsSubscreen): 
 	if (screen === 'settings') {
 		if (settingsSubscreen === 'accounts') return '/settings/accounts';
 		if (settingsSubscreen === 'categories') return '/settings/categories';
+		if (settingsSubscreen === 'merchants') return '/settings/merchants';
 		if (settingsSubscreen === 'connection') return '/settings/connection';
 		if (settingsSubscreen === 'ai-usage') return '/settings/ai-usage';
 		return '/settings';
@@ -265,6 +270,7 @@ function LedgerApp() {
 					onOpenAccounts={() => navigateToScreen('settings', 'accounts')}
 					onOpenBudget={() => navigateToScreen('budget')}
 					onOpenCategories={() => navigateToScreen('settings', 'categories')}
+					onOpenMerchants={() => navigateToScreen('settings', 'merchants')}
 					onOpenConnection={() => navigateToScreen('settings', 'connection')}
 					onOpenAiUsage={() => navigateToScreen('settings', 'ai-usage')}
 					onSignOut={() => navigateToScreen('home')}
@@ -275,6 +281,9 @@ function LedgerApp() {
 			)}
 			{activeScreen === 'settings' && settingsSubscreen === 'categories' && (
 				<CategorySettings onBack={() => navigateToScreen('settings', 'main')} />
+			)}
+			{activeScreen === 'settings' && settingsSubscreen === 'merchants' && (
+				<MerchantSettings onBack={() => navigateToScreen('settings', 'main')} />
 			)}
 			{activeScreen === 'settings' && settingsSubscreen === 'connection' && (
 				<GmailConnectionSettings onBack={() => navigateToScreen('settings', 'main')} />
@@ -322,6 +331,8 @@ function LedgerApp() {
 					transaction={scopedReviewInbox[0]}
 					position={reviewedCount + 1}
 					totalCount={reviewedCount + scopedReviewInbox.length}
+					// A merchant backfill clears its own transactions out of the
+					// inbox, so only the row just answered is counted here.
 					onReviewed={() => setReviewedCount((c) => c + 1)}
 					onClose={closeOverlay}
 				/>
