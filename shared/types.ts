@@ -327,6 +327,42 @@ export interface ListGlobalMerchantsQuery {
 
 export type GlobalMerchantListItem = Pick<GlobalMerchantRow, 'id' | 'canonical_name' | 'type'>;
 
+/** One transaction type's slice of a merchant the user has actually transacted with. */
+export interface UserMerchantCategoryBreakdown {
+  transaction_type: TransactionType;
+  transaction_count: number;
+  /** The user's saved default for this merchant and type, if any. */
+  rule_category_id: UUID | null;
+  rule_category_name: string | null;
+  /** Category carried by most of the existing transactions, for context. */
+  common_category_id: UUID | null;
+  common_category_name: string | null;
+}
+
+export interface UserMerchantListItem {
+  merchant_id: UUID;
+  canonical_name: string;
+  type: MerchantType;
+  logo_url: string | null;
+  /** Across every transaction type; the list is ordered by this, descending. */
+  transaction_count: number;
+  breakdown: UserMerchantCategoryBreakdown[];
+}
+
+/**
+ * `backfill: false` maps only future transactions; `true` also rewrites every
+ * existing transaction for this merchant and type, including hand-set ones.
+ */
+export interface SetUserMerchantCategoryRequest {
+  transaction_type: TransactionType;
+  category_id: UUID;
+  backfill: boolean;
+}
+
+export interface SetUserMerchantCategoryResponse {
+  backfilled_count: number;
+}
+
 export interface CreateAccountRequest {
   name: string;
   type: AccountType;
@@ -476,6 +512,11 @@ export interface ReviewTransactionResponse {
   transaction: TransactionFeedItem;
   rule_applied: boolean;
   applied_search_key: string | null;
+  /**
+   * Other transactions for the same merchant and type that the review carried
+   * along — only ones the user had not categorized themselves.
+   */
+  backfilled_count: number;
 }
 
 export interface GoogleOAuthStartResponse {
