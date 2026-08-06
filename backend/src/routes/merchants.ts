@@ -8,10 +8,14 @@ import { asyncHandler } from '../lib/http/async';
 import { parseUuid } from '../lib/http/validation';
 import {
 	listGlobalMerchants,
+	listUserMerchantTransactions,
 	listUserMerchants,
 	parseListGlobalMerchantsQuery,
+	parseListMerchantTransactionsQuery,
 	parseListUserMerchantsQuery,
+	parseSetUserDescriptorCategoryRequest,
 	parseSetUserMerchantCategoryRequest,
+	setUserDescriptorCategory,
 	setUserMerchantCategory,
 } from '../services/merchants.service';
 
@@ -52,6 +56,32 @@ export function createMerchantsRouter(): Router {
 			const input = parseSetUserMerchantCategoryRequest(req.body);
 			const backfilledCount = await setUserMerchantCategory(sql, userId, merchantId, input);
 			res.status(200).json({ data: { backfilled_count: backfilledCount } });
+		}),
+	);
+
+	router.put(
+		'/:merchantId/descriptor-category',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			const config = getAppConfig(runtimeEnv);
+			const sql = getSqlClient(config);
+			const merchantId = parseUuid(req.params.merchantId, 'merchantId');
+			const input = parseSetUserDescriptorCategoryRequest(req.body);
+			const backfilledCount = await setUserDescriptorCategory(sql, userId, merchantId, input);
+			res.status(200).json({ data: { backfilled_count: backfilledCount } });
+		}),
+	);
+
+	router.get(
+		'/:merchantId/transactions',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			const config = getAppConfig(runtimeEnv);
+			const sql = getSqlClient(config);
+			const merchantId = parseUuid(req.params.merchantId, 'merchantId');
+			const limit = parseListMerchantTransactionsQuery(req.query as Record<string, unknown>);
+			const response = await listUserMerchantTransactions(sql, userId, merchantId, limit);
+			res.status(200).json({ data: response });
 		}),
 	);
 
