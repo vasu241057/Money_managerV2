@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildLedgerDateQuery,
 	formatLedgerDateFilterLabel,
+	monthDateInputBounds,
 	toLocalDateInputValue,
 } from './ledger-date-filter';
 
@@ -32,6 +33,20 @@ describe('Ledger date filters', () => {
 		const query = buildLedgerDateQuery('range', '2026-08-04', '2026-08-01');
 		expect(new Date(query.from ?? '').getDate()).toBe(1);
 		expect(new Date(query.to ?? '').getDate()).toBe(4);
+	});
+
+	it('expands a budget month into its first and last calendar day', () => {
+		expect(monthDateInputBounds('2026-08')).toEqual({ from: '2026-08-01', to: '2026-08-31' });
+		expect(monthDateInputBounds('2026-02')).toEqual({ from: '2026-02-01', to: '2026-02-28' });
+		// Leap year, so February has to stretch to the 29th.
+		expect(monthDateInputBounds('2028-02')).toEqual({ from: '2028-02-01', to: '2028-02-29' });
+	});
+
+	it('rejects month values a deep link could not have produced', () => {
+		expect(monthDateInputBounds('2026-13')).toBeNull();
+		expect(monthDateInputBounds('2026-00')).toBeNull();
+		expect(monthDateInputBounds('2026-8')).toBeNull();
+		expect(monthDateInputBounds('')).toBeNull();
 	});
 
 	it('creates concise labels for a day and a range', () => {

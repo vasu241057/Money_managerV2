@@ -30,6 +30,22 @@ export function toLocalDateInputValue(date: Date): string {
 	return `${year}-${month}-${day}`;
 }
 
+/**
+ * Calendar bounds of a `YYYY-MM` month as date-input values, so a deep link
+ * from the Budget screen can scope the ledger to the month being reviewed.
+ */
+export function monthDateInputBounds(month: string): { from: string; to: string } | null {
+	const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
+	if (!match) return null;
+
+	const year = Number(match[1]);
+	const monthIndex = Number(match[2]) - 1;
+	return {
+		from: toLocalDateInputValue(new Date(year, monthIndex, 1)),
+		to: toLocalDateInputValue(new Date(year, monthIndex + 1, 0)),
+	};
+}
+
 export function buildLedgerDateQuery(
 	mode: LedgerDateFilterMode,
 	fromValue: string,

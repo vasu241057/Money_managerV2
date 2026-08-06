@@ -38,14 +38,20 @@ describe('Ledger swipe decisions', () => {
 });
 
 describe('Ledger budget filters', () => {
-	it('keeps review-required records out of budget classifications', () => {
-		const uncertain = transaction({
+	it('classifies review-required records by the same rules the monthly plan uses', () => {
+		// The plan counts unreviewed spending, so the ledger has to show it —
+		// otherwise an over-budget month cannot be explained from the ledger.
+		const uncertainSpend = transaction({ status: 'NEEDS_REVIEW' });
+		expect(matchesLedgerFilter(uncertainSpend, 'review')).toBe(true);
+		expect(matchesLedgerFilter(uncertainSpend, 'in-budget')).toBe(true);
+
+		const uncertainOutside = transaction({
 			status: 'NEEDS_REVIEW',
 			effectiveBudgetTreatment: 'EXCLUDE',
 			budgetEffect: 'NONE',
 		});
-		expect(matchesLedgerFilter(uncertain, 'review')).toBe(true);
-		expect(matchesLedgerFilter(uncertain, 'outside-budget')).toBe(false);
+		expect(matchesLedgerFilter(uncertainOutside, 'outside-budget')).toBe(true);
+		expect(matchesLedgerFilter(uncertainOutside, 'in-budget')).toBe(false);
 	});
 
 	it('shows verified records in their effective budget filter', () => {

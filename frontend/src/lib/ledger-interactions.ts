@@ -46,9 +46,12 @@ export function matchesLedgerFilter(transaction: Transaction, filter: LedgerFilt
 	if (filter === 'review') return transaction.status === 'NEEDS_REVIEW';
 	if (filter === 'all') return true;
 
-	// Budget classifications remain secondary until the transaction itself
-	// has been reviewed. This keeps uncertain records in one clear workflow.
-	if (transaction.status === 'NEEDS_REVIEW') return false;
+	// Budget chips mirror exactly what the monthly plan counts, and the plan
+	// counts unreviewed records too (the overview query filters on event status,
+	// never review status). Hiding them here made an over-budget month
+	// impossible to explain from the ledger: the rows driving the overage were
+	// the ones the filter dropped. The row keeps its amber "Review" badge, so
+	// an uncertain record still reads as uncertain.
 	if (filter === 'in-budget') return transaction.budgetEffect !== 'NONE';
 	if (filter === 'outside-budget') return transaction.effectiveBudgetTreatment === 'EXCLUDE';
 	return transaction.budgetEffect === 'ADJUSTMENT';

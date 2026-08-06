@@ -210,10 +210,12 @@ function LedgerApp() {
 		syncPath(scope === 'recent' ? '/review/recent' : '/review');
 	};
 
-	const openBudgetLedger = () => {
+	// The ledger opens on the same month the Budget screen was showing, so the
+	// rows it lists are the ones behind that month's number.
+	const openBudgetLedger = (month: string) => {
 		setActiveScreen('ledger');
 		setSettingsSubscreen('main');
-		syncPath('/ledger?budget=in');
+		syncPath(`/ledger?budget=in&month=${month}`);
 	};
 
 	const handleHomeNavigate = (screen: ScreenId) => {

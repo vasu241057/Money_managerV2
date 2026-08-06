@@ -22,6 +22,7 @@ import {
 import {
 	buildLedgerDateQuery,
 	formatLedgerDateFilterLabel,
+	monthDateInputBounds,
 	toLocalDateInputValue,
 	type LedgerDateFilterMode,
 } from '../../lib/ledger-date-filter';
@@ -401,11 +402,19 @@ export function TransactionsLedger({
 	onEditTransaction,
 	onReviewTransaction,
 }: TransactionsLedgerProps) {
+	// A deep link from the Budget screen carries the month it was showing, so
+	// the ledger opens scoped to that month instead of the whole feed.
+	const [linkedMonth] = useState(() => {
+		const requested = new URLSearchParams(window.location.search).get('month');
+		return requested === null ? null : monthDateInputBounds(requested);
+	});
 	const [searchInput, setSearchInput] = useState('');
 	const searchQuery = useDebouncedValue(searchInput.trim(), 220);
-	const [dateFilterMode, setDateFilterMode] = useState<LedgerDateFilterMode>('single');
-	const [dateFrom, setDateFrom] = useState('');
-	const [dateTo, setDateTo] = useState('');
+	const [dateFilterMode, setDateFilterMode] = useState<LedgerDateFilterMode>(
+		linkedMonth ? 'range' : 'single',
+	);
+	const [dateFrom, setDateFrom] = useState(linkedMonth?.from ?? '');
+	const [dateTo, setDateTo] = useState(linkedMonth?.to ?? '');
 	const dateQuery = useMemo(
 		() => buildLedgerDateQuery(dateFilterMode, dateFrom, dateTo),
 		[dateFilterMode, dateFrom, dateTo],

@@ -23,7 +23,8 @@ import { useCategories } from '../../hooks/useCategories';
 import { paiseToRupees, rupeesToPaise } from '../../lib/money';
 
 interface BudgetScreenProps {
-	onOpenBudgetLedger: () => void;
+	/** Receives the month being viewed so the ledger can scope to it. */
+	onOpenBudgetLedger: (month: string) => void;
 }
 
 interface FixedCostCandidate {
@@ -421,7 +422,7 @@ export function BudgetScreen({ onOpenBudgetLedger }: BudgetScreenProps) {
 
 						{summary.categories.length > 0 && (
 							<section className="mb-7">
-								<SectionHeading title="Where it went" action={<button type="button" onClick={onOpenBudgetLedger} className="text-xs font-bold flex items-center gap-1" style={{ color: 'var(--ledger-accent)' }}>Open ledger <ArrowRight size={13} /></button>} />
+								<SectionHeading title="Where it went" action={<button type="button" onClick={() => onOpenBudgetLedger(month)} className="text-xs font-bold flex items-center gap-1" style={{ color: 'var(--ledger-accent)' }}>Open ledger <ArrowRight size={13} /></button>} />
 								<div className="rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
 									{shownCategories.map((category, index) => (
 										<div key={category.category_id ?? 'uncategorized'} className="px-4 py-3" style={index < shownCategories.length - 1 ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}>
