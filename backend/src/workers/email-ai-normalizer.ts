@@ -25,6 +25,7 @@ import {
 	detectVpaHandle,
 	loadGlobalAliasesForLookup,
 	loadSystemCategoryMap,
+	loadUserMerchantRulesForLookup,
 	loadUserRulesForLookup,
 	parseAmountTokenToPaise,
 	resolveIdentityForSearchKeys,
@@ -1963,15 +1964,17 @@ export async function runNormalizeRawEmailsJob(
 		// Identity graph pass: user rules and global merchant aliases must
 		// influence AI extractions too, so user reviews teach this path.
 		const allSearchKeys = Array.from(new Set(validated.flatMap(buildCanonicalSearchKeys)));
-		const [systemCategories, userRules, globalAliases] = await Promise.all([
+		const [systemCategories, userRules, globalAliases, userMerchantRules] = await Promise.all([
 			loadSystemCategoryMap(sql),
 			loadUserRulesForLookup(sql, [rawEmail.user_id], allSearchKeys),
 			loadGlobalAliasesForLookup(sql, allSearchKeys),
+			loadUserMerchantRulesForLookup(sql, [rawEmail.user_id]),
 		]);
 		const identityLookup: IdentityGraphLookup = {
 			system_categories: systemCategories,
 			user_rules: userRules,
 			global_aliases: globalAliases,
+			user_merchant_rules: userMerchantRules,
 		};
 		const resolvedItems = resolveAiItemsWithIdentityGraph(
 			rawEmail.user_id,
