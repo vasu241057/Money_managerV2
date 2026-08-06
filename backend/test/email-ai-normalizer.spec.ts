@@ -156,6 +156,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [
 					{
@@ -231,6 +232,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			}
 			if (query.includes('from public.accounts as a')) return [];
 			if (query.includes('from public.user_credit_cards as ucc')) return [];
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) return [];
 			if (query.includes('from public.global_merchant_aliases as gma')) {
 				return [{
@@ -278,6 +280,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			}
 			if (query.includes('from public.accounts as a')) return [];
 			if (query.includes('from public.user_credit_cards as ucc')) return [];
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) return [];
 			if (query.includes('from public.global_merchant_aliases as gma')) return [];
 			if (query.includes('pg_advisory_xact_lock')) return [];
@@ -329,6 +332,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 				return [{ id: accountId, name: 'HDFC', type: 'bank', instrument_last4: '5960' }];
 			}
 			if (query.includes('from public.user_credit_cards as ucc')) return [];
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) return [];
 			if (query.includes('from public.global_merchant_aliases as gma')) return [];
 			if (query.includes('pg_advisory_xact_lock')) return [];
@@ -400,6 +404,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [];
 			}
@@ -517,6 +522,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [
 					{
@@ -625,6 +631,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 				if (query.includes('from public.user_credit_cards as ucc')) {
 					return [];
 				}
+				if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 				if (query.includes('from public.user_merchant_rules as umr')) {
 					return [];
 				}
@@ -742,6 +749,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('select uhc.category_id')) {
 				return [{ category_id: RULE_CATEGORY_ID }];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [];
 			}
@@ -810,6 +818,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [];
 			}
@@ -888,6 +897,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [
 					{
@@ -975,6 +985,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [];
 			}
@@ -1095,6 +1106,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [];
 			}
@@ -1185,6 +1197,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [];
 			}
@@ -1315,6 +1328,7 @@ describe('email-ai-normalizer identity graph integration', () => {
 			if (query.includes('from public.user_credit_cards as ucc')) {
 				return [];
 			}
+			if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 			if (query.includes('from public.user_merchant_rules as umr')) {
 				return [];
 			}

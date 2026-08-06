@@ -139,6 +139,7 @@ describe('alias probation (resolveIdentityForSearchKeys)', () => {
 		const lookup = {
 			system_categories: { income: null, expense: null, transfer: null },
 			user_rules: new Map(),
+			user_merchant_rules: new Map(),
 			global_aliases: new Map([
 				[
 					'BUNDLTECH',
@@ -184,6 +185,7 @@ describe('alias probation (resolveIdentityForSearchKeys)', () => {
 					]),
 				],
 			]),
+			user_merchant_rules: new Map(),
 			global_aliases: new Map(),
 		};
 
@@ -191,5 +193,108 @@ describe('alias probation (resolveIdentityForSearchKeys)', () => {
 		expect(identity.merchant_id).toBe('m-rahul');
 		expect(identity.rule_category_ids.income).toBe('c-other-income');
 		expect(identity.rule_category_ids.expense).toBe('c-gifts');
+	});
+
+	it('applies a merchant-level rule to an alias the search-key rules never saw', async () => {
+		const { resolveIdentityForSearchKeys } = await import('../src/lib/identity');
+		const lookup = {
+			system_categories: { income: null, expense: null, transfer: null },
+			user_rules: new Map(),
+			// The user mapped Swiggy once; this email arrives under a different
+			// alias, which is exactly what search-key rules cannot cover.
+			user_merchant_rules: new Map([
+				[
+					'u-1',
+					new Map([
+						['m-swiggy', { income: 'c-refund', expense: 'c-food-delivery', transfer: null }],
+					]),
+				],
+			]),
+			global_aliases: new Map([
+				[
+					'SWIGGYINSTAMART',
+					{
+						merchant_id: 'm-swiggy',
+						category_ids: { income: null, expense: 'c-groceries', transfer: null },
+						merchant_type: 'MERCHANT' as const,
+						confirmed: true,
+					},
+				],
+			]),
+		};
+
+		const identity = resolveIdentityForSearchKeys('u-1', ['SWIGGYINSTAMART'], lookup);
+		expect(identity.merchant_id).toBe('m-swiggy');
+		// The user's own decision outranks the global alias default...
+		expect(identity.rule_category_ids.expense).toBe('c-food-delivery');
+		expect(identity.alias_category_ids.expense).toBe('c-groceries');
+		// ...and counts as an identity signal, so the caller can auto-verify
+		// instead of sending this merchant back to review yet again.
+		expect(identity.user_rule_hit).toBe(true);
+	});
+
+	it('lets a search-key rule outrank the broader merchant-level rule', async () => {
+		const { resolveIdentityForSearchKeys } = await import('../src/lib/identity');
+		const lookup = {
+			system_categories: { income: null, expense: null, transfer: null },
+			user_rules: new Map([
+				[
+					'u-1',
+					new Map([
+						[
+							'SWIGGYDINEOUT',
+							{
+								merchant_id: 'm-swiggy',
+								category_ids: { income: null, expense: 'c-dining', transfer: null },
+							},
+						],
+					]),
+				],
+			]),
+			user_merchant_rules: new Map([
+				[
+					'u-1',
+					new Map([
+						['m-swiggy', { income: null, expense: 'c-food-delivery', transfer: null }],
+					]),
+				],
+			]),
+			global_aliases: new Map(),
+		};
+
+		const identity = resolveIdentityForSearchKeys('u-1', ['SWIGGYDINEOUT'], lookup);
+		// The key names this exact counterparty, so it stays more specific.
+		expect(identity.rule_category_ids.expense).toBe('c-dining');
+	});
+
+	it('ignores merchant-level rules behind an aggregator, as the gateway is not the merchant', async () => {
+		const { resolveIdentityForSearchKeys } = await import('../src/lib/identity');
+		const lookup = {
+			system_categories: { income: null, expense: null, transfer: null },
+			user_rules: new Map(),
+			user_merchant_rules: new Map([
+				[
+					'u-1',
+					new Map([
+						['m-razorpay', { income: null, expense: 'c-shopping', transfer: null }],
+					]),
+				],
+			]),
+			global_aliases: new Map([
+				[
+					'RAZORPAY',
+					{
+						merchant_id: 'm-razorpay',
+						category_ids: { income: null, expense: null, transfer: null },
+						merchant_type: 'AGGREGATOR' as const,
+						confirmed: true,
+					},
+				],
+			]),
+		};
+
+		const identity = resolveIdentityForSearchKeys('u-1', ['RAZORPAY'], lookup);
+		expect(identity.rule_category_ids.expense).toBeNull();
+		expect(identity.user_rule_hit).toBe(false);
 	});
 });

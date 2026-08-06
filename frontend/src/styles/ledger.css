@@ -21,11 +21,19 @@
 	pointer-events: auto;
 }
 
+/*
+ * Width tracks how far the row has actually been dragged, so the two-column
+ * grid splits the revealed strip evenly and Review and Delete grow together.
+ * At a fixed 160px the panel was anchored right, so a partial drag exposed only
+ * its right edge — Delete appeared alone and Review slid in afterwards.
+ */
 .ledger-swipe-secondary-actions {
 	position: absolute;
 	inset-block: 0;
 	right: 0;
-	width: 160px;
+	width: calc(var(--swipe-progress) * 160px);
+	min-width: 0;
+	overflow: hidden;
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	opacity: 0;
@@ -34,6 +42,13 @@
 }
 
 .ledger-swipe-row[data-swipe-direction='left'] .ledger-swipe-secondary-actions {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+/* Keyboard focus opens the pair at full width without waiting on the gesture. */
+.ledger-swipe-secondary-actions:focus-within {
+	width: 160px;
 	opacity: 1;
 	pointer-events: auto;
 }

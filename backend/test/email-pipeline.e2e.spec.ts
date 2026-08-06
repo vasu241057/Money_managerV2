@@ -584,6 +584,7 @@ function createSqlHarness(state: PipelineState): SqlMock {
 			return [];
 		}
 
+		if (query.includes('from public.user_merchant_category_rules as umcr')) return [];
 		if (query.includes('from public.user_merchant_rules as umr')) {
 			return [];
 		}

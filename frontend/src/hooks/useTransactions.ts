@@ -35,7 +35,7 @@ interface UseTransactionsResult {
   reviewTransaction: (params: {
     transactionId: string;
     payload: ReviewTransactionRequest;
-  }) => Promise<Transaction>;
+  }) => Promise<{ transaction: Transaction; backfilledCount: number }>;
   deleteTransaction: (id: string) => Promise<void>;
   restoreTransaction: (id: string) => Promise<void>;
   setBudgetTreatment: (id: string, treatment: BudgetTreatment) => Promise<Transaction>;
@@ -505,8 +505,7 @@ function useRemoteTransactions(options: UseTransactionsOptions = {}): UseTransac
       transactionId: string;
       payload: ReviewTransactionRequest;
     }) => {
-      const reviewed = await apiClient.reviewTransaction(transactionId, payload);
-      return reviewed.transaction;
+      return apiClient.reviewTransaction(transactionId, payload);
     },
     onMutate: async ({ transactionId, payload }) => {
       await queryClient.cancelQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
@@ -549,7 +548,16 @@ function useRemoteTransactions(options: UseTransactionsOptions = {}): UseTransac
       return { previous };
     },
     onSuccess: reviewed => {
-      if (!replaceCachedTransaction(reviewed)) {
+      // A merchant backfill re-categorized and verified other transactions the
+      // cache still holds at their old values, so the whole feed has to reload
+      // rather than just the row that was reviewed.
+      if (reviewed.backfilled_count > 0) {
+        void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
+        void queryClient.invalidateQueries({ queryKey: ['budget'] });
+        void queryClient.invalidateQueries({ queryKey: ANALYTICS_SUMMARY_QUERY_KEY });
+        return;
+      }
+      if (!replaceCachedTransaction(reviewed.transaction)) {
         void queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       }
 	  void queryClient.invalidateQueries({
@@ -587,7 +595,10 @@ function useRemoteTransactions(options: UseTransactionsOptions = {}): UseTransac
     },
     reviewTransaction: async params => {
       const reviewed = await reviewTransactionMutation.mutateAsync(params);
-      return mapFeedItemToUiTransaction(reviewed, accountsById, categoriesById);
+      return {
+        transaction: mapFeedItemToUiTransaction(reviewed.transaction, accountsById, categoriesById),
+        backfilledCount: reviewed.backfilled_count,
+      };
     },
     deleteTransaction: async id => {
       await deleteTransactionMutation.mutateAsync(id);
