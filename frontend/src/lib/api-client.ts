@@ -18,9 +18,11 @@ import type {
   GoogleOAuthConnectionStatusResponse,
   GoogleOAuthStartResponse,
   GlobalMerchantListItem,
+  SetUserDescriptorCategoryRequest,
   SetUserMerchantCategoryRequest,
   SetUserMerchantCategoryResponse,
   UserMerchantListItem,
+  UserMerchantTransactionItem,
   ListGlobalMerchantsQuery,
   ListTransactionsQuery,
   PaginatedResponse,
@@ -400,6 +402,24 @@ export const apiClient = {
     const response = await request<ApiEnvelope<SetUserMerchantCategoryResponse>>(
       `/merchants/${merchantId}/category`,
       { method: 'PUT', body: JSON.stringify(payload) },
+    );
+    return response.data;
+  },
+
+  async setUserDescriptorCategory(
+    merchantId: string,
+    payload: SetUserDescriptorCategoryRequest,
+  ): Promise<SetUserMerchantCategoryResponse> {
+    const response = await request<ApiEnvelope<SetUserMerchantCategoryResponse>>(
+      `/merchants/${merchantId}/descriptor-category`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+    );
+    return response.data;
+  },
+
+  async listUserMerchantTransactions(merchantId: string): Promise<UserMerchantTransactionItem[]> {
+    const response = await request<ApiEnvelope<UserMerchantTransactionItem[]>>(
+      `/merchants/${merchantId}/transactions`,
     );
     return response.data;
   },
