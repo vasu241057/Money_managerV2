@@ -1,19 +1,30 @@
 import type {
 	GlobalMerchantListItem,
+	SetUserDescriptorCategoryRequest,
 	SetUserMerchantCategoryRequest,
+	TransactionStatus,
 	TransactionType,
 	UserMerchantCategoryBreakdown,
+	UserMerchantDescriptorBreakdown,
 	UserMerchantListItem,
+	UserMerchantTransactionItem,
 } from '../../../shared/types';
-import { toNullableString, toRequiredString, toSafeInteger } from '../lib/db/serialization';
+import {
+	toIsoDateTime,
+	toNullableString,
+	toRequiredString,
+	toSafeInteger,
+} from '../lib/db/serialization';
 import type { SqlClient } from '../lib/db/client';
 import { badRequest, notFound } from '../lib/http/errors';
-import { asRecord, parseLimit, parseUuid } from '../lib/http/validation';
+import { asRecord, parseLimit, parseRequiredString, parseUuid } from '../lib/http/validation';
 
 const MAX_LIST_MERCHANTS_LIMIT = 1000;
 const DEFAULT_LIST_MERCHANTS_LIMIT = 200;
 const MAX_SEARCH_QUERY_LENGTH = 120;
 const MAX_USER_MERCHANTS_LIMIT = 500;
+const MAX_MERCHANT_TRANSACTIONS_LIMIT = 500;
+const MAX_SEARCH_KEY_LENGTH = 200;
 
 interface ParsedListGlobalMerchantsQuery {
 	q: string | null;
@@ -37,6 +48,28 @@ interface UserMerchantRowRaw {
 	rule_category_name: unknown;
 	common_category_id: unknown;
 	common_category_name: unknown;
+}
+
+interface UserMerchantDescriptorRowRaw {
+	merchant_id: unknown;
+	search_key: unknown;
+	label: unknown;
+	transaction_type: unknown;
+	transaction_count: unknown;
+	rule_category_id: unknown;
+	rule_category_name: unknown;
+	common_category_id: unknown;
+	common_category_name: unknown;
+}
+
+interface UserMerchantTransactionRowRaw {
+	transaction_id: unknown;
+	txn_date: unknown;
+	amount_in_paise: unknown;
+	type: unknown;
+	status: unknown;
+	category_name: unknown;
+	descriptor: unknown;
 }
 
 function parseTransactionType(value: unknown, fieldName: string): TransactionType {
@@ -192,6 +225,72 @@ export async function listUserMerchants(
 		order by tot.total_count desc, gm.canonical_name asc, pt.merchant_id, pt.transaction_count desc, pt.type
 	`;
 
+	// The raw counterparties behind each merchant, with any search-key rule the
+	// user already owns. Kept as a second pass because the descriptor grain is
+	// one level below the per-type grain above.
+	const descriptorRows = await sql<UserMerchantDescriptorRowRaw[]>`
+		with owned as (
+			select
+				t.merchant_id,
+				t.type,
+				t.category_id,
+				fe.search_key,
+				fe.counterparty_raw
+			from public.transactions as t
+			join public.financial_events as fe
+				on fe.id = t.financial_event_id
+				and fe.user_id = t.user_id
+			where t.user_id = ${userId}
+				and t.user_deleted_at is null
+				and t.merchant_id is not null
+				and fe.search_key is not null
+		),
+		per_descriptor as (
+			select
+				merchant_id,
+				search_key,
+				type,
+				count(*)::bigint as transaction_count,
+				min(coalesce(counterparty_raw, search_key)) as label
+			from owned
+			group by merchant_id, search_key, type
+		),
+		common as (
+			select distinct on (search_key, type)
+				search_key,
+				type,
+				category_id
+			from (
+				select search_key, type, category_id, count(*)::bigint as hits
+				from owned
+				where category_id is not null
+				group by search_key, type, category_id
+			) as tallied
+			order by search_key, type, hits desc, category_id
+		)
+		select
+			pd.merchant_id,
+			pd.search_key,
+			pd.label,
+			pd.type as transaction_type,
+			pd.transaction_count,
+			umrc.category_id as rule_category_id,
+			rc.name as rule_category_name,
+			cm.category_id as common_category_id,
+			cc.name as common_category_name
+		from per_descriptor as pd
+		left join common as cm on cm.search_key = pd.search_key and cm.type = pd.type
+		left join public.categories as cc on cc.id = cm.category_id
+		left join public.user_merchant_rules as umr
+			on umr.user_id = ${userId}
+			and umr.search_key = pd.search_key
+		left join public.user_merchant_rule_categories as umrc
+			on umrc.user_merchant_rule_id = umr.id
+			and umrc.transaction_type = pd.type
+		left join public.categories as rc on rc.id = umrc.category_id
+		order by pd.merchant_id, pd.transaction_count desc, pd.search_key, pd.type
+	`;
+
 	const merchants = new Map<string, UserMerchantListItem>();
 	for (const row of rows) {
 		const merchantId = toRequiredString(row.merchant_id, 'transactions.merchant_id');
@@ -202,6 +301,7 @@ export async function listUserMerchants(
 			logo_url: toNullableString(row.logo_url, 'merchant_logos.public_url'),
 			transaction_count: 0,
 			breakdown: [] as UserMerchantCategoryBreakdown[],
+			descriptors: [] as UserMerchantDescriptorBreakdown[],
 		};
 		const transactionCount = toSafeInteger(row.transaction_count, 'transactions.transaction_count');
 		merchant.transaction_count += transactionCount;
@@ -219,7 +319,66 @@ export async function listUserMerchants(
 		merchants.set(merchantId, merchant);
 	}
 
+	for (const row of descriptorRows) {
+		// Descriptors are listed for every merchant the page returned; ones
+		// belonging to merchants past the limit are simply skipped.
+		const merchant = merchants.get(toRequiredString(row.merchant_id, 'transactions.merchant_id'));
+		if (!merchant) continue;
+		merchant.descriptors.push({
+			search_key: toRequiredString(row.search_key, 'financial_events.search_key'),
+			label: toRequiredString(row.label, 'financial_events.counterparty_raw'),
+			transaction_type: parseTransactionType(row.transaction_type, 'transactions.type'),
+			transaction_count: toSafeInteger(row.transaction_count, 'transactions.transaction_count'),
+			rule_category_id: toNullableString(
+				row.rule_category_id,
+				'user_merchant_rule_categories.category_id',
+			),
+			rule_category_name: toNullableString(row.rule_category_name, 'categories.name'),
+			common_category_id: toNullableString(row.common_category_id, 'transactions.category_id'),
+			common_category_name: toNullableString(row.common_category_name, 'categories.name'),
+		});
+	}
+
 	return [...merchants.values()];
+}
+
+/** Transaction history for one merchant, newest first, for the detail list. */
+export async function listUserMerchantTransactions(
+	sql: SqlClient,
+	userId: string,
+	merchantId: string,
+	limit: number,
+): Promise<UserMerchantTransactionItem[]> {
+	const rows = await sql<UserMerchantTransactionRowRaw[]>`
+		select
+			t.id as transaction_id,
+			t.txn_date,
+			t.amount_in_paise,
+			t.type,
+			t.status,
+			c.name as category_name,
+			coalesce(fe.counterparty_raw, fe.search_key) as descriptor
+		from public.transactions as t
+		join public.financial_events as fe
+			on fe.id = t.financial_event_id
+			and fe.user_id = t.user_id
+		left join public.categories as c on c.id = t.category_id
+		where t.user_id = ${userId}
+			and t.merchant_id = ${merchantId}
+			and t.user_deleted_at is null
+		order by t.txn_date desc, t.id
+		limit ${limit}
+	`;
+
+	return rows.map(row => ({
+		transaction_id: toRequiredString(row.transaction_id, 'transactions.id'),
+		txn_date: toIsoDateTime(row.txn_date, 'transactions.txn_date'),
+		amount_in_paise: toSafeInteger(row.amount_in_paise, 'transactions.amount_in_paise'),
+		type: parseTransactionType(row.type, 'transactions.type'),
+		status: toRequiredString(row.status, 'transactions.status') as TransactionStatus,
+		category_name: toNullableString(row.category_name, 'categories.name'),
+		descriptor: toNullableString(row.descriptor, 'financial_events.counterparty_raw'),
+	}));
 }
 
 /**
@@ -267,6 +426,37 @@ export async function backfillMerchantCategory(
 	return rows.length;
 }
 
+/**
+ * The descriptor-scoped twin of backfillMerchantCategory. Matches on the raw
+ * search key, so a merchant's other descriptors are never touched.
+ */
+export async function backfillDescriptorCategory(
+	sql: SqlClient,
+	userId: string,
+	searchKey: string,
+	transactionType: TransactionType,
+	categoryId: string,
+	scope: MerchantBackfillScope,
+): Promise<number> {
+	const onlyAiAssigned = scope === 'AI_ONLY';
+	const rows = await sql<Array<{ id: unknown }>>`
+		update public.transactions as t
+		set category_id = ${categoryId},
+			status = 'VERIFIED'
+		from public.financial_events as fe
+		where fe.id = t.financial_event_id
+			and fe.user_id = t.user_id
+			and fe.search_key = ${searchKey}
+			and t.user_id = ${userId}
+			and t.type = ${transactionType}
+			and t.user_deleted_at is null
+			and (not ${onlyAiAssigned} or t.classification_source <> 'USER')
+			and (t.category_id is distinct from ${categoryId}::uuid or t.status <> 'VERIFIED')
+		returning t.id
+	`;
+	return rows.length;
+}
+
 export function parseSetUserMerchantCategoryRequest(
 	payload: unknown,
 ): SetUserMerchantCategoryRequest {
@@ -281,6 +471,34 @@ export function parseSetUserMerchantCategoryRequest(
 	};
 }
 
+export function parseSetUserDescriptorCategoryRequest(
+	payload: unknown,
+): SetUserDescriptorCategoryRequest {
+	const body = asRecord(payload);
+	if (typeof body.backfill !== 'boolean') {
+		throw badRequest('INVALID_PAYLOAD', 'backfill must be a boolean');
+	}
+	const searchKey = parseRequiredString(body.search_key, 'search_key');
+	if (searchKey.length > MAX_SEARCH_KEY_LENGTH) {
+		throw badRequest(
+			'INVALID_PAYLOAD',
+			`search_key must be at most ${MAX_SEARCH_KEY_LENGTH} characters`,
+		);
+	}
+	return {
+		search_key: searchKey,
+		transaction_type: parseTransactionType(body.transaction_type, 'transaction_type'),
+		category_id: parseUuid(body.category_id, 'category_id'),
+		backfill: body.backfill,
+	};
+}
+
+export function parseListMerchantTransactionsQuery(query: Record<string, unknown>): number {
+	return query.limit === undefined
+		? MAX_MERCHANT_TRANSACTIONS_LIMIT
+		: parseLimit(query.limit, MAX_MERCHANT_TRANSACTIONS_LIMIT);
+}
+
 export function parseListUserMerchantsQuery(query: Record<string, unknown>): number {
 	return query.limit === undefined
 		? MAX_USER_MERCHANTS_LIMIT
@@ -291,6 +509,33 @@ export function parseListUserMerchantsQuery(query: Record<string, unknown>): num
  * Saves the user's merchant-level default so future ingestion resolves it, and
  * optionally rewrites the transactions already on file.
  */
+/**
+ * The category must be usable by this user and match the transaction type. The
+ * table triggers enforce both, but a clear error beats a raised constraint
+ * reaching the client.
+ */
+async function assertCategoryUsable(
+	sql: SqlClient,
+	userId: string,
+	categoryId: string,
+	transactionType: TransactionType,
+): Promise<void> {
+	const categoryRows = await sql<Array<{ type: unknown }>>`
+		select c.type
+		from public.categories as c
+		where c.id = ${categoryId}
+			and (c.user_id = ${userId} or (c.user_id is null and c.is_system = true))
+		limit 1
+	`;
+	const categoryType = categoryRows[0]?.type;
+	if (categoryType === undefined) {
+		throw badRequest('CATEGORY_NOT_AVAILABLE', 'Category is not available to this user');
+	}
+	if (categoryType !== transactionType) {
+		throw badRequest('CATEGORY_TYPE_MISMATCH', `Category type must match ${transactionType}`);
+	}
+}
+
 export async function setUserMerchantCategory(
 	sql: SqlClient,
 	userId: string,
@@ -306,26 +551,7 @@ export async function setUserMerchantCategory(
 			throw notFound('MERCHANT_NOT_FOUND', 'Merchant not found');
 		}
 
-		// The category must be usable by this user and match the transaction
-		// type; the table trigger enforces both, but a clear error beats a
-		// raised constraint reaching the client.
-		const categoryRows = await merchantSql<Array<{ type: unknown }>>`
-			select c.type
-			from public.categories as c
-			where c.id = ${input.category_id}
-				and (c.user_id = ${userId} or (c.user_id is null and c.is_system = true))
-			limit 1
-		`;
-		const categoryType = categoryRows[0]?.type;
-		if (categoryType === undefined) {
-			throw badRequest('CATEGORY_NOT_AVAILABLE', 'Category is not available to this user');
-		}
-		if (categoryType !== input.transaction_type) {
-			throw badRequest(
-				'CATEGORY_TYPE_MISMATCH',
-				`Category type must match ${input.transaction_type}`,
-			);
-		}
+		await assertCategoryUsable(merchantSql, userId, input.category_id, input.transaction_type);
 
 		await merchantSql`
 			insert into public.user_merchant_category_rules (
@@ -345,6 +571,87 @@ export async function setUserMerchantCategory(
 			merchantSql,
 			userId,
 			merchantId,
+			input.transaction_type,
+			input.category_id,
+			'ALL',
+		);
+	});
+}
+
+/**
+ * Saves a rule for one raw descriptor. This reuses public.user_merchant_rules,
+ * which is already keyed by (user_id, search_key) and already outranks the
+ * merchant-level rule during ingestion — so the narrower answer wins without
+ * any change to the precedence chain.
+ */
+export async function setUserDescriptorCategory(
+	sql: SqlClient,
+	userId: string,
+	merchantId: string,
+	input: SetUserDescriptorCategoryRequest,
+): Promise<number> {
+	return sql.begin(async (tx) => {
+		const descriptorSql = tx as unknown as SqlClient;
+		const merchantRows = await descriptorSql<Array<{ id: unknown }>>`
+			select gm.id from public.global_merchants as gm where gm.id = ${merchantId} limit 1
+		`;
+		if (merchantRows.length === 0) {
+			throw notFound('MERCHANT_NOT_FOUND', 'Merchant not found');
+		}
+
+		// The descriptor has to be one this user actually transacted under, and
+		// it has to belong to the merchant in the path — otherwise a rule could
+		// be written for a counterparty the user has never seen.
+		const descriptorRows = await descriptorSql<Array<{ search_key: unknown }>>`
+			select fe.search_key
+			from public.transactions as t
+			join public.financial_events as fe
+				on fe.id = t.financial_event_id
+				and fe.user_id = t.user_id
+			where t.user_id = ${userId}
+				and t.merchant_id = ${merchantId}
+				and fe.search_key = ${input.search_key}
+				and t.user_deleted_at is null
+			limit 1
+		`;
+		if (descriptorRows.length === 0) {
+			throw notFound('DESCRIPTOR_NOT_FOUND', 'Descriptor not found for this merchant');
+		}
+
+		await assertCategoryUsable(descriptorSql, userId, input.category_id, input.transaction_type);
+
+		const ruleRows = await descriptorSql<Array<{ id: unknown }>>`
+			insert into public.user_merchant_rules (
+				user_id,
+				search_key,
+				merchant_id,
+				custom_category_id
+			)
+			values (${userId}, ${input.search_key}, ${merchantId}, ${input.category_id})
+			on conflict (user_id, search_key) do update
+			set merchant_id = excluded.merchant_id,
+				custom_category_id = excluded.custom_category_id,
+				updated_at = now()
+			returning id
+		`;
+		const ruleId = toRequiredString(ruleRows[0]?.id, 'user_merchant_rules.id');
+		await descriptorSql`
+			insert into public.user_merchant_rule_categories (
+				user_merchant_rule_id,
+				transaction_type,
+				category_id
+			)
+			values (${ruleId}, ${input.transaction_type}, ${input.category_id})
+			on conflict (user_merchant_rule_id, transaction_type) do update
+			set category_id = excluded.category_id,
+				updated_at = now()
+		`;
+
+		if (!input.backfill) return 0;
+		return backfillDescriptorCategory(
+			descriptorSql,
+			userId,
+			input.search_key,
 			input.transaction_type,
 			input.category_id,
 			'ALL',
