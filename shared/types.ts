@@ -339,6 +339,26 @@ export interface UserMerchantCategoryBreakdown {
   common_category_name: string | null;
 }
 
+/**
+ * One raw counterparty string the bank actually sent, under its normalized
+ * merchant. A rule here covers only this descriptor, which is how a merchant
+ * with several business lines ("AMAZON PAY IN GROCERY" vs "IN E COMMERCE")
+ * gets a category per line instead of one blunt answer for the brand.
+ */
+export interface UserMerchantDescriptorBreakdown {
+  /** Canonical key the identity graph matches on. */
+  search_key: string;
+  /** The readable counterparty as it arrived, e.g. "RAZ*Swiggy". */
+  label: string;
+  transaction_type: TransactionType;
+  transaction_count: number;
+  /** The user's saved default for this descriptor and type, if any. */
+  rule_category_id: UUID | null;
+  rule_category_name: string | null;
+  common_category_id: UUID | null;
+  common_category_name: string | null;
+}
+
 export interface UserMerchantListItem {
   merchant_id: UUID;
   canonical_name: string;
@@ -347,6 +367,8 @@ export interface UserMerchantListItem {
   /** Across every transaction type; the list is ordered by this, descending. */
   transaction_count: number;
   breakdown: UserMerchantCategoryBreakdown[];
+  /** Every raw descriptor seen for this merchant, busiest first. */
+  descriptors: UserMerchantDescriptorBreakdown[];
 }
 
 /**
@@ -361,6 +383,29 @@ export interface SetUserMerchantCategoryRequest {
 
 export interface SetUserMerchantCategoryResponse {
   backfilled_count: number;
+}
+
+/**
+ * The descriptor-level counterpart. Scoped to one raw counterparty, so it never
+ * reaches the merchant's other descriptors.
+ */
+export interface SetUserDescriptorCategoryRequest {
+  search_key: string;
+  transaction_type: TransactionType;
+  category_id: UUID;
+  backfill: boolean;
+}
+
+/** One row of the merchant's transaction history, for the detail list. */
+export interface UserMerchantTransactionItem {
+  transaction_id: UUID;
+  txn_date: string;
+  amount_in_paise: number;
+  type: TransactionType;
+  status: TransactionStatus;
+  category_name: string | null;
+  /** The raw counterparty this one arrived under. */
+  descriptor: string | null;
 }
 
 export interface CreateAccountRequest {
