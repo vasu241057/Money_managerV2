@@ -168,6 +168,12 @@ export interface IdentityGraphLookup {
 	system_categories: SystemCategoryMap;
 	user_rules: Map<UUID, Map<string, UserRuleResolution>>;
 	global_aliases: Map<string, GlobalAliasResolution>;
+	/**
+	 * The user's merchant-level category defaults, by user then merchant. Where
+	 * user_rules only match the exact counterparty string, these reach every
+	 * alias of a merchant, so one review answers the merchant for good.
+	 */
+	user_merchant_rules: Map<UUID, Map<UUID, SystemCategoryMap>>;
 }
 
 interface SystemCategoryRowRaw {
@@ -182,6 +188,13 @@ interface UserRuleLookupRowRaw {
 	merchant_id: unknown;
 	category_type: unknown;
 	custom_category_id: unknown;
+}
+
+interface UserMerchantRuleLookupRowRaw {
+	user_id: unknown;
+	merchant_id: unknown;
+	transaction_type: unknown;
+	category_id: unknown;
 }
 
 interface GlobalAliasLookupRowRaw {
@@ -308,6 +321,61 @@ export async function loadUserRulesForLookup(
 	return lookup;
 }
 
+/**
+ * Loads every merchant-level category default these users own. Unlike the
+ * search-key rules this is not narrowed by the email's keys — the merchant is
+ * only known after alias resolution, and a user holds few of these.
+ */
+export async function loadUserMerchantRulesForLookup(
+	sql: SqlClient,
+	userIds: UUID[],
+): Promise<Map<UUID, Map<UUID, SystemCategoryMap>>> {
+	if (userIds.length === 0) {
+		return new Map<UUID, Map<UUID, SystemCategoryMap>>();
+	}
+
+	const rows = await sql<UserMerchantRuleLookupRowRaw[]>`
+		select
+			umcr.user_id,
+			umcr.merchant_id,
+			umcr.transaction_type,
+			umcr.category_id
+		from public.user_merchant_category_rules as umcr
+		where umcr.user_id = any(${userIds}::uuid[])
+		order by umcr.user_id, umcr.merchant_id, umcr.transaction_type
+	`;
+
+	const lookup = new Map<UUID, Map<UUID, SystemCategoryMap>>();
+	for (const row of rows) {
+		const userId = toRequiredString(row.user_id, 'user_merchant_category_rules.user_id');
+		const merchantId = toRequiredString(
+			row.merchant_id,
+			'user_merchant_category_rules.merchant_id',
+		);
+		const transactionType = toRequiredString(
+			row.transaction_type,
+			'user_merchant_category_rules.transaction_type',
+		);
+		if (transactionType !== 'income' && transactionType !== 'expense' && transactionType !== 'transfer') {
+			continue;
+		}
+		const userMap = lookup.get(userId) ?? new Map<UUID, SystemCategoryMap>();
+		const categories = userMap.get(merchantId) ?? {
+			income: null,
+			expense: null,
+			transfer: null,
+		};
+		categories[transactionType] = toRequiredString(
+			row.category_id,
+			'user_merchant_category_rules.category_id',
+		) as UUID;
+		userMap.set(merchantId, categories);
+		lookup.set(userId, userMap);
+	}
+
+	return lookup;
+}
+
 export async function loadGlobalAliasesForLookup(
 	sql: SqlClient,
 	searchKeys: string[],
@@ -412,6 +480,23 @@ export function resolveIdentityForSearchKeys(
 			aliasCategoryIds[type] = aliasCategoryIds[type] ?? alias.category_ids[type];
 		}
 		break;
+	}
+
+	// Merchant-level defaults apply once the merchant is known, whichever way it
+	// resolved. They rank below a search-key rule (that one names this exact
+	// counterparty) but count as the user's own decision all the same, so a
+	// merchant the user has mapped verifies without another trip to review.
+	// An aggregator alias never identifies the real merchant, so it is skipped.
+	if (merchantId && merchantType !== 'AGGREGATOR') {
+		const merchantRules = lookup.user_merchant_rules.get(userId)?.get(merchantId);
+		if (merchantRules) {
+			for (const type of ['income', 'expense', 'transfer'] as const) {
+				if (ruleCategoryIds[type] === null && merchantRules[type] !== null) {
+					ruleCategoryIds[type] = merchantRules[type];
+					userRuleHit = true;
+				}
+			}
+		}
 	}
 
 	return {
