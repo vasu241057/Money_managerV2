@@ -14,7 +14,8 @@ interface ReviewQueueProps {
 	transaction: Transaction;
 	position: number;
 	totalCount: number;
-	onReviewed: () => void;
+	/** Receives how many other transactions the merchant rule carried along. */
+	onReviewed: (backfilledCount: number) => void;
 	onClose: () => void;
 }
 
@@ -216,8 +217,8 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 			payload.rule_search_key = ruleSearchKey.trim() ? ruleSearchKey : null;
 		}
 		try {
-			await reviewTransaction({ transactionId: transaction.id, payload });
-			onReviewed();
+			const { backfilledCount } = await reviewTransaction({ transactionId: transaction.id, payload });
+			onReviewed(backfilledCount);
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : 'Failed to review. Try again.';
 			setSubmitError(msg);
@@ -554,6 +555,7 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 										</p>
 										<p className="text-[11px] leading-tight" style={{ color: 'var(--ledger-muted)' }}>
 											The merchant is remembered for every direction; this category is remembered only for {selectedType}.
+											Existing {selectedType} transactions for this merchant are updated too, except any you categorized yourself.
 										</p>
 									</div>
 								</div>

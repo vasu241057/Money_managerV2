@@ -18,6 +18,9 @@ import type {
   GoogleOAuthConnectionStatusResponse,
   GoogleOAuthStartResponse,
   GlobalMerchantListItem,
+  SetUserMerchantCategoryRequest,
+  SetUserMerchantCategoryResponse,
+  UserMerchantListItem,
   ListGlobalMerchantsQuery,
   ListTransactionsQuery,
   PaginatedResponse,
@@ -382,6 +385,22 @@ export const apiClient = {
       })}`,
     );
 
+    return response.data;
+  },
+
+  async listUserMerchants(): Promise<UserMerchantListItem[]> {
+    const response = await request<ApiEnvelope<UserMerchantListItem[]>>('/merchants/mine');
+    return response.data;
+  },
+
+  async setUserMerchantCategory(
+    merchantId: string,
+    payload: SetUserMerchantCategoryRequest,
+  ): Promise<SetUserMerchantCategoryResponse> {
+    const response = await request<ApiEnvelope<SetUserMerchantCategoryResponse>>(
+      `/merchants/${merchantId}/category`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+    );
     return response.data;
   },
 
