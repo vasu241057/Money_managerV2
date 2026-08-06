@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { TransactionType, UserMerchantListItem } from '../../../shared/types';
+import type {
+  TransactionType,
+  UserMerchantListItem,
+  UserMerchantTransactionItem,
+} from '../../../shared/types';
 import { apiClient, toErrorMessage } from '../lib/api-client';
 
 export const USER_MERCHANTS_QUERY_KEY = ['user-merchants'] as const;
@@ -10,6 +14,8 @@ interface SetCategoryInput {
   categoryId: string;
   /** True rewrites every existing transaction for this merchant and type. */
   backfill: boolean;
+  /** Set to scope the rule to one raw descriptor instead of the merchant. */
+  searchKey?: string;
 }
 
 interface UseUserMerchantsResult {
@@ -31,12 +37,19 @@ export function useUserMerchants(): UseUserMerchantsResult {
   });
 
   const setCategoryMutation = useMutation({
-    mutationFn: ({ merchantId, transactionType, categoryId, backfill }: SetCategoryInput) =>
-      apiClient.setUserMerchantCategory(merchantId, {
-        transaction_type: transactionType,
-        category_id: categoryId,
-        backfill,
-      }),
+    mutationFn: ({ merchantId, transactionType, categoryId, backfill, searchKey }: SetCategoryInput) =>
+      searchKey === undefined
+        ? apiClient.setUserMerchantCategory(merchantId, {
+            transaction_type: transactionType,
+            category_id: categoryId,
+            backfill,
+          })
+        : apiClient.setUserDescriptorCategory(merchantId, {
+            search_key: searchKey,
+            transaction_type: transactionType,
+            category_id: categoryId,
+            backfill,
+          }),
     onSuccess: async () => {
       // A backfill rewrites categories, review status and therefore budget
       // totals, so every surface reading transactions has to refetch.
@@ -59,5 +72,25 @@ export function useUserMerchants(): UseUserMerchantsResult {
       const response = await setCategoryMutation.mutateAsync(input);
       return response.backfilled_count;
     },
+  };
+}
+
+/** Transaction history for one merchant. Fetches only while a merchant is open. */
+export function useUserMerchantTransactions(merchantId: string | null): {
+  transactions: UserMerchantTransactionItem[];
+  isLoading: boolean;
+  error: string | null;
+} {
+  const query = useQuery({
+    queryKey: [...USER_MERCHANTS_QUERY_KEY, 'transactions', merchantId],
+    queryFn: () => apiClient.listUserMerchantTransactions(merchantId as string),
+    enabled: merchantId !== null,
+    staleTime: 30_000,
+  });
+
+  return {
+    transactions: query.data ?? [],
+    isLoading: query.isLoading,
+    error: query.error ? toErrorMessage(query.error) : null,
   };
 }
