@@ -13,13 +13,16 @@ function normalizeQuery(strings: TemplateStringsArray): string {
 function createSqlForReviewTests(handlers: QueryHandler[]): {
 	sql: SqlClient;
 	queries: string[];
+	values: unknown[][];
 } {
 	const queries: string[] = [];
+	const capturedValues: unknown[][] = [];
 	let index = 0;
 
 	const tag = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
 		const query = normalizeQuery(strings);
 		queries.push(query);
+		capturedValues.push(values);
 		const handler = handlers[index];
 		index += 1;
 
@@ -34,7 +37,7 @@ function createSqlForReviewTests(handlers: QueryHandler[]): {
 	(sql as unknown as { begin: (cb: (tx: SqlClient) => Promise<unknown>) => Promise<unknown> }).begin =
 		async (callback: (tx: SqlClient) => Promise<unknown>) => callback(sql);
 
-	return { sql, queries };
+	return { sql, queries, values: capturedValues };
 }
 
 function transactionFeedRow(overrides?: Partial<Record<string, unknown>>): Record<string, unknown> {
@@ -160,6 +163,8 @@ describe('reviewTransaction', () => {
 				expect(values).toContain('expense');
 				return [];
 			},
+			// Backfill carries the answer over rows sharing this descriptor.
+			() => [{ id: 'f1' }, { id: 'f2' }],
 		]);
 
 		const result = await reviewTransaction(
@@ -178,6 +183,56 @@ describe('reviewTransaction', () => {
 		expect(ruleInsertValues).toContain('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
 		expect(queries[5]).toContain('insert into public.user_merchant_rules');
 		expect(queries[6]).toContain('insert into public.user_merchant_rule_categories');
+		expect(result.backfilled_count).toBe(2);
+	});
+
+	it('scopes the review backfill to the descriptor, never the whole merchant', async () => {
+		const { sql, queries, values } = createSqlForReviewTests([
+			() => [
+				{
+					transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					transaction_status: 'NEEDS_REVIEW',
+					transaction_category_id: null,
+					transaction_merchant_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+					transaction_type: 'expense',
+					financial_event_direction: 'debit',
+					financial_event_search_key: 'AMAZONPAYINGROCERY',
+				},
+			],
+			() => [{ type: 'expense' }],
+			() => [],
+			() => [
+				transactionFeedRow({
+					transaction_category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+					category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+				}),
+			],
+			() => [],
+			() => [{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }],
+			() => [],
+			() => [{ id: 'f1' }],
+		]);
+
+		await reviewTransaction(
+			sql,
+			'11111111-1111-4111-8111-111111111111',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			{
+				category_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+				apply_rule: true,
+			},
+		);
+
+		const backfill = queries[7] ?? '';
+		expect(backfill).toContain('update public.transactions');
+		expect(backfill).toContain('fe.search_key =');
+		// The whole point: one raw counterparty, not every descriptor the
+		// merchant owns, and no merchant-wide rule written from a review.
+		expect(backfill).not.toContain('t.merchant_id');
+		expect(values[7]).toContain('AMAZONPAYINGROCERY');
+		expect(
+			queries.some(query => query.includes('user_merchant_category_rules')),
+		).toBe(false);
 	});
 
 	it('rejects rule write when no search key is available', async () => {
