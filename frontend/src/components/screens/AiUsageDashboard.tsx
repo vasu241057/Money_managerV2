@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
 	Activity,
 	AlertCircle,
@@ -13,34 +13,47 @@ import {
 	Clock3,
 	Cpu,
 	Database,
+	HelpCircle,
 	Inbox,
+	KeyRound,
 	Layers3,
 	Mail,
 	RefreshCw,
 	RotateCcw,
+	Search,
 	ShieldCheck,
 	Tags,
 	XCircle,
 	type LucideIcon,
 } from 'lucide-react';
 import type {
+	AiMerchantMappingSummary,
+	AiTavilyKeyCredits,
 	AiProcessingRun,
 	AiProcessingSummary,
 	AiUsageEvent,
 	AiUsageModelBreakdown,
 	AiUsageOperation,
 	AiUsageProvider,
+	MerchantType,
 } from '../../../../shared/types';
 import {
 	currentMonthIST,
 	useAiUsageDashboard,
 	useAiUsageSummary,
+	useTavilyKeys,
 } from '../../hooks/useAiUsage';
 import { SkeletonBar } from '../ui/Skeleton';
 
 interface AiUsageDashboardProps {
 	onBack: () => void;
 }
+
+const DASHBOARD_TABS = [
+	{ id: 'spend', label: 'Spend' },
+	{ id: 'processing', label: 'Processing' },
+	{ id: 'mapping', label: 'Merchant mapping' },
+] as const;
 
 interface OperationMeta {
 	label: string;
@@ -488,6 +501,308 @@ function ProcessingPanel({
 	);
 }
 
+const MERCHANT_TYPE_LABELS: Record<MerchantType, string> = {
+	MERCHANT: 'Merchant',
+	TRANSFER_INSTITUTION: 'Bank / transfer',
+	AGGREGATOR: 'Aggregator',
+	P2P: 'Person',
+};
+
+function MerchantMappingDayCard({ day }: { day: AiMerchantMappingSummary['days'][number] }) {
+	const [expanded, setExpanded] = useState(false);
+	// Searches and AI calls without mappings are a deliberate preview run
+	// (the preview really pays for Tavily and tokens but persists nothing),
+	// so they must read as activity, not as a broken run.
+	const ranWithoutMappings = day.tavily_searches > 0 && day.merchants_mapped === 0;
+
+	return (
+		<div className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+			<button
+				type="button"
+				onClick={() => setExpanded((value) => !value)}
+				aria-expanded={expanded}
+				className="ai-usage-focus w-full px-4 py-4 text-left flex items-start gap-3.5 transition-colors"
+			>
+				<div className="w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0" style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}>
+					<Tags size={16} strokeWidth={2} />
+				</div>
+				<div className="min-w-0 flex-1">
+					<div className="flex items-start justify-between gap-3">
+						<div className="min-w-0">
+							<p className="text-sm font-bold" style={{ color: 'var(--ledger-fg)' }}>{formatDate(`${day.day}T00:00:00Z`)}</p>
+							<p className="text-[10px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+								{day.counters_available
+									? `${day.merchants_mapped} mapped · ${day.merchants_skipped_unsure} unsure`
+									: `${day.mappings.length} mapping${day.mappings.length === 1 ? '' : 's'} on file`}
+							</p>
+						</div>
+						<div className="text-right shrink-0">
+							<p className="text-xs font-bold tnum" style={{ color: 'var(--ledger-fg)' }}>
+								{day.counters_available ? `${day.tavily_searches} searches` : 'Counts not recorded'}
+							</p>
+							{day.counters_available && (
+								<p className="text-[10px] tnum mt-0.5" style={{ color: 'var(--ledger-muted)' }}>{day.merchant_ai_calls} AI calls</p>
+							)}
+						</div>
+					</div>
+					{!day.counters_available && (
+						<p className="text-[10px] mt-2 flex items-center gap-1.5" style={{ color: 'var(--ledger-muted)' }}>
+							<HelpCircle size={11} /> Mappings survive, but this day's counters were never written — treat the totals as unknown, not zero.
+						</p>
+					)}
+					{day.counters_available && ranWithoutMappings && (
+						<p className="text-[10px] mt-2 flex items-center gap-1.5" style={{ color: 'var(--ledger-amber)' }}>
+							<HelpCircle size={11} /> Searches without mappings — a preview run, or nothing was confidently identified.
+						</p>
+					)}
+				</div>
+				{expanded ? (
+					<ChevronUp size={14} className="mt-1 shrink-0" style={{ color: 'var(--ledger-muted)' }} />
+				) : (
+					<ChevronDown size={14} className="mt-1 shrink-0" style={{ color: 'var(--ledger-muted)' }} />
+				)}
+			</button>
+
+			{expanded && (
+				<div className="mx-4 mb-4 rounded-[12px] overflow-hidden" style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)' }}>
+					{day.mappings.length > 0 ? (
+						day.mappings.map((mapping, index) => {
+							const isMerchant = mapping.merchant_type === 'MERCHANT';
+							return (
+								<div key={mapping.search_key} className="px-3.5 py-3" style={index < day.mappings.length - 1 ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}>
+									<div className="flex items-start justify-between gap-3">
+										<div className="min-w-0 flex-1">
+											{/* The payee as the bank wrote it reads far better than the
+											    normalized key; the key stays visible underneath because it
+											    is what the identity graph actually matches on. */}
+											<p className="text-[11px] break-all" style={{ color: 'var(--ledger-fg)' }}>
+												{mapping.raw_payee ?? mapping.search_key}
+											</p>
+											{mapping.raw_payee !== null && (
+												<p className="text-[9px] font-mono break-all mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+													{mapping.search_key}
+												</p>
+											)}
+											<div className="flex items-center gap-1.5 mt-1 min-w-0">
+												<p className="text-sm font-bold truncate" style={{ color: 'var(--ledger-fg)' }}>{mapping.canonical_name}</p>
+												<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: isMerchant ? 'var(--ledger-nav-active)' : 'var(--ledger-amber-bg)', color: isMerchant ? 'var(--ledger-accent)' : 'var(--ledger-amber)' }}>
+													{MERCHANT_TYPE_LABELS[mapping.merchant_type]}
+												</span>
+												{!mapping.confirmed && (
+													<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: 'var(--ledger-amber-bg)', color: 'var(--ledger-amber)' }}>
+														Unconfirmed
+													</span>
+												)}
+											</div>
+										</div>
+										<div className="text-right shrink-0">
+											<p className="text-xs font-semibold tnum" style={{ color: mapping.default_category ? 'var(--ledger-fg)' : 'var(--ledger-muted)' }}>
+												{mapping.default_category ?? 'No default category'}
+											</p>
+											{!mapping.default_category && (
+												<p className="text-[9px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+													{isMerchant ? 'None assigned' : 'Correct — never set for aggregators & people'}
+												</p>
+											)}
+										</div>
+									</div>
+								</div>
+							);
+						})
+					) : (
+						<div className="px-3.5 py-3">
+							<p className="text-[10px]" style={{ color: 'var(--ledger-muted)' }}>
+								No mappings were created this day — the run's answers were unsure or nothing was a fit.
+							</p>
+						</div>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function MerchantMappingPanel({
+	summary,
+	keys,
+	keysLoading,
+	error,
+	onRetry,
+}: {
+	summary: AiMerchantMappingSummary | undefined;
+	keys: AiTavilyKeyCredits[];
+	keysLoading: boolean;
+	error: string | null;
+	onRetry: () => void;
+}) {
+	const enabled = summary?.mapper_enabled ?? false;
+	const days = summary?.days ?? [];
+	const anyKeyUnavailable = keys.some((key) => key.unavailable);
+
+	return (
+		<>
+			<section
+				className="ai-usage-card rounded-[16px] overflow-hidden mb-5"
+				style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+			>
+				<div className="px-4 py-3.5 flex items-center justify-between gap-3">
+					<div className="flex items-center gap-2.5">
+						<ShieldCheck size={15} style={{ color: enabled ? 'var(--ledger-positive)' : 'var(--ledger-amber)' }} />
+						<div>
+							<p className="text-sm font-bold" style={{ color: 'var(--ledger-fg)' }}>
+								{enabled ? 'Nightly mapping is running' : 'Nightly mapping is not running'}
+							</p>
+							<p className="text-[10px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+								{enabled
+									? 'The daily job maps unmapped payee wordings with Tavily searches and one AI pass.'
+									: 'MERCHANT_MAPPING_ENABLED is unset, so nothing is being mapped. The view below is history plus live credit state.'}
+							</p>
+						</div>
+					</div>
+					<span
+						className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full shrink-0"
+						style={{ background: enabled ? 'var(--ledger-nav-active)' : 'var(--ledger-amber-bg)', color: enabled ? 'var(--ledger-positive)' : 'var(--ledger-amber)' }}
+					>
+						<span className="w-1.5 h-1.5 rounded-full" style={{ background: enabled ? 'var(--ledger-positive)' : 'var(--ledger-amber)' }} />
+						{enabled ? 'Enabled' : 'Disabled'}
+					</span>
+				</div>
+			</section>
+
+			<section className="mb-6">
+				<div className="flex items-end justify-between gap-3 mb-3 px-1">
+					<div>
+						<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>Tavily credits</p>
+						<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>Separate budget from the AI spend — one basic search costs 1 credit</p>
+					</div>
+					<Search size={16} style={{ color: 'var(--ledger-accent)' }} />
+				</div>
+
+				{keysLoading ? (
+					<div className="rounded-[14px] px-5 py-6 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+						<p className="text-[11px]" style={{ color: 'var(--ledger-muted)' }}>Checking key balances with Tavily…</p>
+					</div>
+				) : keys.length === 0 ? (
+					<div className="rounded-[14px] px-5 py-6 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+						<KeyRound size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-muted)' }} />
+						<p className="text-sm font-bold">No Tavily key configured</p>
+						<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>Set TAVILY_API_KEY for the mapper to search.</p>
+					</div>
+				) : (
+					<div className="space-y-3">
+						{keys.map((key) => {
+							const hasNumbers = key.remaining_credits !== null;
+							const usedPercent =
+								key.used_credits !== null && key.limit_credits !== null && key.limit_credits > 0
+									? (key.used_credits / key.limit_credits) * 100
+									: key.plan_used_credits !== null && key.plan_limit_credits !== null && key.plan_limit_credits > 0
+										? (key.plan_used_credits / key.plan_limit_credits) * 100
+										: null;
+							return (
+								<div key={key.label} className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+									<div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
+										<div className="flex items-center gap-2.5">
+											<span className="w-2 h-2 rounded-full" style={{ background: key.unavailable ? 'var(--ledger-amber)' : key.remaining_credits !== null && key.remaining_credits <= 100 ? 'var(--ledger-negative)' : 'var(--ledger-accent)' }} />
+											<span className="text-sm font-bold">{key.label}</span>
+											{key.is_live && (
+												<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5" style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}>
+													Live
+												</span>
+											)}
+										</div>
+										<span className="text-[11px] tnum" style={{ color: 'var(--ledger-muted)' }}>
+											{key.plan_name ? `${key.plan_name} plan` : ''}
+										</span>
+									</div>
+
+									<div className="px-4 py-3.5">
+										{key.unavailable ? (
+											<div className="flex items-center gap-2">
+												<AlertCircle size={14} style={{ color: 'var(--ledger-amber)' }} />
+												<p className="text-xs font-bold" style={{ color: 'var(--ledger-amber)' }}>Credit balance unavailable</p>
+												<p className="text-[10px]" style={{ color: 'var(--ledger-muted)' }}>The usage endpoint did not answer for this key.</p>
+											</div>
+										) : (
+											<>
+												<div className="flex items-end justify-between gap-3">
+													<div>
+														<p className="text-[24px] leading-none font-bold tracking-[-0.03em] tnum" style={{ color: 'var(--ledger-fg)' }}>
+															{hasNumbers ? `${formatCount(key.remaining_credits ?? 0)} credits` : '—'}
+														</p>
+														<p className="text-[9px] font-bold uppercase tracking-wider mt-1" style={{ color: 'var(--ledger-muted)' }}>remaining this cycle</p>
+													</div>
+													<div className="text-right">
+														<p className="text-xs font-semibold tnum" style={{ color: 'var(--ledger-muted)' }}>
+															{key.used_credits !== null ? `${formatCount(key.used_credits)} used` : ''}
+														</p>
+														<p className="text-[10px] tnum mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+															{key.limit_credits !== null ? `of ${formatCount(key.limit_credits)} (key)` : key.plan_limit_credits !== null ? `of ${formatCount(key.plan_limit_credits)} (plan)` : ''}
+														</p>
+													</div>
+												</div>
+												{usedPercent !== null && (
+													<div className="h-1.5 rounded-full mt-3 overflow-hidden" style={{ background: 'var(--ledger-rule)' }}>
+														<div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, usedPercent))}%`, background: usedPercent >= 90 ? 'var(--ledger-negative)' : 'var(--ledger-accent)' }} />
+													</div>
+												)}
+												{key.fetched_at && (
+													<p className="text-[9px] mt-2" style={{ color: 'var(--ledger-muted)' }}>
+														{formatRefreshTime(key.fetched_at)}
+													</p>
+												)}
+											</>
+										)}
+									</div>
+								</div>
+							);
+						})}
+						{anyKeyUnavailable && (
+							<p className="text-[10px] px-1 flex items-center gap-1.5" style={{ color: 'var(--ledger-amber)' }}>
+								<AlertCircle size={12} /> Some keys could not report — an exhausted or revoked key only becomes visible here, so treat the unavailable ones as suspect before a run.
+							</p>
+						)}
+					</div>
+				)}
+			</section>
+
+			<section>
+				<div className="flex items-end justify-between gap-3 mb-3 px-1">
+					<div>
+						<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>Mapping log</p>
+						<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>Days with recorded activity · open a day to read its mappings</p>
+					</div>
+					<Tags size={16} style={{ color: 'var(--ledger-accent)' }} />
+				</div>
+
+				{error ? (
+					<div className="rounded-[14px] px-5 py-6 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-negative)' }}>
+						<AlertCircle size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-negative)' }} />
+						<p className="text-sm font-bold">Mapping history could not be loaded</p>
+						<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>{error}</p>
+						<button type="button" onClick={onRetry} className="ai-usage-focus mt-4 px-4 py-2 rounded-[8px] text-xs font-bold" style={{ background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }}>Try again</button>
+					</div>
+				) : days.length > 0 ? (
+					<div className="space-y-3">
+						{days.map((day) => (
+							<MerchantMappingDayCard key={day.day} day={day} />
+						))}
+						<p className="text-[10px] px-1" style={{ color: 'var(--ledger-muted)' }}>
+							Days with nothing recorded are not listed — a quiet day and an unmapped one are indistinguishable, by design.
+							{summary?.truncated && ' Older days exist beyond this window.'}
+						</p>
+					</div>
+				) : (
+					<div className="rounded-[14px] px-5 py-8 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+						<Clock3 size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-muted)' }} />
+						<p className="text-sm font-bold">No merchant mapping activity recorded</p>
+						<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>A run records Tavily searches, AI calls, and every payee mapping here.</p>
+					</div>
+				)}
+			</section>
+		</>
+	);
+}
+
 function AiUsageSkeleton() {
 	return (
 		<div aria-label="Loading AI usage" className="space-y-5">
@@ -528,7 +843,8 @@ function AiUsageSkeleton() {
 }
 
 export function AiUsageDashboard({ onBack }: AiUsageDashboardProps) {
-	const [activeTab, setActiveTab] = useState<'spend' | 'processing'>('spend');
+	const [activeTabIndex, setActiveTabIndex] = useState(0);
+	const activeTab = DASHBOARD_TABS[activeTabIndex].id;
 	const [selectedMonth, setSelectedMonth] = useState(currentMonthIST);
 	const [page, setPage] = useState(1);
 	const swipeStart = useRef<{ x: number; y: number } | null>(null);
@@ -546,6 +862,12 @@ export function AiUsageDashboard({ onBack }: AiUsageDashboardProps) {
 		error,
 		refetch: refetchDashboard,
 	} = useAiUsageDashboard(selectedMonth, page);
+	// Only fetched while the mapping tab is open: it calls Tavily once per key.
+	const {
+		keys: tavilyKeys,
+		isLoading: tavilyKeysLoading,
+		error: tavilyKeysError,
+	} = useTavilyKeys(activeTab === 'mapping');
 
 	const providerGroups = useMemo(() => {
 		const grouped = new Map<AiUsageProvider, AiUsageModelBreakdown[]>();
@@ -605,7 +927,29 @@ export function AiUsageDashboard({ onBack }: AiUsageDashboardProps) {
 		const deltaY = y - swipeStart.current.y;
 		swipeStart.current = null;
 		if (Math.abs(deltaX) < 60 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.2) return;
-		setActiveTab(deltaX < 0 ? 'processing' : 'spend');
+		setActiveTabIndex((index) =>
+			Math.min(DASHBOARD_TABS.length - 1, Math.max(0, index + (deltaX < 0 ? 1 : -1))),
+		);
+	};
+
+	const moveFocusToTab = (current: HTMLElement, direction: number) => {
+		const buttons = Array.from(
+			current.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+		);
+		if (buttons.length === 0) return;
+		const next = Math.min(buttons.length - 1, Math.max(0, activeTabIndex + direction));
+		setActiveTabIndex(next);
+		buttons[next]?.focus();
+	};
+
+	const onTablistKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+		if (event.key === 'ArrowRight') {
+			event.preventDefault();
+			moveFocusToTab(event.currentTarget, 1);
+		} else if (event.key === 'ArrowLeft') {
+			event.preventDefault();
+			moveFocusToTab(event.currentTarget, -1);
+		}
 	};
 
 	return (
@@ -644,21 +988,24 @@ export function AiUsageDashboard({ onBack }: AiUsageDashboardProps) {
 			</header>
 
 			<nav className="shrink-0 px-4 sm:px-5" style={{ background: 'var(--ledger-bg)', borderBottom: '1px solid var(--ledger-rule)' }} aria-label="AI operations views">
-				<div className="w-full max-w-[720px] mx-auto grid grid-cols-2" role="tablist">
-					{(['spend', 'processing'] as const).map((tab) => (
+				<div className="w-full max-w-[720px] mx-auto grid grid-cols-3" role="tablist" onKeyDown={onTablistKeyDown}>
+					{DASHBOARD_TABS.map((tab, index) => (
 						<button
 							type="button"
-							key={tab}
+							key={tab.id}
 							role="tab"
-							aria-selected={activeTab === tab}
-							onClick={() => setActiveTab(tab)}
-							className="ai-usage-focus relative h-11 text-xs font-bold capitalize"
-							style={{ color: activeTab === tab ? 'var(--ledger-fg)' : 'var(--ledger-muted)' }}
+							id={`ai-usage-tab-${tab.id}`}
+							aria-selected={activeTab === tab.id}
+							aria-controls={`ai-usage-panel-${tab.id}`}
+							tabIndex={activeTab === tab.id ? 0 : -1}
+							onClick={() => setActiveTabIndex(index)}
+							className="ai-usage-focus relative h-11 text-xs font-bold"
+							style={{ color: activeTab === tab.id ? 'var(--ledger-fg)' : 'var(--ledger-muted)' }}
 						>
-							{tab}
+							{tab.label}
 							<span
 								className="absolute left-3 right-3 bottom-0 h-0.5 rounded-full transition-opacity"
-								style={{ background: 'var(--ledger-accent)', opacity: activeTab === tab ? 1 : 0 }}
+								style={{ background: 'var(--ledger-accent)', opacity: activeTab === tab.id ? 1 : 0 }}
 							/>
 						</button>
 					))}
@@ -679,348 +1026,360 @@ export function AiUsageDashboard({ onBack }: AiUsageDashboardProps) {
 				<div className="w-full max-w-[720px] mx-auto">
 					{initialLoading ? (
 						<AiUsageSkeleton />
-					) : activeTab === 'spend' ? (
-						<>
-							<section
-								className="ai-usage-card rounded-[16px] overflow-hidden mb-5"
-								style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
-							>
-								<div className="p-5">
-									<div className="flex items-center justify-between gap-3">
-										<div className="flex items-center gap-2">
-											<CircleDollarSign size={14} style={{ color: 'var(--ledger-accent)' }} />
-											<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>
-												{hasRunway ? 'Credit runway' : 'AI spend position'}
-											</p>
-										</div>
-										<span
-											className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full"
-											style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}
-										>
-											<span className="w-1.5 h-1.5 rounded-full" style={{ background: account ? 'var(--ledger-positive)' : 'var(--ledger-muted)' }} />
-											{account ? 'OpenRouter live' : 'Local ledger'}
-										</span>
-									</div>
-
-									<div className="mt-5">
-										<p className="text-[38px] leading-none font-bold tracking-[-0.045em] tnum" style={{ color: 'var(--ledger-fg)' }}>
-											{hasRunway
-												? formatUsd(creditRemaining)
-												: formatUsd(account?.current_month_cost_usd ?? summary?.tracked_current_month_cost_usd ?? 0)}
-										</p>
-										<p className="text-xs mt-2" style={{ color: 'var(--ledger-muted)' }}>
-											{hasRunway
-												? `${formatPercent(runwayAvailablePercent)} of purchased credits still available`
-												: account
-													? 'Spent by the configured key this month'
-													: 'Tracked from app calls this month'}
-										</p>
-									</div>
-
-									{hasRunway && (
-										<div className="mt-6">
-											<div className="ai-runway-rail h-3 rounded-full overflow-hidden">
-												<div
-													className="ai-runway-fill h-full rounded-full"
-													style={{ width: `${Math.min(100, Math.max(0, runwayUsedPercent))}%` }}
-												/>
-											</div>
-											<div className="flex items-center justify-between mt-2 text-[10px] tnum" style={{ color: 'var(--ledger-muted)' }}>
-												<span>{formatUsd(runwaySpent)} used</span>
-												<span>{formatUsd(creditCeiling)} purchased</span>
-											</div>
-										</div>
-									)}
-								</div>
-
-								<div className="grid grid-cols-3" style={{ borderTop: '1px solid var(--ledger-rule)', background: 'var(--ledger-bg)' }}>
-									{[
-										['This month', formatUsd(account?.current_month_cost_usd ?? summary?.tracked_current_month_cost_usd ?? 0)],
-										['Tracked calls', formatCount(summary?.tracked_current_month_request_count ?? 0)],
-										['All-time use', formatUsd(account?.all_time_cost_usd ?? summary?.tracked_all_time_cost_usd ?? 0)],
-									].map(([label, value], index) => (
-										<div key={label} className="px-3 py-3.5 min-w-0" style={index < 2 ? { borderRight: '1px solid var(--ledger-rule)' } : undefined}>
-											<p className="text-sm font-bold tnum truncate" style={{ color: 'var(--ledger-fg)' }}>{value}</p>
-											<p className="text-[8px] font-bold uppercase tracking-wider mt-1 truncate" style={{ color: 'var(--ledger-muted)' }}>{label}</p>
-										</div>
-									))}
-								</div>
-
-								<div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1" style={{ borderTop: '1px solid var(--ledger-rule)' }}>
-									<p className="text-[9px]" style={{ color: 'var(--ledger-muted)' }}>
-										{formatRefreshTime(account?.fetched_at)}
-									</p>
-									{account && !hasRunway && (
-										<p className="text-[9px]" style={{ color: 'var(--ledger-amber)' }}>
-											Credit balance unavailable
-										</p>
-									)}
-									{summary?.tracked_since && (
-										<p className="text-[9px]" style={{ color: 'var(--ledger-muted)' }}>
-											Receipts since {formatDate(summary.tracked_since)}
-										</p>
-									)}
-								</div>
-							</section>
-
-							{summaryError && (
-								<div className="rounded-[12px] px-4 py-3.5 mb-5 flex items-start gap-3" style={{ background: 'var(--ledger-amber-bg)', color: 'var(--ledger-amber)' }}>
-									<AlertCircle size={16} className="shrink-0 mt-0.5" />
-									<div className="min-w-0">
-										<p className="text-xs font-bold">Account balance is temporarily unavailable</p>
-										<p className="text-[10px] mt-1 opacity-80">Tracked call receipts are still shown below.</p>
-									</div>
-								</div>
-							)}
-
-							<section
-								className="ai-usage-card rounded-[16px] overflow-hidden mb-6"
-								style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
-							>
-								<div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
-									<button
-										type="button"
-										onClick={() => olderMonth && selectMonth(olderMonth)}
-										disabled={!olderMonth}
-										className="ai-usage-focus w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-25"
-										aria-label="Older month"
+					) : (
+						<div role="tabpanel" id={`ai-usage-panel-${activeTab}`} aria-labelledby={`ai-usage-tab-${activeTab}`}>
+							{activeTab === 'mapping' ? (
+								<MerchantMappingPanel
+									summary={dashboard?.merchant_mapping}
+									keys={tavilyKeys}
+									keysLoading={tavilyKeysLoading}
+									error={error ?? tavilyKeysError}
+									onRetry={() => { void refetchDashboard(); }}
+								/>
+							) : activeTab === 'processing' ? (
+								<ProcessingPanel
+									processing={dashboard?.processing}
+									selectedMonth={selectedMonth}
+									olderMonth={olderMonth}
+									newerMonth={newerMonth}
+									onSelectMonth={selectMonth}
+									error={error}
+									onRetry={() => { void refetchDashboard(); }}
+								/>
+							) : (
+								<>
+									<section
+										className="ai-usage-card rounded-[16px] overflow-hidden mb-5"
+										style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
 									>
-										<ChevronLeft size={17} />
-									</button>
-									<div className="text-center">
-										<p className="text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--ledger-muted)' }}>Monthly statement</p>
-										<p className="text-sm font-bold mt-0.5">{formatMonth(selectedMonth)}</p>
-									</div>
-									<button
-										type="button"
-										onClick={() => newerMonth && selectMonth(newerMonth)}
-										disabled={!newerMonth}
-										className="ai-usage-focus w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-25"
-										aria-label="Newer month"
-									>
-										<ChevronRight size={17} />
-									</button>
-								</div>
-
-								<div className="p-5">
-									<div className="flex items-end justify-between gap-4">
-										<div>
-											<p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-muted)' }}>Tracked spend</p>
-											<p className="text-[30px] leading-none font-bold tracking-[-0.04em] tnum mt-1.5" style={{ color: 'var(--ledger-accent)' }}>
-												{formatUsd(selectedSummary?.cost_usd ?? 0)}
-											</p>
-										</div>
-										<div className="text-right">
-											<p className="text-sm font-bold tnum" style={{ color: monthSuccessRate >= 95 ? 'var(--ledger-positive)' : 'var(--ledger-amber)' }}>
-												{formatPercent(monthSuccessRate)}
-											</p>
-											<p className="text-[9px] font-bold uppercase tracking-wider mt-0.5" style={{ color: 'var(--ledger-muted)' }}>Success rate</p>
-										</div>
-									</div>
-
-									<div className="grid grid-cols-3 mt-5 rounded-[12px] overflow-hidden" style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)' }}>
-										{[
-											['Calls', formatCount(monthCalls)],
-											['Avg / call', formatUsd(averageCost)],
-											['Avg latency', formatLatency(selectedSummary?.average_latency_ms ?? 0)],
-										].map(([label, value], index) => (
-											<div key={label} className="px-3 py-3" style={index < 2 ? { borderRight: '1px solid var(--ledger-rule)' } : undefined}>
-												<p className="text-xs font-bold tnum truncate">{value}</p>
-												<p className="text-[8px] font-bold uppercase tracking-wider mt-1 truncate" style={{ color: 'var(--ledger-muted)' }}>{label}</p>
+										<div className="p-5">
+											<div className="flex items-center justify-between gap-3">
+												<div className="flex items-center gap-2">
+													<CircleDollarSign size={14} style={{ color: 'var(--ledger-accent)' }} />
+													<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>
+														{hasRunway ? 'Credit runway' : 'AI spend position'}
+													</p>
+												</div>
+												<span
+													className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full"
+													style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}
+												>
+													<span className="w-1.5 h-1.5 rounded-full" style={{ background: account ? 'var(--ledger-positive)' : 'var(--ledger-muted)' }} />
+													{account ? 'OpenRouter live' : 'Local ledger'}
+												</span>
 											</div>
-										))}
-									</div>
 
-									<div className="flex items-center gap-4 mt-3 text-[10px] tnum" style={{ color: 'var(--ledger-muted)' }}>
-										<span>{formatCount(selectedSummary?.total_tokens ?? 0)} tokens</span>
-										<span>{formatCount(selectedSummary?.item_count ?? 0)} items processed</span>
-									</div>
-								</div>
+											<div className="mt-5">
+												<p className="text-[38px] leading-none font-bold tracking-[-0.045em] tnum" style={{ color: 'var(--ledger-fg)' }}>
+													{hasRunway
+														? formatUsd(creditRemaining)
+														: formatUsd(account?.current_month_cost_usd ?? summary?.tracked_current_month_cost_usd ?? 0)}
+												</p>
+												<p className="text-xs mt-2" style={{ color: 'var(--ledger-muted)' }}>
+													{hasRunway
+														? `${formatPercent(runwayAvailablePercent)} of purchased credits still available`
+														: account
+															? 'Spent by the configured key this month'
+															: 'Tracked from app calls this month'}
+												</p>
+											</div>
 
-								{historyMonths.length > 0 && (
-									<div className="px-4 pt-3 pb-4" style={{ borderTop: '1px solid var(--ledger-rule)' }}>
-										<div className="flex items-center justify-between mb-3">
-											<p className="text-[9px] font-bold uppercase tracking-[0.16em]" style={{ color: 'var(--ledger-muted)' }}>Spend pulse</p>
-											<p className="text-[9px]" style={{ color: 'var(--ledger-muted)' }}>Recent tracked months</p>
-										</div>
-										<div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${historyMonths.length}, minmax(0, 1fr))` }}>
-											{historyMonths.map(({ month, data }) => {
-												const selected = month === selectedMonth;
-												const cost = data?.cost_usd ?? 0;
-												const height = cost > 0 ? Math.max(7, (cost / historyMaxCost) * 52) : 3;
-												return (
-													<button
-														type="button"
-														key={month}
-														onClick={() => selectMonth(month)}
-														className="ai-usage-focus min-w-0 rounded-[8px] px-1 pt-1.5 pb-1"
-														style={selected ? { background: 'var(--ledger-nav-active)' } : undefined}
-														aria-label={`${formatMonth(month)}: ${formatUsd(cost)}`}
-													>
-														<div className="h-[56px] flex items-end justify-center">
-															<div
-																className="w-2.5 rounded-full transition-[height] duration-300"
-																style={{ height, background: selected ? 'var(--ledger-accent)' : 'var(--ledger-rule)' }}
-															/>
-														</div>
-														<p className="text-[9px] font-bold mt-1" style={{ color: selected ? 'var(--ledger-accent)' : 'var(--ledger-muted)' }}>{formatShortMonth(month)}</p>
-														<p className="text-[8px] tnum truncate mt-0.5" style={{ color: 'var(--ledger-muted)' }}>{formatUsd(cost)}</p>
-													</button>
-												);
-											})}
-										</div>
-									</div>
-								)}
-							</section>
-
-							<section className="mb-6">
-								<div className="flex items-end justify-between gap-3 mb-3 px-1">
-									<div>
-										<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>Where it went</p>
-										<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>Provider and model statement</p>
-									</div>
-									<Cpu size={16} style={{ color: 'var(--ledger-accent)' }} />
-								</div>
-
-								{providerGroups.length === 0 ? (
-									<div className="rounded-[14px] px-5 py-7 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
-										<Database size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-muted)' }} />
-										<p className="text-sm font-bold">No model activity yet</p>
-										<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>The first AI call in this month will appear here.</p>
-									</div>
-								) : (
-									<div className="space-y-3">
-										{providerGroups.map(([provider, models]) => {
-											const providerCost = models.reduce((sum, model) => sum + model.cost_usd, 0);
-											const providerCalls = models.reduce((sum, model) => sum + model.request_count, 0);
-											const providerTokens = models.reduce((sum, model) => sum + model.total_tokens, 0);
-											return (
-												<div key={provider} className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
-													<div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
-														<div className="flex items-center gap-2.5">
-															<span className="w-2 h-2 rounded-full" style={{ background: 'var(--ledger-accent)' }} />
-															<span className="text-sm font-bold">{providerLabel(provider)}</span>
-														</div>
-														<span className="text-[11px] tnum" style={{ color: 'var(--ledger-muted)' }}>
-															{providerCalls} calls · {formatUsd(providerCost)}
-														</span>
+											{hasRunway && (
+												<div className="mt-6">
+													<div className="ai-runway-rail h-3 rounded-full overflow-hidden">
+														<div
+															className="ai-runway-fill h-full rounded-full"
+															style={{ width: `${Math.min(100, Math.max(0, runwayUsedPercent))}%` }}
+														/>
 													</div>
+													<div className="flex items-center justify-between mt-2 text-[10px] tnum" style={{ color: 'var(--ledger-muted)' }}>
+														<span>{formatUsd(runwaySpent)} used</span>
+														<span>{formatUsd(creditCeiling)} purchased</span>
+													</div>
+												</div>
+											)}
+										</div>
 
-													{models.map((model, index) => {
-														const isFree = model.model.endsWith(':free');
-														const modelSuccessRate = model.request_count > 0 ? (model.success_count / model.request_count) * 100 : 0;
-														const tokenShare = providerTokens > 0 ? (model.total_tokens / providerTokens) * 100 : 0;
+										<div className="grid grid-cols-3" style={{ borderTop: '1px solid var(--ledger-rule)', background: 'var(--ledger-bg)' }}>
+											{[
+												['This month', formatUsd(account?.current_month_cost_usd ?? summary?.tracked_current_month_cost_usd ?? 0)],
+												['Tracked calls', formatCount(summary?.tracked_current_month_request_count ?? 0)],
+												['All-time use', formatUsd(account?.all_time_cost_usd ?? summary?.tracked_all_time_cost_usd ?? 0)],
+											].map(([label, value], index) => (
+												<div key={label} className="px-3 py-3.5 min-w-0" style={index < 2 ? { borderRight: '1px solid var(--ledger-rule)' } : undefined}>
+													<p className="text-sm font-bold tnum truncate" style={{ color: 'var(--ledger-fg)' }}>{value}</p>
+													<p className="text-[8px] font-bold uppercase tracking-wider mt-1 truncate" style={{ color: 'var(--ledger-muted)' }}>{label}</p>
+												</div>
+											))}
+										</div>
+
+										<div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1" style={{ borderTop: '1px solid var(--ledger-rule)' }}>
+											<p className="text-[9px]" style={{ color: 'var(--ledger-muted)' }}>
+												{formatRefreshTime(account?.fetched_at)}
+											</p>
+											{account && !hasRunway && (
+												<p className="text-[9px]" style={{ color: 'var(--ledger-amber)' }}>
+													Credit balance unavailable
+												</p>
+											)}
+											{summary?.tracked_since && (
+												<p className="text-[9px]" style={{ color: 'var(--ledger-muted)' }}>
+													Receipts since {formatDate(summary.tracked_since)}
+												</p>
+											)}
+										</div>
+									</section>
+
+									{summaryError && (
+										<div className="rounded-[12px] px-4 py-3.5 mb-5 flex items-start gap-3" style={{ background: 'var(--ledger-amber-bg)', color: 'var(--ledger-amber)' }}>
+											<AlertCircle size={16} className="shrink-0 mt-0.5" />
+											<div className="min-w-0">
+												<p className="text-xs font-bold">Account balance is temporarily unavailable</p>
+												<p className="text-[10px] mt-1 opacity-80">Tracked call receipts are still shown below.</p>
+											</div>
+										</div>
+									)}
+
+									<section
+										className="ai-usage-card rounded-[16px] overflow-hidden mb-6"
+										style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+									>
+										<div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
+											<button
+												type="button"
+												onClick={() => olderMonth && selectMonth(olderMonth)}
+												disabled={!olderMonth}
+												className="ai-usage-focus w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-25"
+												aria-label="Older month"
+											>
+												<ChevronLeft size={17} />
+											</button>
+											<div className="text-center">
+												<p className="text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--ledger-muted)' }}>Monthly statement</p>
+												<p className="text-sm font-bold mt-0.5">{formatMonth(selectedMonth)}</p>
+											</div>
+											<button
+												type="button"
+												onClick={() => newerMonth && selectMonth(newerMonth)}
+												disabled={!newerMonth}
+												className="ai-usage-focus w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-25"
+												aria-label="Newer month"
+											>
+												<ChevronRight size={17} />
+											</button>
+										</div>
+
+										<div className="p-5">
+											<div className="flex items-end justify-between gap-4">
+												<div>
+													<p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-muted)' }}>Tracked spend</p>
+													<p className="text-[30px] leading-none font-bold tracking-[-0.04em] tnum mt-1.5" style={{ color: 'var(--ledger-accent)' }}>
+														{formatUsd(selectedSummary?.cost_usd ?? 0)}
+													</p>
+												</div>
+												<div className="text-right">
+													<p className="text-sm font-bold tnum" style={{ color: monthSuccessRate >= 95 ? 'var(--ledger-positive)' : 'var(--ledger-amber)' }}>
+														{formatPercent(monthSuccessRate)}
+													</p>
+													<p className="text-[9px] font-bold uppercase tracking-wider mt-0.5" style={{ color: 'var(--ledger-muted)' }}>Success rate</p>
+												</div>
+											</div>
+
+											<div className="grid grid-cols-3 mt-5 rounded-[12px] overflow-hidden" style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)' }}>
+												{[
+													['Calls', formatCount(monthCalls)],
+													['Avg / call', formatUsd(averageCost)],
+													['Avg latency', formatLatency(selectedSummary?.average_latency_ms ?? 0)],
+												].map(([label, value], index) => (
+													<div key={label} className="px-3 py-3" style={index < 2 ? { borderRight: '1px solid var(--ledger-rule)' } : undefined}>
+														<p className="text-xs font-bold tnum truncate">{value}</p>
+														<p className="text-[8px] font-bold uppercase tracking-wider mt-1 truncate" style={{ color: 'var(--ledger-muted)' }}>{label}</p>
+													</div>
+												))}
+											</div>
+
+											<div className="flex items-center gap-4 mt-3 text-[10px] tnum" style={{ color: 'var(--ledger-muted)' }}>
+												<span>{formatCount(selectedSummary?.total_tokens ?? 0)} tokens</span>
+												<span>{formatCount(selectedSummary?.item_count ?? 0)} items processed</span>
+											</div>
+										</div>
+
+										{historyMonths.length > 0 && (
+											<div className="px-4 pt-3 pb-4" style={{ borderTop: '1px solid var(--ledger-rule)' }}>
+												<div className="flex items-center justify-between mb-3">
+													<p className="text-[9px] font-bold uppercase tracking-[0.16em]" style={{ color: 'var(--ledger-muted)' }}>Spend pulse</p>
+													<p className="text-[9px]" style={{ color: 'var(--ledger-muted)' }}>Recent tracked months</p>
+												</div>
+												<div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${historyMonths.length}, minmax(0, 1fr))` }}>
+													{historyMonths.map(({ month, data }) => {
+														const selected = month === selectedMonth;
+														const cost = data?.cost_usd ?? 0;
+														const height = cost > 0 ? Math.max(7, (cost / historyMaxCost) * 52) : 3;
 														return (
-															<div key={model.model} className="px-4 py-3.5" style={index < models.length - 1 ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}>
-																<div className="flex items-start justify-between gap-3">
-																	<div className="min-w-0 flex-1">
-																		<div className="flex items-center gap-1.5 min-w-0">
-																			<p className="text-xs font-bold break-all">{shortModelName(model.model)}</p>
-																			<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: isFree ? 'var(--ledger-nav-active)' : 'var(--ledger-amber-bg)', color: isFree ? 'var(--ledger-accent)' : 'var(--ledger-amber)' }}>
-																				{isFree ? 'Free' : 'Paid'}
-																			</span>
-																		</div>
-																		<p className="text-[10px] mt-1" style={{ color: 'var(--ledger-muted)' }}>
-																			{model.request_count} calls · {formatPercent(modelSuccessRate)} settled · {formatLatency(model.average_latency_ms)} avg
-																		</p>
-																		<p className="text-[10px] mt-0.5 tnum" style={{ color: 'var(--ledger-muted)' }}>
-																			{formatCount(model.total_tokens)} tokens · {formatCount(model.item_count)} items
-																		</p>
-																	</div>
-																	<div className="text-right shrink-0">
-																		<p className="text-xs font-bold tnum">{isFree && model.cost_usd === 0 ? 'Free' : formatUsd(model.cost_usd)}</p>
-																		{model.request_count > model.success_count && (
-																			<p className="text-[9px] mt-1" style={{ color: 'var(--ledger-negative)' }}>{model.request_count - model.success_count} failed</p>
-																		)}
-																	</div>
+															<button
+																type="button"
+																key={month}
+																onClick={() => selectMonth(month)}
+																className="ai-usage-focus min-w-0 rounded-[8px] px-1 pt-1.5 pb-1"
+																style={selected ? { background: 'var(--ledger-nav-active)' } : undefined}
+																aria-label={`${formatMonth(month)}: ${formatUsd(cost)}`}
+															>
+																<div className="h-[56px] flex items-end justify-center">
+																	<div
+																		className="w-2.5 rounded-full transition-[height] duration-300"
+																		style={{ height, background: selected ? 'var(--ledger-accent)' : 'var(--ledger-rule)' }}
+																	/>
 																</div>
-																<div className="h-1 rounded-full mt-3 overflow-hidden" style={{ background: 'var(--ledger-rule)' }}>
-																	<div className="h-full rounded-full" style={{ width: `${tokenShare}%`, background: 'var(--ledger-accent)', opacity: 0.75 }} />
-																</div>
-															</div>
+																<p className="text-[9px] font-bold mt-1" style={{ color: selected ? 'var(--ledger-accent)' : 'var(--ledger-muted)' }}>{formatShortMonth(month)}</p>
+																<p className="text-[8px] tnum truncate mt-0.5" style={{ color: 'var(--ledger-muted)' }}>{formatUsd(cost)}</p>
+															</button>
 														);
 													})}
 												</div>
-											);
-										})}
-									</div>
-								)}
-							</section>
-
-							<section>
-								<div className="flex items-end justify-between gap-3 mb-3 px-1">
-									<div>
-										<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>Call receipts</p>
-										<p className="text-[11px] mt-1 flex items-center gap-1.5" style={{ color: 'var(--ledger-muted)' }}>
-											<Database size={11} /> Metadata only · content never stored
-										</p>
-									</div>
-									<div className="flex items-center gap-1.5 text-[10px] tnum" style={{ color: 'var(--ledger-muted)' }}>
-										<Activity size={13} />
-										{formatCount(dashboard?.total_event_count ?? 0)} calls
-									</div>
-								</div>
-
-								{error ? (
-									<div className="rounded-[14px] px-5 py-6 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-negative)' }}>
-										<AlertCircle size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-negative)' }} />
-										<p className="text-sm font-bold">Call receipts could not be loaded</p>
-										<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>{error}</p>
-										<button type="button" onClick={() => { void refetchDashboard(); }} className="ai-usage-focus mt-4 px-4 py-2 rounded-[8px] text-xs font-bold" style={{ background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }}>
-											Try again
-										</button>
-									</div>
-								) : (
-									<div className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
-										{(dashboard?.events.length ?? 0) > 0 ? (
-											dashboard?.events.map((event, index, events) => (
-												<EventReceipt key={event.id} event={event} isLast={index === events.length - 1} />
-											))
-										) : (
-											<div className="px-5 py-8 text-center">
-												<Clock3 size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-muted)' }} />
-												<p className="text-sm font-bold">No call receipts this month</p>
-												<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>New AI attempts will be recorded automatically.</p>
 											</div>
 										)}
-									</div>
-								)}
+									</section>
 
-								{dashboard && dashboard.total_event_count > dashboard.page_size && (
-									<div className="flex items-center justify-between mt-3">
-										<button
-											type="button"
-											onClick={() => setPage((value) => Math.max(1, value - 1))}
-											disabled={page === 1}
-											className="ai-usage-focus h-9 px-3 rounded-[8px] text-xs font-bold flex items-center gap-1 disabled:opacity-35"
-											style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
-										>
-											<ChevronLeft size={14} /> Previous
-										</button>
-										<span className="text-[11px] tnum" style={{ color: 'var(--ledger-muted)' }}>Page {page} of {totalPages}</span>
-										<button
-											type="button"
-											onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-											disabled={page >= totalPages}
-											className="ai-usage-focus h-9 px-3 rounded-[8px] text-xs font-bold flex items-center gap-1 disabled:opacity-35"
-											style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
-										>
-											Next <ChevronRight size={14} />
-										</button>
-									</div>
-								)}
-							</section>
-						</>
-					) : (
-						<ProcessingPanel
-							processing={dashboard?.processing}
-							selectedMonth={selectedMonth}
-							olderMonth={olderMonth}
-							newerMonth={newerMonth}
-							onSelectMonth={selectMonth}
-							error={error}
-							onRetry={() => { void refetchDashboard(); }}
-						/>
+									<section className="mb-6">
+										<div className="flex items-end justify-between gap-3 mb-3 px-1">
+											<div>
+												<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>Where it went</p>
+												<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>Provider and model statement</p>
+											</div>
+											<Cpu size={16} style={{ color: 'var(--ledger-accent)' }} />
+										</div>
+
+										{providerGroups.length === 0 ? (
+											<div className="rounded-[14px] px-5 py-7 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+												<Database size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-muted)' }} />
+												<p className="text-sm font-bold">No model activity yet</p>
+												<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>The first AI call in this month will appear here.</p>
+											</div>
+										) : (
+											<div className="space-y-3">
+												{providerGroups.map(([provider, models]) => {
+													const providerCost = models.reduce((sum, model) => sum + model.cost_usd, 0);
+													const providerCalls = models.reduce((sum, model) => sum + model.request_count, 0);
+													const providerTokens = models.reduce((sum, model) => sum + model.total_tokens, 0);
+													return (
+														<div key={provider} className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+															<div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
+																<div className="flex items-center gap-2.5">
+																	<span className="w-2 h-2 rounded-full" style={{ background: 'var(--ledger-accent)' }} />
+																	<span className="text-sm font-bold">{providerLabel(provider)}</span>
+																</div>
+																<span className="text-[11px] tnum" style={{ color: 'var(--ledger-muted)' }}>
+																	{providerCalls} calls · {formatUsd(providerCost)}
+																</span>
+															</div>
+
+															{models.map((model, index) => {
+																const isFree = model.model.endsWith(':free');
+																const modelSuccessRate = model.request_count > 0 ? (model.success_count / model.request_count) * 100 : 0;
+																const tokenShare = providerTokens > 0 ? (model.total_tokens / providerTokens) * 100 : 0;
+																return (
+																	<div key={model.model} className="px-4 py-3.5" style={index < models.length - 1 ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}>
+																		<div className="flex items-start justify-between gap-3">
+																			<div className="min-w-0 flex-1">
+																				<div className="flex items-center gap-1.5 min-w-0">
+																					<p className="text-xs font-bold break-all">{shortModelName(model.model)}</p>
+																					<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: isFree ? 'var(--ledger-nav-active)' : 'var(--ledger-amber-bg)', color: isFree ? 'var(--ledger-accent)' : 'var(--ledger-amber)' }}>
+																						{isFree ? 'Free' : 'Paid'}
+																					</span>
+																				</div>
+																				<p className="text-[10px] mt-1" style={{ color: 'var(--ledger-muted)' }}>
+																					{model.request_count} calls · {formatPercent(modelSuccessRate)} settled · {formatLatency(model.average_latency_ms)} avg
+																				</p>
+																				<p className="text-[10px] mt-0.5 tnum" style={{ color: 'var(--ledger-muted)' }}>
+																					{formatCount(model.total_tokens)} tokens · {formatCount(model.item_count)} items
+																				</p>
+																			</div>
+																			<div className="text-right shrink-0">
+																				<p className="text-xs font-bold tnum">{isFree && model.cost_usd === 0 ? 'Free' : formatUsd(model.cost_usd)}</p>
+																				{model.request_count > model.success_count && (
+																					<p className="text-[9px] mt-1" style={{ color: 'var(--ledger-negative)' }}>{model.request_count - model.success_count} failed</p>
+																				)}
+																			</div>
+																		</div>
+																		<div className="h-1 rounded-full mt-3 overflow-hidden" style={{ background: 'var(--ledger-rule)' }}>
+																			<div className="h-full rounded-full" style={{ width: `${tokenShare}%`, background: 'var(--ledger-accent)', opacity: 0.75 }} />
+																		</div>
+																	</div>
+																);
+															})}
+														</div>
+													);
+												})}
+											</div>
+										)}
+									</section>
+
+									<section>
+										<div className="flex items-end justify-between gap-3 mb-3 px-1">
+											<div>
+												<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>Call receipts</p>
+												<p className="text-[11px] mt-1 flex items-center gap-1.5" style={{ color: 'var(--ledger-muted)' }}>
+													<Database size={11} /> Metadata only · content never stored
+												</p>
+											</div>
+											<div className="flex items-center gap-1.5 text-[10px] tnum" style={{ color: 'var(--ledger-muted)' }}>
+												<Activity size={13} />
+												{formatCount(dashboard?.total_event_count ?? 0)} calls
+											</div>
+										</div>
+
+										{error ? (
+											<div className="rounded-[14px] px-5 py-6 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-negative)' }}>
+												<AlertCircle size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-negative)' }} />
+												<p className="text-sm font-bold">Call receipts could not be loaded</p>
+												<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>{error}</p>
+												<button type="button" onClick={() => { void refetchDashboard(); }} className="ai-usage-focus mt-4 px-4 py-2 rounded-[8px] text-xs font-bold" style={{ background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }}>
+													Try again
+												</button>
+											</div>
+										) : (
+											<div className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+												{(dashboard?.events.length ?? 0) > 0 ? (
+													dashboard?.events.map((event, index, events) => (
+														<EventReceipt key={event.id} event={event} isLast={index === events.length - 1} />
+													))
+												) : (
+													<div className="px-5 py-8 text-center">
+														<Clock3 size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-muted)' }} />
+														<p className="text-sm font-bold">No call receipts this month</p>
+														<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>New AI attempts will be recorded automatically.</p>
+													</div>
+												)}
+											</div>
+										)}
+
+										{dashboard && dashboard.total_event_count > dashboard.page_size && (
+											<div className="flex items-center justify-between mt-3">
+												<button
+													type="button"
+													onClick={() => setPage((value) => Math.max(1, value - 1))}
+													disabled={page === 1}
+													className="ai-usage-focus h-9 px-3 rounded-[8px] text-xs font-bold flex items-center gap-1 disabled:opacity-35"
+													style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+												>
+													<ChevronLeft size={14} /> Previous
+												</button>
+												<span className="text-[11px] tnum" style={{ color: 'var(--ledger-muted)' }}>Page {page} of {totalPages}</span>
+												<button
+													type="button"
+													onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+													disabled={page >= totalPages}
+													className="ai-usage-focus h-9 px-3 rounded-[8px] text-xs font-bold flex items-center gap-1 disabled:opacity-35"
+													style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+												>
+													Next <ChevronRight size={14} />
+												</button>
+											</div>
+										)}
+									</section>
+								</>
+							)}
+						</div>
 					)}
 				</div>
 			</main>
