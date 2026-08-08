@@ -1,5 +1,5 @@
 import type { MerchantMappingJobPayload, MerchantType, UUID } from '../../../shared/types';
-import { resolveAiProviderConfig } from '../lib/ai';
+import { probeAiProvider, resolveAiProviderConfig } from '../lib/ai';
 import { getAppConfig } from '../lib/config';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
@@ -44,6 +44,13 @@ interface MerchantUpsertRowRaw {
 	id: unknown;
 }
 
+export interface TavilySearchOutcome {
+	context: Map<string, string>;
+	searches_performed: number;
+	/** Credits Tavily reported billing, indexed by key position. */
+	credits_by_key: number[];
+}
+
 interface MerchantMapping {
 	search_key: string;
 	canonical_name: string;
@@ -86,7 +93,7 @@ export async function searchMerchantWebContext(
 	env: Env,
 	candidates: Array<{ key: string; name: string }>,
 	fetcher: typeof fetch = fetch,
-): Promise<{ context: Map<string, string>; searches_performed: number }> {
+): Promise<TavilySearchOutcome> {
 	const context = new Map<string, string>();
 	// Comma-separated keys rotate on quota exhaustion (free-tier stacking).
 	const apiKeys = (typeof env.TAVILY_API_KEY === 'string' ? env.TAVILY_API_KEY : '')
@@ -94,8 +101,11 @@ export async function searchMerchantWebContext(
 		.map(key => key.trim())
 		.filter(key => key.length > 0);
 	let searchesPerformed = 0;
+	// Credits billed per key position, so each free-tier account's own monthly
+	// allowance can be tracked separately.
+	const creditsByKey = new Array<number>(apiKeys.length).fill(0);
 	if (apiKeys.length === 0 || candidates.length === 0) {
-		return { context, searches_performed: searchesPerformed };
+		return { context, searches_performed: 0, credits_by_key: creditsByKey };
 	}
 
 	let keyIndex = 0;
@@ -115,6 +125,10 @@ export async function searchMerchantWebContext(
 						query: `"${candidate.name}" India company brand`,
 						search_depth: 'basic',
 						max_results: WEB_SEARCH_MAX_RESULTS,
+						// Tavily reports what it billed for this request but never a
+						// remaining balance, so the ledger we keep from these numbers
+						// is the only usable source of "credits left this month".
+						include_usage: true,
 					}),
 					signal: controller.signal,
 				});
@@ -137,7 +151,13 @@ export async function searchMerchantWebContext(
 				searchesPerformed += 1;
 				const parsed = (await response.json()) as {
 					results?: Array<{ title?: string; content?: string }>;
+					usage?: { credits?: unknown };
 				};
+				// A basic search bills 1; trust the reported figure when present so
+				// a future depth or plan change is recorded at its real cost.
+				const billed = parsed.usage?.credits;
+				creditsByKey[keyIndex] +=
+					typeof billed === 'number' && Number.isFinite(billed) && billed >= 0 ? billed : 1;
 				const snippets = (parsed.results ?? [])
 					.map(result =>
 						[result.title, result.content]
@@ -163,9 +183,31 @@ export async function searchMerchantWebContext(
 		requested: Math.min(candidates.length, MAX_WEB_SEARCHES_PER_RUN),
 		resolved: context.size,
 		searchesPerformed,
+		creditsByKey,
 		keysExhausted: keyIndex,
 	});
-	return { context, searches_performed: searchesPerformed };
+	return { context, searches_performed: searchesPerformed, credits_by_key: creditsByKey };
+}
+
+/**
+ * Counter names for the per-key credit ledger. Positional, matching the order
+ * of the comma-separated TAVILY_API_KEY value — each free-tier key is its own
+ * account with its own monthly allowance.
+ */
+export function tavilyCreditCounterName(keyIndex: number): string {
+	return `tavily_credits_key_${keyIndex + 1}`;
+}
+
+function creditCounters(creditsByKey: number[]): Record<string, number> {
+	const counters: Record<string, number> = {};
+	let total = 0;
+	creditsByKey.forEach((credits, index) => {
+		if (credits <= 0) return;
+		counters[tavilyCreditCounterName(index)] = credits;
+		total += credits;
+	});
+	if (total > 0) counters.tavily_credits = total;
+	return counters;
 }
 
 function buildMappingPrompt(
@@ -678,6 +720,13 @@ export interface MerchantMappingPreviewProposal {
 	default_category: string | null;
 }
 
+export interface MerchantMappingSearchRecord {
+	search_key: string;
+	raw_name: string;
+	/** Tavily snippet, or null when the search returned nothing usable. */
+	web_context: string | null;
+}
+
 export interface MerchantMappingPreviewResult {
 	candidate_count: number;
 	web_search_count: number;
@@ -686,8 +735,117 @@ export interface MerchantMappingPreviewResult {
 	unsure_skipped_count: number;
 	/** Candidates the model answered on but returned no usable mapping for. */
 	unanswered_keys: string[];
+	/**
+	 * Every candidate searched and what the search found — returned whatever
+	 * happens next, so a failed model call never discards context that real
+	 * Tavily credits were spent on.
+	 */
+	searched: MerchantMappingSearchRecord[];
 	proposals: MerchantMappingPreviewProposal[];
 	skipped_reason: string | null;
+}
+
+export interface ApplyMappingProposal {
+	search_key: string;
+	canonical_name: string;
+	merchant_type: string;
+	/** Category name as the preview rendered it; null leaves the default unset. */
+	default_category?: string | null;
+}
+
+export interface ApplyMappingsResult {
+	requested_count: number;
+	accepted_count: number;
+	alias_created_count: number;
+	relinked_transaction_count: number;
+	rejected: Array<{ search_key: string; reason: string }>;
+}
+
+/**
+ * Persists proposals a human has already read and approved, through the exact
+ * same writes the daily job uses. Separate from the preview so approval is an
+ * explicit act: the preview stays a pure dry run, and applying costs neither a
+ * Tavily search nor a model call because the answers are supplied.
+ */
+export async function applyMerchantMappings(
+	env: Env,
+	proposals: ApplyMappingProposal[],
+): Promise<ApplyMappingsResult> {
+	const result: ApplyMappingsResult = {
+		requested_count: proposals.length,
+		accepted_count: 0,
+		alias_created_count: 0,
+		relinked_transaction_count: 0,
+		rejected: [],
+	};
+	if (proposals.length === 0) return result;
+
+	const sql = getSqlClient(getAppConfig(env));
+	const categoriesByName = await loadSystemExpenseCategories(sql);
+	const lowerCategoriesByName = new Map<string, UUID>();
+	for (const [name, id] of categoriesByName) lowerCategoriesByName.set(name.toLowerCase(), id);
+
+	const mappings: MerchantMapping[] = [];
+	const seen = new Set<string>();
+	for (const proposal of proposals) {
+		const key = typeof proposal.search_key === 'string' ? proposal.search_key.trim() : '';
+		const canonicalName =
+			typeof proposal.canonical_name === 'string' ? proposal.canonical_name.trim() : '';
+		const merchantType = proposal.merchant_type as MerchantType;
+
+		if (key.length === 0 || canonicalName.length === 0) {
+			result.rejected.push({ search_key: key, reason: 'missing search_key or canonical_name' });
+			continue;
+		}
+		if (canonicalName.length > MAX_CANONICAL_NAME_LENGTH) {
+			result.rejected.push({ search_key: key, reason: 'canonical_name too long' });
+			continue;
+		}
+		if (!VALID_MERCHANT_TYPES.has(merchantType)) {
+			result.rejected.push({ search_key: key, reason: `unknown merchant_type` });
+			continue;
+		}
+		if (seen.has(key)) {
+			result.rejected.push({ search_key: key, reason: 'duplicate search_key' });
+			continue;
+		}
+
+		// Same rule as the model path: only real merchants carry a default
+		// category, never aggregators, banks or people.
+		const defaultCategoryId =
+			merchantType === 'MERCHANT'
+				? resolveCategoryName(
+						proposal.default_category ?? null,
+						categoriesByName,
+						lowerCategoriesByName,
+					)
+				: null;
+
+		seen.add(key);
+		mappings.push({
+			search_key: key,
+			canonical_name: canonicalName,
+			merchant_type: merchantType,
+			default_category_id: defaultCategoryId,
+		});
+	}
+
+	if (mappings.length === 0) return result;
+	result.accepted_count = mappings.length;
+
+	const persisted = await persistMappings(sql, mappings);
+	result.alias_created_count = persisted.aliasCount;
+	result.relinked_transaction_count = await relinkTransactions(sql, persisted.mappedKeys);
+	await recordMappingAttempts(sql, mappings.map(mapping => mapping.search_key));
+
+	console.info('MERCHANT_MAPPER_APPLIED', {
+		requested: result.requested_count,
+		accepted: result.accepted_count,
+		aliases: result.alias_created_count,
+		relinked: result.relinked_transaction_count,
+		rejected: result.rejected.length,
+	});
+	return result;
 }
 
 export interface MerchantMappingPreviewOptions {
@@ -719,6 +877,7 @@ export async function previewMerchantMappings(
 		proposal_count: 0,
 		unsure_skipped_count: 0,
 		unanswered_keys: [],
+		searched: [],
 		proposals: [],
 		skipped_reason: null,
 	};
@@ -745,8 +904,21 @@ export async function previewMerchantMappings(
 	result.candidate_count = candidates.length;
 	if (candidates.length === 0) return result;
 
+	// Prove the model answers before buying anything. Searching first would
+	// spend one Tavily credit per candidate and then discard the lot.
+	const probe = await probeAiProvider(env, apiKey);
+	if (!probe.ok) {
+		result.skipped_reason = probe.detail;
+		return result;
+	}
+
 	const webSearch = await searchMerchantWebContext(env, candidates);
 	result.web_search_count = webSearch.searches_performed;
+	result.searched = candidates.map(candidate => ({
+		search_key: candidate.key,
+		raw_name: candidate.name,
+		web_context: webSearch.context.get(candidate.key) ?? null,
+	}));
 	const enriched = candidates.map(candidate => {
 		const snippet = webSearch.context.get(candidate.key);
 		return snippet ? { ...candidate, web_context: snippet } : candidate;
@@ -791,6 +963,7 @@ export async function previewMerchantMappings(
 	await incrementUsageCounters(sql, {
 		tavily_searches: result.web_search_count,
 		merchant_ai_calls: result.ai_call_count,
+		...creditCounters(webSearch.credits_by_key),
 	});
 
 	return result;
@@ -817,9 +990,20 @@ export async function runMerchantMappingJob(
 	const candidates = await loadUnmappedCounterparties(sql);
 	result.candidate_count = candidates.length;
 
+	let creditsByKey: number[] = [];
 	if (candidates.length > 0) {
+		// Same guard as the preview: never pay for search context the model is
+		// not in a position to consume.
+		const probe = await probeAiProvider(env, apiKey);
+		if (!probe.ok) {
+			result.skipped_reason = probe.detail;
+			console.error('MERCHANT_MAPPER_PROVIDER_UNAVAILABLE', { detail: probe.detail });
+			return result;
+		}
+
 		const webSearch = await searchMerchantWebContext(env, candidates);
 		result.web_search_count = webSearch.searches_performed;
+		creditsByKey = webSearch.credits_by_key;
 		const enriched = candidates.map(candidate => {
 			const snippet = webSearch.context.get(candidate.key);
 			return snippet ? { ...candidate, web_context: snippet } : candidate;
@@ -869,6 +1053,7 @@ export async function runMerchantMappingJob(
 			(backfill.candidateCount > 0 ? 1 : 0),
 		merchants_mapped: result.alias_created_count,
 		merchants_skipped_unsure: result.unsure_skipped_count,
+		...creditCounters(creditsByKey),
 	});
 
 	return result;
