@@ -65,6 +65,11 @@ export interface AiProviderConfig {
 // Both providers' keys can be configured at once; flipping this one var is
 // the switch (an admin-dashboard toggle will front it later). Anything else
 // defaults to 'opencode'.
+//
+// NOTE: production and local dev both set AI_PROVIDER=openrouter explicitly.
+// An environment that forgets it falls through to opencode, whose key returns
+// HTTP 403 and surfaces only as "invalid model response" — check
+// ai_usage_events.error_code before blaming the prompt.
 export function resolveAiProvider(env: Env): AiProviderName {
 	const raw = normalizeText(
 		(env as unknown as Record<string, string | undefined>).AI_PROVIDER,
@@ -91,6 +96,69 @@ export function resolveAiProviderConfig(env: Env): AiProviderConfig {
 		apiKeyEnvVar: 'OPENCODE_GO_API_KEY',
 		dailyModel: resolveOpenCodeGoModel(env),
 	};
+}
+
+export interface AiProviderProbeResult {
+	ok: boolean;
+	/** HTTP status, or null when the request never completed. */
+	status: number | null;
+	/** Human-readable cause, suitable for a skipped_reason. */
+	detail: string;
+}
+
+const PROVIDER_PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * Cheapest possible round trip to the configured provider: validates the key,
+ * the endpoint and the model name in one call for a handful of tokens.
+ *
+ * It exists so an expensive pipeline never pays for its inputs before knowing
+ * the model will answer — a dead key used to surface only after 34 Tavily
+ * credits had already been spent, and then only as "invalid model response".
+ */
+export async function probeAiProvider(
+	env: Env,
+	apiKey: string,
+	fetcher: typeof fetch = fetch,
+): Promise<AiProviderProbeResult> {
+	const config = resolveAiProviderConfig(env);
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), PROVIDER_PROBE_TIMEOUT_MS);
+	try {
+		const response = await fetcher(config.chatUrl, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				model: config.dailyModel,
+				temperature: 0,
+				max_tokens: 8,
+				messages: [{ role: 'user', content: 'Reply with the single character: 1' }],
+			}),
+			signal: controller.signal,
+		});
+		if (response.ok) {
+			return { ok: true, status: response.status, detail: 'ok' };
+		}
+		return {
+			ok: false,
+			status: response.status,
+			detail: `${config.provider} rejected the request (HTTP ${response.status}) — check ${config.apiKeyEnvVar} and AI_PROVIDER`,
+		};
+	} catch (error) {
+		const aborted = error instanceof Error && error.name === 'AbortError';
+		return {
+			ok: false,
+			status: null,
+			detail: aborted
+				? `${config.provider} did not respond within ${PROVIDER_PROBE_TIMEOUT_MS}ms`
+				: `${config.provider} unreachable: ${error instanceof Error ? error.message : 'unknown'}`,
+		};
+	} finally {
+		clearTimeout(timeoutId);
+	}
 }
 
 export function resolveAiWebhookSecret(env: Env): string | null {
