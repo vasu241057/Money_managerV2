@@ -238,6 +238,12 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 	const typePillFg = selectedType === 'income' ? 'var(--ledger-positive)' : selectedType === 'transfer' ? 'var(--ledger-accent)' : 'var(--ledger-negative)';
 	const typeLabel = selectedType.charAt(0).toUpperCase() + selectedType.slice(1);
 	const showDefaultPrompt = hasCategorySelected && !isAggregator;
+	// The rule and its backfill both key on the search key, so the prompt names
+	// the wording the payment actually arrives with, not the tidy brand name.
+	const ruleScopeLabel = ruleSearchKey.trim()
+		|| transaction.counterpartyRaw
+		|| transaction.searchKey
+		|| 'this payment';
 	const showAggregatorWarning = hasCategorySelected && isAggregator;
 
 	return (
@@ -551,11 +557,13 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 									</div>
 									<div className="pr-4">
 										<p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--ledger-fg)' }}>
-											Use this category for future {selectedType} transactions with {selectedMerchant?.name ?? 'this merchant'}?
+											Use this category whenever “{ruleScopeLabel}” shows up?
 										</p>
 										<p className="text-[11px] leading-tight" style={{ color: 'var(--ledger-muted)' }}>
-											The merchant is remembered for every direction; this category is remembered only for {selectedType}.
-											Existing {selectedType} transactions for this merchant are updated too, except any you categorized yourself.
+											This only covers payments that arrive with that exact wording — not everything from
+											{' '}{selectedMerchant?.name ?? 'this merchant'}. Your past {selectedType} ones with the same
+											wording get updated too, except any you set yourself. To change the whole merchant at once,
+											use Settings › Merchants.
 										</p>
 									</div>
 								</div>
