@@ -24,12 +24,16 @@ import type {
   SetUserMerchantCategoryResponse,
   UserMerchantListItem,
   UserMerchantTransactionItem,
+  JobSchedule,
+  JobScheduleUpdateRequest,
+  JobSchedulesResponse,
   ListGlobalMerchantsQuery,
   ListTransactionsQuery,
   PaginatedResponse,
   ReviewTransactionRequest,
   ReviewTransactionResponse,
   RefundTargetOption,
+  ScheduledJobName,
   SetCategoryBudgetRuleRequest,
   TransactionFeedItem,
   UpdateAccountRequest,
@@ -152,6 +156,22 @@ export const apiClient = {
   async getTavilyKeys(): Promise<AiTavilyKeysResponse> {
     const response = await request<ApiEnvelope<AiTavilyKeysResponse>>('/ai-usage/tavily-keys');
     return response.data;
+  },
+
+  async getJobSchedules(): Promise<JobSchedulesResponse> {
+    const response = await request<ApiEnvelope<JobSchedulesResponse>>('/ai-usage/job-schedules');
+    return response.data;
+  },
+
+  async updateJobSchedule(
+    job: ScheduledJobName,
+    payload: JobScheduleUpdateRequest,
+  ): Promise<JobSchedule> {
+    const response = await request<ApiEnvelope<{ schedule: JobSchedule }>>(
+      `/ai-usage/job-schedules/${job}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+    );
+    return response.data.schedule;
   },
 
   async getAnalyticsSummary(): Promise<AnalyticsSummaryResponse> {
