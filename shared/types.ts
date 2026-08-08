@@ -1094,6 +1094,75 @@ export interface AiProcessingSummary {
   recent_runs: AiProcessingRun[];
 }
 
+export interface AiTavilyKeyCredits {
+  /** Stable non-secret label (position only — key material never leaves the server). */
+  label: string;
+  /**
+   * The key that will actually serve the next search: the first one still
+   * holding credits. Not simply the first key — that one may be exhausted,
+   * which is exactly what this panel exists to reveal.
+   */
+  is_live: boolean;
+  /** Credits used this billing cycle, or null when the key could not report. */
+  used_credits: number | null;
+  /** Per-key limit; null on the free tier where the account plan is the cap. */
+  limit_credits: number | null;
+  /** Remaining credits (per-key limit, falling back to the account plan). */
+  remaining_credits: number | null;
+  plan_name: string | null;
+  plan_used_credits: number | null;
+  plan_limit_credits: number | null;
+  /** True when the live Tavily query failed (network, rate limit, revoked key). */
+  unavailable: boolean;
+  fetched_at: ISODateTimeString | null;
+}
+
+export interface AiMerchantMapping {
+  /** The normalized identity key, e.g. "BUNDLTECHNOLOGIES". */
+  search_key: string;
+  /**
+   * A representative raw payee as the bank actually wrote it, e.g.
+   * "BUNDL TECHNOLOGIES". Null for seeded keys never seen on a real event.
+   */
+  raw_payee: string | null;
+  /** The canonical brand it was mapped to, e.g. "Swiggy". */
+  canonical_name: string;
+  merchant_type: MerchantType;
+  /** Default spending category; deliberately null for aggregators and people. */
+  default_category: string | null;
+  /** Whether the mapping has been confirmed by a human review. */
+  confirmed: boolean;
+}
+
+export interface AiMerchantMappingDay {
+  /** Run day (usage_counters.day — the database session date the job ran). */
+  day: string;
+  tavily_searches: number;
+  merchant_ai_calls: number;
+  merchants_mapped: number;
+  merchants_skipped_unsure: number;
+  /**
+   * False when the day has mappings but no counter row, so the zeros above are
+   * "not recorded" rather than "nothing happened".
+   */
+  counters_available: boolean;
+  mappings: AiMerchantMapping[];
+}
+
+export interface AiMerchantMappingSummary {
+  /** MERCHANT_MAPPING_ENABLED flag — a disabled mapper is not idle, it is off. */
+  mapper_enabled: boolean;
+  /** Days with recorded activity (counters or mappings), newest first. */
+  days: AiMerchantMappingDay[];
+  /** True when older days exist beyond the returned window. */
+  truncated: boolean;
+}
+
+/** Live Tavily credit state, fetched only when the mapping tab is opened. */
+export interface AiTavilyKeysResponse {
+  keys: AiTavilyKeyCredits[];
+}
+
 export interface AiUsageDashboardResponse {
   selected_month: string;
   page: number;
@@ -1103,6 +1172,7 @@ export interface AiUsageDashboardResponse {
   models: AiUsageModelBreakdown[];
   events: AiUsageEvent[];
   processing: AiProcessingSummary;
+  merchant_mapping: AiMerchantMappingSummary;
 }
 
 // ---- Card statements (billing-cycle capture from statement emails) ----
