@@ -1,6 +1,7 @@
 import { useAuth } from '@clerk/react';
 import { useQuery } from '@tanstack/react-query';
 import type {
+  AiTavilyKeyCredits,
   AiUsageDashboardResponse,
   AiUsageSummaryResponse,
 } from '../../../shared/types';
@@ -40,6 +41,32 @@ export function useAiUsageSummary(): UseAiUsageSummaryResult {
     isAdmin: Boolean(query.data) && !denied,
     error: query.error && !denied ? toErrorMessage(query.error) : null,
     refetch: async () => { await query.refetch(); },
+  };
+}
+
+interface UseTavilyKeysResult {
+  keys: AiTavilyKeyCredits[];
+  isLoading: boolean;
+  error: string | null;
+}
+
+/**
+ * Reaches out to Tavily once per configured key, so it stays behind `enabled`
+ * and only runs while the merchant mapping tab is actually open.
+ */
+export function useTavilyKeys(enabled: boolean): UseTavilyKeysResult {
+  const { userId } = useAuth();
+  const query = useQuery({
+    queryKey: ['ai-usage-tavily-keys', userId],
+    queryFn: async () => apiClient.getTavilyKeys(),
+    enabled: Boolean(userId) && enabled,
+    staleTime: 60_000,
+  });
+
+  return {
+    keys: query.data?.keys ?? [],
+    isLoading: query.isLoading,
+    error: query.error ? toErrorMessage(query.error) : null,
   };
 }
 

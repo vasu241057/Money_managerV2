@@ -1,5 +1,6 @@
 import type {
   AccountRow,
+  AiTavilyKeysResponse,
   AiUsageDashboardResponse,
   AiUsageSummaryResponse,
   AnalyticsSummaryResponse,
@@ -145,6 +146,11 @@ export const apiClient = {
     const response = await request<ApiEnvelope<AiUsageDashboardResponse>>(
       `/ai-usage${buildQueryString({ month, page })}`,
     );
+    return response.data;
+  },
+
+  async getTavilyKeys(): Promise<AiTavilyKeysResponse> {
+    const response = await request<ApiEnvelope<AiTavilyKeysResponse>>('/ai-usage/tavily-keys');
     return response.data;
   },
 
