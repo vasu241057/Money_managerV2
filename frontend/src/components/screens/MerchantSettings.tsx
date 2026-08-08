@@ -4,6 +4,7 @@ import {
 	AlertTriangle,
 	Check,
 	ChevronDown,
+	Info,
 	Loader2,
 	Receipt,
 	Search,
@@ -197,6 +198,7 @@ export function MerchantSettings({ onBack }: MerchantSettingsProps) {
 	const [pendingAction, setPendingAction] = useState<string | null>(null);
 	const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 	const [transactionsMerchant, setTransactionsMerchant] = useState<UserMerchantListItem | null>(null);
+	const [statementHelpOpen, setStatementHelpOpen] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
@@ -295,8 +297,9 @@ export function MerchantSettings({ onBack }: MerchantSettingsProps) {
 			<main className="flex-1 overflow-y-auto px-5 pt-5 pb-24 min-h-0">
 				<div className="w-full max-w-[720px] mx-auto">
 					<p className="mb-4 text-[11px] leading-relaxed" style={{ color: 'var(--ledger-muted)' }}>
-						A merchant category covers every descriptor underneath it. Open a descriptor to give one
-						raw counterparty its own category — that one wins. Busiest merchants first.
+						A merchant category covers everything from that merchant. If your bank writes the same
+						merchant in several ways, open one of those wordings to give it its own category — the
+						more specific one wins. Busiest merchants first.
 					</p>
 
 					<div
@@ -444,7 +447,7 @@ export function MerchantSettings({ onBack }: MerchantSettingsProps) {
 															onSelectCategory={setMerchantPendingCategoryId}
 															transactionType={breakdown.transaction_type}
 															transactionCount={breakdown.transaction_count}
-															scopeNote={`Covers every descriptor under ${merchant.canonical_name}. A descriptor with its own category keeps that one.`}
+															scopeNote={`Covers everything from ${merchant.canonical_name}. Any wording you gave its own category below keeps that one.`}
 															pendingMode={
 																pendingAction === `${key}:FUTURE_ONLY` ? 'FUTURE_ONLY'
 																	: pendingAction === `${key}:BACKFILL` ? 'BACKFILL'
@@ -455,9 +458,29 @@ export function MerchantSettings({ onBack }: MerchantSettingsProps) {
 
 														{descriptorsForType.length > 0 && (
 															<div className="px-4 pb-4" style={{ background: 'var(--ledger-bg)' }}>
-																<p className="pt-1 pb-2 text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: 'var(--ledger-muted)' }}>
-																	Raw descriptors
-																</p>
+																<div className="pt-1 pb-2 flex items-center gap-1.5">
+																	<p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: 'var(--ledger-muted)' }}>
+																		How it shows on your statement
+																	</p>
+																	<button
+																		type="button"
+																		onClick={() => setStatementHelpOpen(current => !current)}
+																		className="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
+																		style={{ background: 'var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+																		aria-label="What are statement labels?"
+																		aria-expanded={statementHelpOpen}
+																	>
+																		<Info size={10} />
+																	</button>
+																</div>
+																{statementHelpOpen && (
+																	<p className="mb-2 rounded-[8px] px-3 py-2.5 text-[10px] leading-relaxed" style={{ background: 'var(--ledger-card)', color: 'var(--ledger-muted)' }}>
+																		Your bank writes the same shop in different ways. “AMAZON PAY IN GROCERY” and
+																		“AMAZON PAY IN E COMMERCE” are both Amazon Pay, but one is food and the other is
+																		shopping. Give a wording its own category and only payments with that exact
+																		wording follow it — everything else keeps the merchant category above.
+																	</p>
+																)}
 																<div className="rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--ledger-rule)' }}>
 																	{descriptorsForType.map((descriptor, index) => {
 																		const rawKey = descriptorKeyOf(
@@ -520,7 +543,7 @@ export function MerchantSettings({ onBack }: MerchantSettingsProps) {
 																						onSelectCategory={setDescriptorPendingCategoryId}
 																						transactionType={descriptor.transaction_type}
 																						transactionCount={descriptor.transaction_count}
-																						scopeNote={`Applies only to “${descriptor.label}”, and overrides the ${merchant.canonical_name} category for it.`}
+																						scopeNote={`Only payments that arrive as “${descriptor.label}”. Overrides the ${merchant.canonical_name} category for those.`}
 																						pendingMode={
 																							pendingAction === `${rawKey}:FUTURE_ONLY` ? 'FUTURE_ONLY'
 																								: pendingAction === `${rawKey}:BACKFILL` ? 'BACKFILL'
