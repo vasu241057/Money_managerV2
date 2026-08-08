@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
 	Activity,
 	AlertCircle,
@@ -17,16 +17,19 @@ import {
 	Inbox,
 	KeyRound,
 	Layers3,
+	Loader2,
 	Mail,
 	RefreshCw,
 	RotateCcw,
 	Search,
 	ShieldCheck,
 	Tags,
+	X,
 	XCircle,
 	type LucideIcon,
 } from 'lucide-react';
 import type {
+	AiMerchantMapping,
 	AiMerchantMappingSummary,
 	AiTavilyKeyCredits,
 	AiProcessingRun,
@@ -34,15 +37,24 @@ import type {
 	AiUsageEvent,
 	AiUsageModelBreakdown,
 	AiUsageOperation,
+	AiUsageOperationBreakdown,
 	AiUsageProvider,
+	JobSchedule,
+	JobScheduleUpdateRequest,
 	MerchantType,
+	ScheduledJobName,
 } from '../../../../shared/types';
 import {
 	currentMonthIST,
 	useAiUsageDashboard,
 	useAiUsageSummary,
+	useJobSchedules,
 	useTavilyKeys,
+	useUpdateJobSchedule,
 } from '../../hooks/useAiUsage';
+import { toErrorMessage } from '../../lib/api-client';
+import { describeNextRun, formatIstDateTime, isDueNow } from '../../lib/job-schedule-display';
+import { useNow } from '../../hooks/useNow';
 import { SkeletonBar } from '../ui/Skeleton';
 
 interface AiUsageDashboardProps {
@@ -388,9 +400,19 @@ function ProcessingPanel({
 		: 0;
 	const routeTotal = data.template_hits + data.ai_routed_emails;
 	const templateRate = routeTotal > 0 ? (data.template_hits / routeTotal) * 100 : 0;
+	const { schedules, isLoading: schedulesLoading, error: schedulesError } = useJobSchedules();
 
 	return (
 		<>
+			<JobScheduleCard
+				job="sender_classification"
+				title="Nightly sender classification"
+				description="Decides which new email senders are financial, so their mail is parsed instead of ignored."
+				schedule={schedules.find((schedule) => schedule.job === 'sender_classification')}
+				isLoading={schedulesLoading}
+				error={schedulesError}
+			/>
+
 			<section className="ai-usage-card rounded-[16px] overflow-hidden mb-6" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
 				<div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
 					<button type="button" onClick={() => olderMonth && onSelectMonth(olderMonth)} disabled={!olderMonth} className="ai-usage-focus w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-25" aria-label="Older month">
@@ -508,8 +530,233 @@ const MERCHANT_TYPE_LABELS: Record<MerchantType, string> = {
 	P2P: 'Person',
 };
 
-function MerchantMappingDayCard({ day }: { day: AiMerchantMappingSummary['days'][number] }) {
-	const [expanded, setExpanded] = useState(false);
+/**
+ * Spend split by what the model was asked to do. The model breakdown below
+ * cannot show this: every operation runs on the same model, so background work
+ * (sender checks, merchant mapping) is invisible inside the email row.
+ */
+function OperationBreakdownSection({ operations }: { operations: AiUsageOperationBreakdown[] }) {
+	const totalCost = operations.reduce((sum, operation) => sum + operation.cost_usd, 0);
+
+	return (
+		<section className="mb-6">
+			<div className="flex items-end justify-between gap-3 mb-3 px-1">
+				<div>
+					<p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--ledger-muted)' }}>What it was spent on</p>
+					<p className="text-[11px] mt-1" style={{ color: 'var(--ledger-muted)' }}>Every kind of AI call, including the ones no screen triggered</p>
+				</div>
+				<Layers3 size={16} style={{ color: 'var(--ledger-accent)' }} />
+			</div>
+
+			{operations.length === 0 ? (
+				<div className="rounded-[14px] px-5 py-7 text-center" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+					<Layers3 size={22} className="mx-auto mb-2" style={{ color: 'var(--ledger-muted)' }} />
+					<p className="text-sm font-bold">No AI calls this month</p>
+				</div>
+			) : (
+				<div className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
+					{operations.map((operation, index) => {
+						const meta = OPERATION_META[operation.operation];
+						const OperationIcon = meta.icon;
+						const costShare = totalCost > 0 ? (operation.cost_usd / totalCost) * 100 : 0;
+						const failed = operation.request_count - operation.success_count;
+						return (
+							<div
+								key={operation.operation}
+								className="px-4 py-3.5"
+								style={index < operations.length - 1 ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}
+							>
+								<div className="flex items-start justify-between gap-3">
+									<div className="flex items-start gap-3 min-w-0 flex-1">
+										<div className="w-8 h-8 rounded-[9px] flex items-center justify-center shrink-0" style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}>
+											<OperationIcon size={15} strokeWidth={2} />
+										</div>
+										<div className="min-w-0">
+											<div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+												<p className="text-xs font-bold">{meta.label}</p>
+												{operation.background_only && (
+													<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5" style={{ background: 'var(--ledger-rule)', color: 'var(--ledger-muted)' }}>
+														Nightly
+													</span>
+												)}
+											</div>
+											<p className="text-[10px] mt-1" style={{ color: 'var(--ledger-muted)' }}>
+												{operation.request_count} call{operation.request_count === 1 ? '' : 's'} · {formatCount(operation.item_count)} items · {formatLatency(operation.average_latency_ms)} avg
+											</p>
+											<p className="text-[10px] mt-0.5 tnum" style={{ color: 'var(--ledger-muted)' }}>
+												{formatCount(operation.total_tokens)} tokens
+											</p>
+										</div>
+									</div>
+									<div className="text-right shrink-0">
+										<p className="text-xs font-bold tnum">{formatUsd(operation.cost_usd)}</p>
+										<p className="text-[9px] mt-1 tnum" style={{ color: 'var(--ledger-muted)' }}>
+											{formatPercent(costShare)} of spend
+										</p>
+										{failed > 0 && (
+											<p className="text-[9px] mt-1" style={{ color: 'var(--ledger-negative)' }}>{failed} failed</p>
+										)}
+									</div>
+								</div>
+								<div className="h-1 rounded-full mt-3 overflow-hidden" style={{ background: 'var(--ledger-rule)' }}>
+									<div className="h-full rounded-full" style={{ width: `${costShare}%`, background: 'var(--ledger-accent)', opacity: 0.75 }} />
+								</div>
+							</div>
+						);
+					})}
+				</div>
+			)}
+		</section>
+	);
+}
+
+const SCHEDULE_HOURS = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'));
+const SCHEDULE_MINUTES = ['00', '10', '20', '30', '40', '50'];
+
+
+/**
+ * The nightly schedule, editable. Cron triggers are deploy-time configuration,
+ * so what this writes is a row the every-10-minute dispatcher reads — which is
+ * also why the picker only offers 10-minute steps: it will not offer a time the
+ * dispatcher cannot actually honour.
+ */
+function JobScheduleCard({
+	job,
+	title,
+	description,
+	schedule,
+	isLoading,
+	error,
+}: {
+	job: ScheduledJobName;
+	title: string;
+	description: string;
+	schedule: JobSchedule | undefined;
+	isLoading: boolean;
+	error: string | null;
+}) {
+	const mutation = useUpdateJobSchedule();
+	const [draft, setDraft] = useState<JobScheduleUpdateRequest | null>(null);
+	const now = useNow();
+
+	const save = (update: JobScheduleUpdateRequest) => {
+		setDraft(update);
+		mutation.mutate(
+			{ job, update },
+			{ onSettled: () => setDraft(null) },
+		);
+	};
+
+	if (isLoading || schedule === undefined) {
+		return (
+			<section
+				className="ai-usage-card rounded-[16px] px-4 py-4 mb-5"
+				style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+			>
+				{error ? (
+					<p className="text-[11px]" style={{ color: 'var(--ledger-negative)' }}>{error}</p>
+				) : (
+					<SkeletonBar className="h-5 w-40" />
+				)}
+			</section>
+		);
+	}
+
+	const enabled = draft?.enabled ?? schedule.enabled;
+	const runAt = draft?.run_at_local ?? schedule.run_at_local;
+	const [hour, minute] = runAt.split(':');
+	const locked = schedule.kill_switched;
+	const dueNow = isDueNow(schedule, now);
+	const nextRunLine = mutation.isPending && !locked ? 'Saving…' : describeNextRun(schedule, now);
+
+	return (
+		<section
+			className="ai-usage-card rounded-[16px] overflow-hidden mb-5"
+			style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+		>
+			<div className="px-4 py-3.5 flex items-start justify-between gap-3">
+				<div className="flex items-start gap-2.5 min-w-0">
+					<Clock3 size={15} className="mt-0.5 shrink-0" style={{ color: enabled && !locked ? 'var(--ledger-positive)' : 'var(--ledger-amber)' }} />
+					<div className="min-w-0">
+						<p className="text-sm font-bold" style={{ color: 'var(--ledger-fg)' }}>{title}</p>
+						<p className="text-[10px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>{description}</p>
+					</div>
+				</div>
+				<button
+					type="button"
+					role="switch"
+					aria-checked={enabled}
+					aria-label={`${title} nightly run`}
+					disabled={locked || mutation.isPending}
+					onClick={() => save({ enabled: !enabled })}
+					className="ai-usage-focus relative shrink-0 w-[46px] h-[26px] rounded-full transition-colors disabled:opacity-60"
+					style={{ background: enabled && !locked ? 'var(--ledger-positive)' : 'var(--ledger-rule)' }}
+				>
+					<span
+						className="absolute top-[3px] w-5 h-5 rounded-full flex items-center justify-center transition-all"
+						style={{ left: enabled && !locked ? '23px' : '3px', background: 'var(--ledger-card)' }}
+					>
+						{mutation.isPending && (
+							<Loader2 size={11} className="animate-spin" style={{ color: 'var(--ledger-muted)' }} />
+						)}
+					</span>
+				</button>
+			</div>
+
+			<div className="px-4 pb-4 flex items-center justify-between gap-3 flex-wrap">
+				<div className="flex items-center gap-1.5">
+					<select
+						aria-label={`${title} hour`}
+						value={hour}
+						disabled={locked || mutation.isPending}
+						onChange={(event) => save({ run_at_local: `${event.target.value}:${minute}` })}
+						className="ai-usage-focus tnum text-sm font-bold rounded-[10px] px-2 py-1.5 disabled:opacity-60"
+						style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)', color: 'var(--ledger-fg)' }}
+					>
+						{SCHEDULE_HOURS.map((value) => <option key={value} value={value}>{value}</option>)}
+					</select>
+					<span className="text-sm font-bold" style={{ color: 'var(--ledger-muted)' }}>:</span>
+					<select
+						aria-label={`${title} minute`}
+						value={minute}
+						disabled={locked || mutation.isPending}
+						onChange={(event) => save({ run_at_local: `${hour}:${event.target.value}` })}
+						className="ai-usage-focus tnum text-sm font-bold rounded-[10px] px-2 py-1.5 disabled:opacity-60"
+						style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)', color: 'var(--ledger-fg)' }}
+					>
+						{SCHEDULE_MINUTES.map((value) => <option key={value} value={value}>{value}</option>)}
+					</select>
+					<span className="text-[10px] font-bold ml-1" style={{ color: 'var(--ledger-muted)' }}>IST</span>
+				</div>
+				<p className="text-[10px] tnum" style={{ color: dueNow && enabled ? 'var(--ledger-accent)' : 'var(--ledger-muted)' }}>
+					{nextRunLine}
+				</p>
+			</div>
+
+			{(mutation.error !== null || schedule.last_enqueued_at !== null) && (
+				<div className="px-4 pb-3.5">
+					{mutation.error !== null ? (
+						<p className="text-[10px]" style={{ color: 'var(--ledger-negative)' }}>
+							{toErrorMessage(mutation.error)}
+						</p>
+					) : (
+						<p className="text-[10px]" style={{ color: 'var(--ledger-muted)' }}>
+							Last started {formatIstDateTime(schedule.last_enqueued_at as string)} IST
+						</p>
+					)}
+				</div>
+			)}
+		</section>
+	);
+}
+
+function MerchantMappingDayCard({
+	day,
+	onOpen,
+}: {
+	day: AiMerchantMappingSummary['days'][number];
+	onOpen: () => void;
+}) {
 	// Searches and AI calls without mappings are a deliberate preview run
 	// (the preview really pays for Tavily and tokens but persists nothing),
 	// so they must read as activity, not as a broken run.
@@ -519,8 +766,8 @@ function MerchantMappingDayCard({ day }: { day: AiMerchantMappingSummary['days']
 		<div className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
 			<button
 				type="button"
-				onClick={() => setExpanded((value) => !value)}
-				aria-expanded={expanded}
+				onClick={onOpen}
+				aria-haspopup="dialog"
 				className="ai-usage-focus w-full px-4 py-4 text-left flex items-start gap-3.5 transition-colors"
 			>
 				<div className="w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0" style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}>
@@ -556,68 +803,134 @@ function MerchantMappingDayCard({ day }: { day: AiMerchantMappingSummary['days']
 						</p>
 					)}
 				</div>
-				{expanded ? (
-					<ChevronUp size={14} className="mt-1 shrink-0" style={{ color: 'var(--ledger-muted)' }} />
-				) : (
-					<ChevronDown size={14} className="mt-1 shrink-0" style={{ color: 'var(--ledger-muted)' }} />
-				)}
+				<ChevronRight size={14} className="mt-1 shrink-0" style={{ color: 'var(--ledger-muted)' }} />
 			</button>
+		</div>
+	);
+}
 
-			{expanded && (
-				<div className="mx-4 mb-4 rounded-[12px] overflow-hidden" style={{ background: 'var(--ledger-bg)', border: '1px solid var(--ledger-rule)' }}>
-					{day.mappings.length > 0 ? (
-						day.mappings.map((mapping, index) => {
-							const isMerchant = mapping.merchant_type === 'MERCHANT';
-							return (
-								<div key={mapping.search_key} className="px-3.5 py-3" style={index < day.mappings.length - 1 ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}>
-									<div className="flex items-start justify-between gap-3">
-										<div className="min-w-0 flex-1">
-											{/* The payee as the bank wrote it reads far better than the
-											    normalized key; the key stays visible underneath because it
-											    is what the identity graph actually matches on. */}
-											<p className="text-[11px] break-all" style={{ color: 'var(--ledger-fg)' }}>
-												{mapping.raw_payee ?? mapping.search_key}
-											</p>
-											{mapping.raw_payee !== null && (
-												<p className="text-[9px] font-mono break-all mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
-													{mapping.search_key}
-												</p>
-											)}
-											<div className="flex items-center gap-1.5 mt-1 min-w-0">
-												<p className="text-sm font-bold truncate" style={{ color: 'var(--ledger-fg)' }}>{mapping.canonical_name}</p>
-												<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: isMerchant ? 'var(--ledger-nav-active)' : 'var(--ledger-amber-bg)', color: isMerchant ? 'var(--ledger-accent)' : 'var(--ledger-amber)' }}>
-													{MERCHANT_TYPE_LABELS[mapping.merchant_type]}
-												</span>
-												{!mapping.confirmed && (
-													<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: 'var(--ledger-amber-bg)', color: 'var(--ledger-amber)' }}>
-														Unconfirmed
-													</span>
-												)}
-											</div>
-										</div>
-										<div className="text-right shrink-0">
-											<p className="text-xs font-semibold tnum" style={{ color: mapping.default_category ? 'var(--ledger-fg)' : 'var(--ledger-muted)' }}>
-												{mapping.default_category ?? 'No default category'}
-											</p>
-											{!mapping.default_category && (
-												<p className="text-[9px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
-													{isMerchant ? 'None assigned' : 'Correct — never set for aggregators & people'}
-												</p>
-											)}
-										</div>
-									</div>
-								</div>
-							);
-						})
-					) : (
-						<div className="px-3.5 py-3">
-							<p className="text-[10px]" style={{ color: 'var(--ledger-muted)' }}>
-								No mappings were created this day — the run's answers were unsure or nothing was a fit.
-							</p>
-						</div>
+function MappingRow({ mapping, divider }: { mapping: AiMerchantMapping; divider: boolean }) {
+	const isMerchant = mapping.merchant_type === 'MERCHANT';
+	return (
+		<div className="px-4 py-3" style={divider ? { borderBottom: '1px solid var(--ledger-rule)' } : undefined}>
+			<div className="flex items-start justify-between gap-3">
+				<div className="min-w-0 flex-1">
+					{/* The payee as the bank wrote it reads far better than the
+					    normalized key; the key stays visible underneath because it
+					    is what the identity graph actually matches on. */}
+					<p className="text-[11px] break-all" style={{ color: 'var(--ledger-fg)' }}>
+						{mapping.raw_payee ?? mapping.search_key}
+					</p>
+					{mapping.raw_payee !== null && (
+						<p className="text-[9px] font-mono break-all mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+							{mapping.search_key}
+						</p>
+					)}
+					<div className="flex items-center gap-1.5 mt-1 min-w-0">
+						<p className="text-sm font-bold truncate" style={{ color: 'var(--ledger-fg)' }}>{mapping.canonical_name}</p>
+						<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: isMerchant ? 'var(--ledger-nav-active)' : 'var(--ledger-amber-bg)', color: isMerchant ? 'var(--ledger-accent)' : 'var(--ledger-amber)' }}>
+							{MERCHANT_TYPE_LABELS[mapping.merchant_type]}
+						</span>
+						{!mapping.confirmed && (
+							<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: 'var(--ledger-amber-bg)', color: 'var(--ledger-amber)' }}>
+								Unconfirmed
+							</span>
+						)}
+					</div>
+				</div>
+				<div className="text-right shrink-0">
+					<p className="text-xs font-semibold tnum" style={{ color: mapping.default_category ? 'var(--ledger-fg)' : 'var(--ledger-muted)' }}>
+						{mapping.default_category ?? 'No default category'}
+					</p>
+					{!mapping.default_category && (
+						<p className="text-[9px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+							{isMerchant ? 'None assigned' : 'Correct — never set for aggregators & people'}
+						</p>
 					)}
 				</div>
-			)}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * A run can map two hundred payees, which inline turns the day list into an
+ * unusable scroll. The sheet scrolls its own body instead, so the day list
+ * stays where it was when it closes.
+ */
+function MappingDayDialog({
+	day,
+	onClose,
+}: {
+	day: AiMerchantMappingSummary['days'][number];
+	onClose: () => void;
+}) {
+	useEffect(() => {
+		const onKeyDown = (event: globalThis.KeyboardEvent) => {
+			if (event.key === 'Escape') onClose();
+		};
+		window.addEventListener('keydown', onKeyDown);
+		return () => window.removeEventListener('keydown', onKeyDown);
+	}, [onClose]);
+
+	return (
+		<div className="absolute inset-0 z-50 flex items-end justify-center" role="presentation">
+			<button
+				type="button"
+				className="absolute inset-0 cursor-default"
+				style={{ background: 'color-mix(in srgb, var(--ledger-fg) 24%, transparent)' }}
+				onClick={onClose}
+				aria-label="Close mapping run"
+			/>
+			<section
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="mapping-day-title"
+				className="relative w-full max-w-[520px] max-h-[82%] flex flex-col rounded-t-[18px]"
+				style={{ background: 'var(--ledger-card)', borderTop: '1px solid var(--ledger-rule)' }}
+			>
+				<header
+					className="shrink-0 flex items-center gap-3 px-5 py-4"
+					style={{ borderBottom: '1px solid var(--ledger-rule)' }}
+				>
+					<div className="min-w-0 flex-1">
+						<p id="mapping-day-title" className="text-sm font-bold truncate">
+							{formatDate(`${day.day}T00:00:00Z`)}
+						</p>
+						<p className="text-[10px] mt-0.5 tnum" style={{ color: 'var(--ledger-muted)' }}>
+							{day.mappings.length} mapping{day.mappings.length === 1 ? '' : 's'}
+							{day.counters_available
+								? ` · ${day.tavily_searches} searches · ${day.merchant_ai_calls} AI calls`
+								: ' · counts not recorded'}
+						</p>
+					</div>
+					<button
+						type="button"
+						onClick={onClose}
+						className="ai-usage-focus shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
+						style={{ background: 'var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+						aria-label="Close mapping run"
+					>
+						<X size={15} />
+					</button>
+				</header>
+
+				<div className="flex-1 overflow-y-auto min-h-0">
+					{day.mappings.length > 0 ? (
+						day.mappings.map((mapping, index) => (
+							<MappingRow
+								key={mapping.search_key}
+								mapping={mapping}
+								divider={index < day.mappings.length - 1}
+							/>
+						))
+					) : (
+						<p className="px-5 py-8 text-center text-xs" style={{ color: 'var(--ledger-muted)' }}>
+							No mappings were created this day — the run's answers were unsure or nothing was a fit.
+						</p>
+					)}
+				</div>
+			</section>
 		</div>
 	);
 }
@@ -638,9 +951,21 @@ function MerchantMappingPanel({
 	const enabled = summary?.mapper_enabled ?? false;
 	const days = summary?.days ?? [];
 	const anyKeyUnavailable = keys.some((key) => key.unavailable);
+	const { schedules, isLoading: schedulesLoading, error: schedulesError } = useJobSchedules();
+	const [openDay, setOpenDay] = useState<string | null>(null);
+	const openedDay = days.find((day) => day.day === openDay) ?? null;
 
 	return (
 		<>
+			<JobScheduleCard
+				job="merchant_mapping"
+				title="Nightly merchant mapping"
+				description="Searches unknown payees, then asks the model for a brand name, a merchant type and a default category."
+				schedule={schedules.find((schedule) => schedule.job === 'merchant_mapping')}
+				isLoading={schedulesLoading}
+				error={schedulesError}
+			/>
+
 			<section
 				className="ai-usage-card rounded-[16px] overflow-hidden mb-5"
 				style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
@@ -655,7 +980,7 @@ function MerchantMappingPanel({
 							<p className="text-[10px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
 								{enabled
 									? 'The daily job maps unmapped payee wordings with Tavily searches and one AI pass.'
-									: 'MERCHANT_MAPPING_ENABLED is unset, so nothing is being mapped. The view below is history plus live credit state.'}
+									: 'Nothing is being mapped. Turn it on above; the view below is history plus live credit state.'}
 							</p>
 						</div>
 					</div>
@@ -691,18 +1016,18 @@ function MerchantMappingPanel({
 				) : (
 					<div className="space-y-3">
 						{keys.map((key) => {
-							const hasNumbers = key.remaining_credits !== null;
 							const usedPercent =
-								key.used_credits !== null && key.limit_credits !== null && key.limit_credits > 0
-									? (key.used_credits / key.limit_credits) * 100
-									: key.plan_used_credits !== null && key.plan_limit_credits !== null && key.plan_limit_credits > 0
-										? (key.plan_used_credits / key.plan_limit_credits) * 100
-										: null;
+								key.limit_credits > 0 ? (key.used_credits / key.limit_credits) * 100 : null;
+							// Tavily's own endpoint under-reports on free keys, so when it
+							// disagrees with our ledger the ledger is what we show — but the
+							// disagreement is stated rather than hidden.
+							const tavilyDisagrees =
+								key.reported_plan_usage !== null && key.reported_plan_usage !== key.used_credits;
 							return (
 								<div key={key.label} className="ai-usage-card rounded-[14px] overflow-hidden" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
 									<div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
 										<div className="flex items-center gap-2.5">
-											<span className="w-2 h-2 rounded-full" style={{ background: key.unavailable ? 'var(--ledger-amber)' : key.remaining_credits !== null && key.remaining_credits <= 100 ? 'var(--ledger-negative)' : 'var(--ledger-accent)' }} />
+											<span className="w-2 h-2 rounded-full" style={{ background: key.remaining_credits <= 100 ? 'var(--ledger-negative)' : key.unavailable ? 'var(--ledger-amber)' : 'var(--ledger-accent)' }} />
 											<span className="text-sm font-bold">{key.label}</span>
 											{key.is_live && (
 												<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5" style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-accent)' }}>
@@ -716,49 +1041,51 @@ function MerchantMappingPanel({
 									</div>
 
 									<div className="px-4 py-3.5">
-										{key.unavailable ? (
-											<div className="flex items-center gap-2">
-												<AlertCircle size={14} style={{ color: 'var(--ledger-amber)' }} />
-												<p className="text-xs font-bold" style={{ color: 'var(--ledger-amber)' }}>Credit balance unavailable</p>
-												<p className="text-[10px]" style={{ color: 'var(--ledger-muted)' }}>The usage endpoint did not answer for this key.</p>
+										<div className="flex items-end justify-between gap-3">
+											<div>
+												<p className="text-[24px] leading-none font-bold tracking-[-0.03em] tnum" style={{ color: 'var(--ledger-fg)' }}>
+													{formatCount(key.remaining_credits)} credits
+												</p>
+												<p className="text-[9px] font-bold uppercase tracking-wider mt-1" style={{ color: 'var(--ledger-muted)' }}>remaining this month</p>
 											</div>
-										) : (
-											<>
-												<div className="flex items-end justify-between gap-3">
-													<div>
-														<p className="text-[24px] leading-none font-bold tracking-[-0.03em] tnum" style={{ color: 'var(--ledger-fg)' }}>
-															{hasNumbers ? `${formatCount(key.remaining_credits ?? 0)} credits` : '—'}
-														</p>
-														<p className="text-[9px] font-bold uppercase tracking-wider mt-1" style={{ color: 'var(--ledger-muted)' }}>remaining this cycle</p>
-													</div>
-													<div className="text-right">
-														<p className="text-xs font-semibold tnum" style={{ color: 'var(--ledger-muted)' }}>
-															{key.used_credits !== null ? `${formatCount(key.used_credits)} used` : ''}
-														</p>
-														<p className="text-[10px] tnum mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
-															{key.limit_credits !== null ? `of ${formatCount(key.limit_credits)} (key)` : key.plan_limit_credits !== null ? `of ${formatCount(key.plan_limit_credits)} (plan)` : ''}
-														</p>
-													</div>
-												</div>
-												{usedPercent !== null && (
-													<div className="h-1.5 rounded-full mt-3 overflow-hidden" style={{ background: 'var(--ledger-rule)' }}>
-														<div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, usedPercent))}%`, background: usedPercent >= 90 ? 'var(--ledger-negative)' : 'var(--ledger-accent)' }} />
-													</div>
-												)}
-												{key.fetched_at && (
-													<p className="text-[9px] mt-2" style={{ color: 'var(--ledger-muted)' }}>
-														{formatRefreshTime(key.fetched_at)}
-													</p>
-												)}
-											</>
+											<div className="text-right">
+												<p className="text-xs font-semibold tnum" style={{ color: 'var(--ledger-muted)' }}>
+													{formatCount(key.used_credits)} used
+												</p>
+												<p className="text-[10px] tnum mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+													of {formatCount(key.limit_credits)}
+												</p>
+											</div>
+										</div>
+										{usedPercent !== null && (
+											<div className="h-1.5 rounded-full mt-3 overflow-hidden" style={{ background: 'var(--ledger-rule)' }}>
+												<div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, usedPercent))}%`, background: usedPercent >= 90 ? 'var(--ledger-negative)' : 'var(--ledger-accent)' }} />
+											</div>
+										)}
+										{key.unavailable ? (
+											<p className="text-[10px] mt-2 flex items-center gap-1.5" style={{ color: 'var(--ledger-amber)' }}>
+												<AlertCircle size={11} /> Tavily did not answer, so the plan name and ceiling are assumed — the spend above is still ours and accurate.
+											</p>
+										) : tavilyDisagrees ? (
+											<p className="text-[10px] mt-2" style={{ color: 'var(--ledger-muted)' }}>
+												Tavily reports {formatCount(key.reported_plan_usage ?? 0)} used — its free-tier counter is unreliable, so the figure above is our own record of what it billed.
+											</p>
+										) : null}
+										{key.fetched_at && (
+											<p className="text-[9px] mt-2" style={{ color: 'var(--ledger-muted)' }}>
+												{formatRefreshTime(key.fetched_at)}
+											</p>
 										)}
 									</div>
 								</div>
 							);
 						})}
+						<p className="text-[10px] px-1" style={{ color: 'var(--ledger-muted)' }}>
+							Counted from what Tavily bills each search, since its usage endpoint reports zero on free keys. Allowances reset on the 1st.
+						</p>
 						{anyKeyUnavailable && (
 							<p className="text-[10px] px-1 flex items-center gap-1.5" style={{ color: 'var(--ledger-amber)' }}>
-								<AlertCircle size={12} /> Some keys could not report — an exhausted or revoked key only becomes visible here, so treat the unavailable ones as suspect before a run.
+								<AlertCircle size={12} /> Some keys could not be reached — a revoked key only becomes visible here, so check them before a run.
 							</p>
 						)}
 					</div>
@@ -784,7 +1111,7 @@ function MerchantMappingPanel({
 				) : days.length > 0 ? (
 					<div className="space-y-3">
 						{days.map((day) => (
-							<MerchantMappingDayCard key={day.day} day={day} />
+							<MerchantMappingDayCard key={day.day} day={day} onOpen={() => setOpenDay(day.day)} />
 						))}
 						<p className="text-[10px] px-1" style={{ color: 'var(--ledger-muted)' }}>
 							Days with nothing recorded are not listed — a quiet day and an unmapped one are indistinguishable, by design.
@@ -799,6 +1126,10 @@ function MerchantMappingPanel({
 					</div>
 				)}
 			</section>
+
+			{openedDay !== null && (
+				<MappingDayDialog day={openedDay} onClose={() => setOpenDay(null)} />
+			)}
 		</>
 	);
 }
@@ -1239,6 +1570,8 @@ export function AiUsageDashboard({ onBack }: AiUsageDashboardProps) {
 											</div>
 										)}
 									</section>
+
+									<OperationBreakdownSection operations={dashboard?.operations ?? []} />
 
 									<section className="mb-6">
 										<div className="flex items-end justify-between gap-3 mb-3 px-1">
