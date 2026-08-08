@@ -13,6 +13,13 @@ import {
 	isAiUsageAdmin,
 	isValidAiUsageMonth,
 } from '../services/ai-usage.service';
+import {
+	SCHEDULE_TICK_MINUTES,
+	isScheduledJobName,
+	isTickAlignedTime,
+	listJobSchedules,
+	updateJobSchedule,
+} from '../services/job-schedules.service';
 
 function requireAiUsageAdmin(userId: string): void {
 	if (!isAiUsageAdmin(runtimeEnv, userId)) {
@@ -43,8 +50,62 @@ export function createAiUsageRouter(): Router {
 		asyncHandler(async (req, res) => {
 			const userId = getAuthenticatedUserId(req);
 			requireAiUsageAdmin(userId);
-			const keys = await fetchTavilyKeysUsage(runtimeEnv);
+			const sql = getSqlClient(getAppConfig(runtimeEnv));
+			const keys = await fetchTavilyKeysUsage(sql, runtimeEnv);
 			res.status(200).json({ data: { keys } });
+		}),
+	);
+
+	// The nightly schedule the dispatcher actually reads. Kept out of the
+	// dashboard payload so toggling one job does not force a full reload of
+	// spend, processing and mapping history.
+	router.get(
+		'/job-schedules',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			requireAiUsageAdmin(userId);
+			const sql = getSqlClient(getAppConfig(runtimeEnv));
+			const schedules = await listJobSchedules(sql, runtimeEnv);
+			res.status(200).json({ data: { schedules } });
+		}),
+	);
+
+	router.put(
+		'/job-schedules/:job',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			requireAiUsageAdmin(userId);
+
+			const job = req.params.job;
+			if (!isScheduledJobName(job)) {
+				throw notFound('NOT_FOUND', 'Unknown scheduled job');
+			}
+
+			const body = (req.body ?? {}) as Record<string, unknown>;
+			if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+				throw badRequest('INVALID_ENABLED', 'enabled must be a boolean');
+			}
+			if (body.run_at_local !== undefined && !isTickAlignedTime(body.run_at_local)) {
+				throw badRequest(
+					'INVALID_RUN_AT',
+					`run_at_local must be HH:MM on a ${SCHEDULE_TICK_MINUTES}-minute boundary`,
+				);
+			}
+			if (body.enabled === undefined && body.run_at_local === undefined) {
+				throw badRequest('EMPTY_UPDATE', 'enabled or run_at_local is required');
+			}
+
+			const sql = getSqlClient(getAppConfig(runtimeEnv));
+			const schedule = await updateJobSchedule(sql, runtimeEnv, job, {
+				...(body.enabled === undefined ? {} : { enabled: body.enabled }),
+				...(body.run_at_local === undefined
+					? {}
+					: { run_at_local: body.run_at_local as string }),
+			});
+			if (schedule === null) {
+				throw notFound('NOT_FOUND', 'Unknown scheduled job');
+			}
+			res.status(200).json({ data: { schedule } });
 		}),
 	);
 

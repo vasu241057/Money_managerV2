@@ -15,7 +15,11 @@ import {
 	runSenderMetadataBackfill,
 	runStatementHarvest,
 } from '../workers/email-sync-fetcher';
-import { previewMerchantMappings } from '../workers/merchant-mapper';
+import {
+	applyMerchantMappings,
+	previewMerchantMappings,
+	type ApplyMappingProposal,
+} from '../workers/merchant-mapper';
 
 const DEFAULT_PROBE_LIMIT = 10;
 const MAX_PROBE_LIMIT = 100;
@@ -109,6 +113,24 @@ export function createInternalOpsRouter(): Router {
 				...(searchKeys === undefined || searchKeys.length === 0 ? {} : { searchKeys }),
 				limit: parseLimit(req.query.limit, DEFAULT_MAP_PREVIEW_LIMIT, MAX_MAP_PREVIEW_LIMIT),
 			});
+			res.json(result);
+		}),
+	);
+
+	// Persists proposals already reviewed by a human — the preview's own output,
+	// posted back verbatim. Costs no search and no model call, and every write
+	// goes through the same path the daily job uses.
+	router.post(
+		'/merchants/map-apply',
+		asyncHandler(async (req, res) => {
+			requireSecret(req);
+			const body = (req.body ?? {}) as Record<string, unknown>;
+			const raw = Array.isArray(body.proposals) ? body.proposals : [];
+			const proposals = raw.filter(
+				(entry): entry is ApplyMappingProposal =>
+					typeof entry === 'object' && entry !== null,
+			);
+			const result = await applyMerchantMappings(runtimeEnv, proposals);
 			res.json(result);
 		}),
 	);
