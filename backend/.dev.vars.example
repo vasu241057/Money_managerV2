@@ -20,7 +20,7 @@
 # AI provider (default: opencode). "openrouter" switches the whole stack —
 # chat URL, API key var, and model defaults (free-tier ":free" models).
 # Configure both keys and flip this one var to switch providers.
-# AI_PROVIDER=opencode
+# AI_PROVIDER=openrouter
 # OPENCODE_GO_API_KEY=...
 # OPENROUTER_API_KEY=...
 # Optional management key: enables purchased/remaining credit balance in Settings.

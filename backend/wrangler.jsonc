@@ -26,9 +26,11 @@
 		]
 	},
 	"triggers": {
+		// Single driver. Nightly work is scheduled in the job_schedules table and
+		// claimed by this tick, so a second daily trigger would only ask the same
+		// question ten minutes later.
 		"crons": [
-			"*/10 * * * *",
-			"30 21 * * *"
+			"*/10 * * * *"
 		]
 	},
 	"queues": {

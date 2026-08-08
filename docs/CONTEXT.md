@@ -39,7 +39,7 @@ money-manager/
 | **Google OAuth** | Gmail access | Client ID: `611255820334-d25utocn5qima99l4o8hhe2346c732ee.apps...` |
 | **OpenCode Go / OpenRouter** | AI model access | Provider selected by `AI_PROVIDER` (default `opencode`; `openrouter` switches URL + key + model defaults in one flip). Email extraction + daily sender/merchant classification. The OpenRouter normalizer uses paid DeepSeek first, then free Nemotron and GPT-OSS fallbacks |
 
-Cron triggers (wrangler.jsonc): `*/10 * * * *` (email sync dispatch) and `30 21 * * *` (= 03:00 IST — daily sender classification + merchant mapping).
+Cron trigger (wrangler.jsonc): `*/10 * * * *` — the only one. Each tick enqueues the email sync dispatch, then claims any nightly job whose scheduled local time has arrived. Nightly schedules (sender classification, merchant mapping) live in the `job_schedules` table and are edited from the AI operations screen, not from deploy config.
 
 ---
 
