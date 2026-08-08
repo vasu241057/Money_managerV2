@@ -1,4 +1,8 @@
 import type {
+	AiMerchantMapping,
+	AiMerchantMappingDay,
+	AiMerchantMappingSummary,
+	AiTavilyKeyCredits,
 	AiUsageDashboardResponse,
 	AiUsageEvent,
 	AiUsageModelBreakdown,
@@ -9,9 +13,12 @@ import type {
 	AiUsageProvider,
 	AiUsageStatus,
 	AiUsageSummaryResponse,
+	MerchantType,
 } from '../../../shared/types';
+import { isMerchantMappingEnabled } from '../lib/feature-flags';
 import type { SqlClient } from '../lib/db/client';
 import {
+	toBoolean,
 	toIsoDateTime,
 	toNullableNumber,
 	toNullableString,
@@ -23,6 +30,9 @@ const OPENROUTER_KEY_URL = 'https://openrouter.ai/api/v1/key';
 const OPENROUTER_CREDITS_URL = 'https://openrouter.ai/api/v1/credits';
 const OPENROUTER_KEY_TIMEOUT_MS = 5_000;
 export const AI_USAGE_PAGE_SIZE = 30;
+const TAVILY_USAGE_URL = 'https://api.tavily.com/usage';
+const TAVILY_USAGE_TIMEOUT_MS = 5_000;
+const MERCHANT_MAPPING_MAX_DAYS = 30;
 
 export interface AiUsageMetrics {
 	promptTokens: number;
@@ -151,6 +161,25 @@ interface ProcessingRunRowRaw {
 	error_code: unknown;
 	cost_usd: unknown;
 	latency_ms: unknown;
+}
+
+interface MappingDayRowRaw {
+	day: unknown;
+	tavily_searches: unknown;
+	merchant_ai_calls: unknown;
+	merchants_mapped: unknown;
+	merchants_skipped_unsure: unknown;
+	counters_available: unknown;
+}
+
+interface MappingRowRaw {
+	day: unknown;
+	search_key: unknown;
+	raw_payee: unknown;
+	canonical_name: unknown;
+	merchant_type: unknown;
+	default_category_name: unknown;
+	confirmed: unknown;
 }
 
 function finiteNonNegativeNumber(value: unknown): number | null {
@@ -413,6 +442,245 @@ export async function fetchOpenRouterKeyUsage(
 	};
 }
 
+interface TavilyUsagePayload {
+	key?: {
+		usage?: unknown;
+		limit?: unknown;
+	};
+	account?: {
+		current_plan?: unknown;
+		plan_usage?: unknown;
+		plan_limit?: unknown;
+	};
+}
+
+/**
+ * Live credit state for one Tavily key via GET /usage. Any failure (network,
+ * timeout, revoked key, rate limit, malformed body) returns null so the
+ * dashboard degrades to "unavailable" instead of breaking.
+ */
+export async function fetchTavilyKeyUsage(
+	apiKey: string,
+	fetcher: typeof fetch = fetch,
+): Promise<TavilyUsagePayload | null> {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), TAVILY_USAGE_TIMEOUT_MS);
+	try {
+		const response = await fetcher(TAVILY_USAGE_URL, {
+			headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+			signal: controller.signal,
+		});
+		if (!response.ok) return null;
+		const parsed = (await response.json()) as TavilyUsagePayload;
+		if (typeof parsed !== 'object' || parsed === null) return null;
+		return parsed;
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
+
+/**
+ * The mapper rotates through several comma-separated keys, starting each run
+ * on the first. This reports each key's own credit state with a position
+ * label only — the key material itself never leaves the server.
+ */
+export async function fetchTavilyKeysUsage(
+	env: Env,
+	fetcher: typeof fetch = fetch,
+): Promise<AiTavilyKeyCredits[]> {
+	const apiKeys = (env.TAVILY_API_KEY ?? '')
+		.split(',')
+		.map(key => key.trim())
+		.filter(key => key.length > 0);
+	if (apiKeys.length === 0) return [];
+
+	const settled = await Promise.allSettled(
+		apiKeys.map(key => fetchTavilyKeyUsage(key, fetcher)),
+	);
+
+	const keys = apiKeys.map((_, index) => {
+		const payload = settled[index].status === 'fulfilled' ? settled[index].value : null;
+		const keyUsage = finiteNonNegativeNumber(payload?.key?.usage);
+		const keyLimit = finiteNonNegativeNumber(payload?.key?.limit);
+		const planUsed = finiteNonNegativeNumber(payload?.account?.plan_usage);
+		const planLimit = finiteNonNegativeNumber(payload?.account?.plan_limit);
+
+		// Free-tier keys carry no per-key cap, so the account plan is the
+		// effective ceiling (matches what Tavily's own dashboard shows).
+		const usedCredits = keyUsage ?? planUsed;
+		const remainingCredits =
+			keyLimit !== null && keyUsage !== null
+				? Math.max(0, keyLimit - keyUsage)
+				: planLimit !== null && planUsed !== null
+					? Math.max(0, planLimit - planUsed)
+					: null;
+		const unavailable = payload === null || (keyUsage === null && planUsed === null);
+
+		return {
+			label: `Key ${index + 1}`,
+			is_live: false,
+			used_credits: unavailable ? null : usedCredits,
+			limit_credits: unavailable ? null : keyLimit,
+			remaining_credits: unavailable ? null : remainingCredits,
+			plan_name:
+				payload === null
+					? null
+					: toNullableString(payload.account?.current_plan, 'tavily.account.current_plan'),
+			plan_used_credits: unavailable ? null : planUsed,
+			plan_limit_credits: unavailable ? null : planLimit,
+			unavailable,
+			fetched_at: payload === null ? null : new Date().toISOString(),
+		};
+	});
+
+	// The mapper starts each run on the first key and rotates forward only when
+	// one is exhausted, so the key that will actually serve is the first with
+	// credits left. Marking key 1 live regardless would hide an exhausted key —
+	// the precise failure this panel exists to surface. A key whose balance is
+	// unknown is treated as usable, matching what the mapper would attempt.
+	const liveIndex = keys.findIndex(
+		key => key.remaining_credits === null || key.remaining_credits > 0,
+	);
+	const live = keys[liveIndex === -1 ? 0 : liveIndex];
+	if (live) live.is_live = true;
+	return keys;
+}
+
+export async function getMerchantMappingSummary(
+	sql: SqlClient,
+	env: Env | undefined,
+): Promise<AiMerchantMappingSummary> {
+	// Days come from both sides of the ledger: operation counters (a run, or a
+	// deliberate preview, really spent Tavily/AI credits) and aliases (the
+	// mappings those calls produced).
+	//
+	// An alias day only counts as mapper activity if it has a counter row or at
+	// least one AI-created merchant. Without that test the seed migration —
+	// which inserts the baseline alias taxonomy (BHARATPE, CCAVENUE, CRED …) in
+	// one burst — renders as a run reporting zero searches and zero mappings
+	// while listing every seeded alias underneath.
+	const dayRows = await sql<MappingDayRowRaw[]>`
+		with day_counts as (
+			select
+				uc.day,
+				coalesce(sum(uc.count) filter (where uc.counter = 'tavily_searches'), 0) as tavily_searches,
+				coalesce(sum(uc.count) filter (where uc.counter = 'merchant_ai_calls'), 0) as merchant_ai_calls,
+				coalesce(sum(uc.count) filter (where uc.counter = 'merchants_mapped'), 0) as merchants_mapped,
+				coalesce(sum(uc.count) filter (where uc.counter = 'merchants_skipped_unsure'), 0) as merchants_skipped_unsure
+			from public.usage_counters as uc
+			group by uc.day
+		),
+		mapped_days as (
+			select date(gma.created_at) as day
+			from public.global_merchant_aliases as gma
+			join public.global_merchants as gm on gm.id = gma.merchant_id
+			where gm.source = 'AI'
+			group by 1
+		),
+		days as (
+			select day from day_counts
+			union
+			select day from mapped_days
+		)
+		select
+			to_char(d.day, 'YYYY-MM-DD') as day,
+			coalesce(dc.tavily_searches, 0) as tavily_searches,
+			coalesce(dc.merchant_ai_calls, 0) as merchant_ai_calls,
+			coalesce(dc.merchants_mapped, 0) as merchants_mapped,
+			coalesce(dc.merchants_skipped_unsure, 0) as merchants_skipped_unsure,
+			(dc.day is not null) as counters_available
+		from days as d
+		left join day_counts as dc on dc.day = d.day
+		order by d.day desc
+		limit ${MERCHANT_MAPPING_MAX_DAYS + 1}
+	`;
+
+	const truncated = dayRows.length > MERCHANT_MAPPING_MAX_DAYS;
+	const visibleDayRows = truncated ? dayRows.slice(0, MERCHANT_MAPPING_MAX_DAYS) : dayRows;
+	const visibleDays = visibleDayRows.map(row => toRequiredString(row.day, 'usage_counters.day'));
+
+	// Mappings are fetched only for the days actually being shown; the full
+	// alias table grows without bound and most of it is not mapper output.
+	// A run attaches aliases to seeded and manual merchants too (July 2026:
+	// 134 of 187 pointed at seeded brands), so the merchant's own source must
+	// NOT filter this list — the day-level test above already excludes the
+	// seed burst.
+	const mappingRows = visibleDays.length === 0
+		? []
+		: await sql<MappingRowRaw[]>`
+			select
+				to_char(date(gma.created_at), 'YYYY-MM-DD') as day,
+				gma.search_key,
+				raw.counterparty_raw as raw_payee,
+				gm.canonical_name,
+				gm.type as merchant_type,
+				c.name as default_category_name,
+				gm.confirmed
+			from public.global_merchant_aliases as gma
+			join public.global_merchants as gm on gm.id = gma.merchant_id
+			left join public.categories as c on c.id = gm.default_category_id
+			left join lateral (
+				select fe.counterparty_raw
+				from public.financial_events as fe
+				where fe.search_key = gma.search_key
+					and fe.counterparty_raw is not null
+				order by fe.created_at desc
+				limit 1
+			) as raw on true
+			where to_char(date(gma.created_at), 'YYYY-MM-DD') = any(${visibleDays}::text[])
+			order by date(gma.created_at) desc, gma.created_at desc
+		`;
+
+	const mappingsByDay = new Map<string, AiMerchantMapping[]>();
+	for (const row of mappingRows) {
+		const day = toRequiredString(row.day, 'global_merchant_aliases.created_at day');
+		const mapping: AiMerchantMapping = {
+			search_key: toRequiredString(row.search_key, 'global_merchant_aliases.search_key'),
+			raw_payee: toNullableString(row.raw_payee, 'financial_events.counterparty_raw'),
+			canonical_name: toRequiredString(row.canonical_name, 'global_merchants.canonical_name'),
+			merchant_type: toRequiredString(
+				row.merchant_type,
+				'global_merchants.type',
+			) as MerchantType,
+			default_category: toNullableString(
+				row.default_category_name,
+				'categories.name',
+			),
+			confirmed: toBoolean(row.confirmed, 'global_merchants.confirmed'),
+		};
+		const list = mappingsByDay.get(day) ?? [];
+		list.push(mapping);
+		mappingsByDay.set(day, list);
+	}
+
+	const days: AiMerchantMappingDay[] = visibleDayRows.map(row => {
+		const day = toRequiredString(row.day, 'usage_counters.day');
+		return {
+			day,
+			tavily_searches: toSafeInteger(row.tavily_searches, 'usage_counters.tavily_searches'),
+			merchant_ai_calls: toSafeInteger(
+				row.merchant_ai_calls,
+				'usage_counters.merchant_ai_calls',
+			),
+			merchants_mapped: toSafeInteger(row.merchants_mapped, 'usage_counters.merchants_mapped'),
+			merchants_skipped_unsure: toSafeInteger(
+				row.merchants_skipped_unsure,
+				'usage_counters.merchants_skipped_unsure',
+			),
+			counters_available: toBoolean(row.counters_available, 'usage_counters.present'),
+			mappings: mappingsByDay.get(day) ?? [],
+		};
+	});
+
+	return {
+		mapper_enabled: env === undefined ? false : isMerchantMappingEnabled(env),
+		days,
+		truncated,
+	};
+}
+
 export async function getAiUsageSummary(
 	sql: SqlClient,
 	env: Env,
@@ -616,10 +884,12 @@ export async function getAiUsageDashboard(
 	userId: string,
 	selectedMonth = currentMonthIst(),
 	page = 1,
+	env?: Env,
 ): Promise<AiUsageDashboardResponse> {
 	const offset = (page - 1) * AI_USAGE_PAGE_SIZE;
-	const [monthRows, modelRows, eventRows, processingRows, processingRunRows] = await Promise.all([
-		sql<MonthRowRaw[]>`
+	const [monthRows, modelRows, eventRows, processingRows, processingRunRows, merchantMapping] =
+		await Promise.all([
+			sql<MonthRowRaw[]>`
 			select
 				to_char(aue.created_at at time zone 'Asia/Kolkata', 'YYYY-MM') as month,
 				count(*) as request_count,
@@ -761,6 +1031,7 @@ export async function getAiUsageDashboard(
 				on aue.call_id = rc.id and aue.user_id = ${userId}
 			order by rc.started_at desc, aue.attempt_number asc
 		`,
+		getMerchantMappingSummary(sql, env),
 	]);
 
 	const totalEventCount = eventRows[0]
@@ -783,5 +1054,6 @@ export async function getAiUsageDashboard(
 			processingRows[0],
 			mapProcessingRuns(processingRunRows),
 		),
+		merchant_mapping: merchantMapping,
 	};
 }
