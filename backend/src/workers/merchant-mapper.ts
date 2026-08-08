@@ -465,9 +465,27 @@ async function recordMappingAttempts(sql: SqlClient, keys: string[]): Promise<vo
 	}
 }
 
+/**
+ * Candidate keys for mapping. The daily job takes the defaults; the preview
+ * endpoint widens them so a backlog older than the lookback window, or a
+ * specific key resting on cooldown, can still be inspected without waiting.
+ */
+interface LoadCandidatesOptions {
+	ignoreLookback?: boolean;
+	ignoreCooldown?: boolean;
+	searchKeys?: string[];
+	limit?: number;
+}
+
 async function loadUnmappedCounterparties(
 	sql: SqlClient,
+	options: LoadCandidatesOptions = {},
 ): Promise<Array<{ key: string; name: string }>> {
+	const applyLookback = options.ignoreLookback !== true;
+	const applyCooldown = options.ignoreCooldown !== true;
+	const explicitKeys = options.searchKeys ?? [];
+	const hasExplicitKeys = explicitKeys.length > 0;
+	const limit = options.limit ?? MAX_MERCHANTS_PER_RUN;
 	const rows = await sql<UnmappedCounterpartyRowRaw[]>`
 		select
 			fe.search_key,
@@ -475,20 +493,27 @@ async function loadUnmappedCounterparties(
 		from public.financial_events as fe
 		where fe.search_key is not null
 			and fe.counterparty_raw is not null
-			and fe.created_at > now() - (${UNMAPPED_LOOKBACK_DAYS} || ' days')::interval
+			and (
+				not ${applyLookback}
+				or fe.created_at > now() - (${UNMAPPED_LOOKBACK_DAYS} || ' days')::interval
+			)
+			and (not ${hasExplicitKeys} or fe.search_key = any(${explicitKeys}::text[]))
 			and not exists (
 				select 1
 				from public.global_merchant_aliases as gma
 				where gma.search_key = fe.search_key
 			)
-			and not exists (
-				select 1
-				from public.merchant_mapping_attempts as mma
-				where mma.search_key = fe.search_key
-					and mma.last_attempt_at > now() - (${MAPPING_RETRY_COOLDOWN_DAYS} || ' days')::interval
+			and (
+				not ${applyCooldown}
+				or not exists (
+					select 1
+					from public.merchant_mapping_attempts as mma
+					where mma.search_key = fe.search_key
+						and mma.last_attempt_at > now() - (${MAPPING_RETRY_COOLDOWN_DAYS} || ' days')::interval
+				)
 			)
 		group by fe.search_key
-		limit ${MAX_MERCHANTS_PER_RUN}
+		limit ${limit}
 	`;
 
 	const candidates: Array<{ key: string; name: string }> = [];
@@ -641,6 +666,134 @@ async function backfillMerchantCategories(
 		backfilled += updated.length;
 	}
 	return { candidateCount: candidates.length, backfilledCount: backfilled };
+}
+
+export interface MerchantMappingPreviewProposal {
+	search_key: string;
+	raw_name: string;
+	/** Tavily snippet the model saw, or null when search returned nothing. */
+	web_context: string | null;
+	canonical_name: string;
+	merchant_type: MerchantType;
+	default_category: string | null;
+}
+
+export interface MerchantMappingPreviewResult {
+	candidate_count: number;
+	web_search_count: number;
+	ai_call_count: number;
+	proposal_count: number;
+	unsure_skipped_count: number;
+	/** Candidates the model answered on but returned no usable mapping for. */
+	unanswered_keys: string[];
+	proposals: MerchantMappingPreviewProposal[];
+	skipped_reason: string | null;
+}
+
+export interface MerchantMappingPreviewOptions {
+	ignoreLookback?: boolean;
+	ignoreCooldown?: boolean;
+	searchKeys?: string[];
+	limit?: number;
+}
+
+/**
+ * Runs the exact mapping pipeline the daily job runs — same candidate query,
+ * same Tavily search, same prompt and model — and returns what it WOULD have
+ * written, without writing any of it. No merchants, aliases, cooldown rows,
+ * relinks or category backfill are touched, so this is safe to run repeatedly
+ * while judging whether the search results are good enough to trust.
+ *
+ * The one thing it does record is cost: the AI call captures usage the same way
+ * every other call does, and the Tavily/AI counters increment, because those
+ * calls really were made and really consume quota.
+ */
+export async function previewMerchantMappings(
+	env: Env,
+	options: MerchantMappingPreviewOptions = {},
+): Promise<MerchantMappingPreviewResult> {
+	const result: MerchantMappingPreviewResult = {
+		candidate_count: 0,
+		web_search_count: 0,
+		ai_call_count: 0,
+		proposal_count: 0,
+		unsure_skipped_count: 0,
+		unanswered_keys: [],
+		proposals: [],
+		skipped_reason: null,
+	};
+
+	const providerConfig = resolveAiProviderConfig(env);
+	const apiKey = providerConfig.apiKey;
+	if (!apiKey) {
+		result.skipped_reason = `${providerConfig.apiKeyEnvVar} not set`;
+		return result;
+	}
+
+	const config = getAppConfig(env);
+	const sql = getSqlClient(config);
+	const categoriesByName = await loadSystemExpenseCategories(sql);
+	const categoryNamesById = new Map<string, string>();
+	for (const [name, id] of categoriesByName) categoryNamesById.set(id, name);
+
+	const candidates = await loadUnmappedCounterparties(sql, {
+		ignoreLookback: options.ignoreLookback ?? true,
+		ignoreCooldown: options.ignoreCooldown ?? true,
+		...(options.searchKeys === undefined ? {} : { searchKeys: options.searchKeys }),
+		...(options.limit === undefined ? {} : { limit: options.limit }),
+	});
+	result.candidate_count = candidates.length;
+	if (candidates.length === 0) return result;
+
+	const webSearch = await searchMerchantWebContext(env, candidates);
+	result.web_search_count = webSearch.searches_performed;
+	const enriched = candidates.map(candidate => {
+		const snippet = webSearch.context.get(candidate.key);
+		return snippet ? { ...candidate, web_context: snippet } : candidate;
+	});
+
+	const rawNamesByKey = new Map(candidates.map(candidate => [candidate.key, candidate.name]));
+	const answeredKeys = new Set<string>();
+	let anyChunkSucceeded = false;
+	for (let i = 0; i < enriched.length; i += MAPPING_AI_CHUNK_SIZE) {
+		const chunk = enriched.slice(i, i + MAPPING_AI_CHUNK_SIZE);
+		result.ai_call_count += 1;
+		const outcome = await callMerchantMappingModel(sql, env, apiKey, chunk, categoriesByName);
+		if (outcome === null) {
+			result.skipped_reason = 'invalid model response';
+			continue;
+		}
+		anyChunkSucceeded = true;
+		result.unsure_skipped_count += outcome.unsure_count;
+		for (const mapping of outcome.mappings) {
+			answeredKeys.add(mapping.search_key);
+			result.proposals.push({
+				search_key: mapping.search_key,
+				raw_name: rawNamesByKey.get(mapping.search_key) ?? mapping.search_key,
+				web_context: webSearch.context.get(mapping.search_key) ?? null,
+				canonical_name: mapping.canonical_name,
+				merchant_type: mapping.merchant_type,
+				default_category: mapping.default_category_id === null
+					? null
+					: categoryNamesById.get(mapping.default_category_id) ?? null,
+			});
+		}
+	}
+
+	if (!anyChunkSucceeded && result.skipped_reason === null) {
+		result.skipped_reason = 'invalid model response';
+	}
+	result.proposal_count = result.proposals.length;
+	result.unanswered_keys = candidates
+		.map(candidate => candidate.key)
+		.filter(key => !answeredKeys.has(key));
+
+	await incrementUsageCounters(sql, {
+		tavily_searches: result.web_search_count,
+		merchant_ai_calls: result.ai_call_count,
+	});
+
+	return result;
 }
 
 export async function runMerchantMappingJob(
