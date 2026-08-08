@@ -1,9 +1,12 @@
 import { useAuth } from '@clerk/react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AiTavilyKeyCredits,
   AiUsageDashboardResponse,
   AiUsageSummaryResponse,
+  JobSchedule,
+  JobScheduleUpdateRequest,
+  ScheduledJobName,
 } from '../../../shared/types';
 import { ApiError, apiClient, toErrorMessage } from '../lib/api-client';
 
@@ -68,6 +71,54 @@ export function useTavilyKeys(enabled: boolean): UseTavilyKeysResult {
     isLoading: query.isLoading,
     error: query.error ? toErrorMessage(query.error) : null,
   };
+}
+
+export const JOB_SCHEDULES_QUERY_KEY = ['ai-usage-job-schedules'] as const;
+
+interface UseJobSchedulesResult {
+  schedules: JobSchedule[];
+  isLoading: boolean;
+  error: string | null;
+}
+
+export function useJobSchedules(): UseJobSchedulesResult {
+  const { userId } = useAuth();
+  const query = useQuery({
+    queryKey: [...JOB_SCHEDULES_QUERY_KEY, userId],
+    queryFn: async () => apiClient.getJobSchedules(),
+    enabled: Boolean(userId),
+    staleTime: 30_000,
+  });
+
+  return {
+    schedules: query.data?.schedules ?? [],
+    isLoading: query.isLoading,
+    error: query.error ? toErrorMessage(query.error) : null,
+  };
+}
+
+interface UpdateJobScheduleVariables {
+  job: ScheduledJobName;
+  update: JobScheduleUpdateRequest;
+}
+
+/**
+ * Refetches the dashboard too: its "nightly mapping is running" banner reads
+ * the same schedule, so leaving it stale would contradict the toggle the user
+ * just flipped.
+ */
+export function useUpdateJobSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ job, update }: UpdateJobScheduleVariables) =>
+      apiClient.updateJobSchedule(job, update),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: JOB_SCHEDULES_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ['ai-usage-dashboard'] }),
+      ]);
+    },
+  });
 }
 
 interface UseAiUsageDashboardResult {
