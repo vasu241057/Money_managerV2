@@ -27,7 +27,9 @@ import './styles/app.css';
 
 type Overlay = 'editor' | 'review' | null;
 type SettingsSubscreen = 'main' | 'accounts' | 'categories' | 'merchants' | 'connection' | 'ai-usage';
-type ReviewScope = 'recent' | 'all';
+// 'single' is the ledger's swipe-to-review: it answers exactly the row that was
+// swiped and closes, instead of walking the rest of the inbox.
+type ReviewScope = 'recent' | 'all' | 'single';
 
 // Every screen and overlay owns a URL so a refresh (or back/forward) lands
 // exactly where the user was. History API only — no router dependency.
@@ -124,6 +126,9 @@ function LedgerApp() {
 
 	const { reviewInbox, transactions, isFeedComplete } = useTransactions();
 	const scopedReviewInbox = useMemo(() => {
+		if (reviewScope === 'single') {
+			return reviewInbox.filter((transaction) => transaction.id === reviewTargetId);
+		}
 		const scoped = reviewScope === 'all'
 			? reviewInbox
 			: reviewInbox.filter((transaction) => isInLastThreeCalendarDaysIST(transaction.date));
@@ -253,7 +258,7 @@ function LedgerApp() {
 						}
 					}}
 					onEditTransaction={(t) => openEditor('edit', t)}
-					onReviewTransaction={(t) => openReview('all', t.id)}
+					onReviewTransaction={(t) => openReview('single', t.id)}
 				/>
 			)}
 
@@ -331,14 +336,25 @@ function LedgerApp() {
 					transaction={scopedReviewInbox[0]}
 					position={reviewedCount + 1}
 					totalCount={reviewedCount + scopedReviewInbox.length}
-					// A merchant backfill clears its own transactions out of the
-					// inbox, so only the row just answered is counted here.
-					onReviewed={() => setReviewedCount((c) => c + 1)}
+					// Swipe-to-review answers one row and leaves; the queue modes
+					// stay open and advance to the next transaction.
+					onReviewed={() => {
+						if (reviewScope === 'single') {
+							closeOverlay();
+							return;
+						}
+						setReviewedCount((c) => c + 1);
+					}}
 					onClose={closeOverlay}
 				/>
 			)}
 
-			{overlay === 'review' && scopedReviewInbox.length === 0 && (
+			{/*
+			  * Single scope never shows "all caught up": the optimistic update
+			  * empties its one-row inbox a render before onReviewed closes the
+			  * overlay, which would flash the empty state on every swipe review.
+			  */}
+			{overlay === 'review' && reviewScope !== 'single' && scopedReviewInbox.length === 0 && (
 				<EmptyReviewQueue
 					onClose={closeOverlay}
 					onNavigate={(screen) => {
