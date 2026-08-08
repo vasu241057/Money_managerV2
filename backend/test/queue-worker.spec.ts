@@ -206,7 +206,32 @@ describe('queue.worker', () => {
 		expect(runNormalizeRawEmailsJobMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('acks queued merchant mapping work without running it when the flag is absent', async () => {
+	it('acks queued merchant mapping work without running it when the kill switch is set', async () => {
+		const harness = createMessage(
+			{
+				job_type: 'MERCHANT_MAPPING',
+				triggered_at: new Date().toISOString(),
+			},
+			1,
+		);
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{ MERCHANT_MAPPING_ENABLED: 'off' } as Env,
+			{} as ExecutionContext,
+		);
+
+		expect(runMerchantMappingJobMock).not.toHaveBeenCalled();
+		expect(harness.ack).toHaveBeenCalledTimes(1);
+		expect(harness.retry).not.toHaveBeenCalled();
+	});
+
+	it('runs queued merchant mapping work when no kill switch is set', async () => {
 		const harness = createMessage(
 			{
 				job_type: 'MERCHANT_MAPPING',
@@ -223,31 +248,6 @@ describe('queue.worker', () => {
 				retryAll: vi.fn(),
 			} as unknown as MessageBatch<unknown>,
 			{} as Env,
-			{} as ExecutionContext,
-		);
-
-		expect(runMerchantMappingJobMock).not.toHaveBeenCalled();
-		expect(harness.ack).toHaveBeenCalledTimes(1);
-		expect(harness.retry).not.toHaveBeenCalled();
-	});
-
-	it('runs queued merchant mapping work only when the flag is explicitly enabled', async () => {
-		const harness = createMessage(
-			{
-				job_type: 'MERCHANT_MAPPING',
-				triggered_at: new Date().toISOString(),
-			},
-			1,
-		);
-
-		await handleQueue(
-			{
-				queue: QUEUE_NAMES.EMAIL_SYNC,
-				messages: [harness.message],
-				ackAll: vi.fn(),
-				retryAll: vi.fn(),
-			} as unknown as MessageBatch<unknown>,
-			{ MERCHANT_MAPPING_ENABLED: 'yes' } as Env,
 			{} as ExecutionContext,
 		);
 

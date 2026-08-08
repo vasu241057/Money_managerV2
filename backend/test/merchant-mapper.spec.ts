@@ -400,6 +400,53 @@ describe('sure-gate and web context', () => {
 		expect(calls.filter((auth) => auth.includes('key-two'))).toHaveLength(2);
 		expect(outcome.searches_performed).toBe(2);
 		expect(outcome.context.get('BUNDLTECH')).toContain('Swiggy');
+		// The exhausted key was never billed; both searches land on key two, and
+		// the ledger has to attribute them to that position or the derived
+		// balance drains the wrong account.
+		expect(outcome.credits_by_key).toEqual([0, 2]);
+		const body = JSON.parse(
+			String((fetcher.mock.calls[0][1] as RequestInit).body),
+		) as Record<string, unknown>;
+		expect(body.include_usage).toBe(true);
+	});
+
+	it('records what Tavily says it billed rather than assuming one per search', async () => {
+		const { searchMerchantWebContext } = await import('../src/workers/merchant-mapper');
+		const fetcher = vi.fn().mockImplementation(async () =>
+			new Response(
+				JSON.stringify({ results: [{ title: 'X', content: 'Y' }], usage: { credits: 2 } }),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		);
+
+		const outcome = await searchMerchantWebContext(
+			createEnv({ TAVILY_API_KEY: 'key-one' }),
+			[{ key: 'A', name: 'A LTD' }, { key: 'B', name: 'B LTD' }],
+			fetcher as unknown as typeof fetch,
+		);
+
+		expect(outcome.searches_performed).toBe(2);
+		expect(outcome.credits_by_key).toEqual([4]);
+	});
+
+	// Older responses, or a plan that stops reporting, must not silently record
+	// zero spend — that would show a full balance while credits drain.
+	it('falls back to one credit per search when usage is absent or malformed', async () => {
+		const { searchMerchantWebContext } = await import('../src/workers/merchant-mapper');
+		const fetcher = vi.fn().mockImplementation(async () =>
+			new Response(
+				JSON.stringify({ results: [{ title: 'X', content: 'Y' }], usage: { credits: 'lots' } }),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		);
+
+		const outcome = await searchMerchantWebContext(
+			createEnv({ TAVILY_API_KEY: 'key-one' }),
+			[{ key: 'A', name: 'A LTD' }],
+			fetcher as unknown as typeof fetch,
+		);
+
+		expect(outcome.credits_by_key).toEqual([1]);
 	});
 
 	it('returns empty context without a key and never searches', async () => {
@@ -412,6 +459,7 @@ describe('sure-gate and web context', () => {
 		);
 		expect(outcome.context.size).toBe(0);
 		expect(outcome.searches_performed).toBe(0);
+		expect(outcome.credits_by_key).toEqual([]);
 		expect(fetcher).not.toHaveBeenCalled();
 	});
 });
@@ -424,6 +472,81 @@ describe('merchant mapping preview (dry run)', () => {
 
 	afterEach(() => {
 		vi.unstubAllGlobals();
+	});
+
+	// A dead key used to be discovered only after every Tavily credit had been
+	// spent, and then reported as "invalid model response".
+	it('probes the model before buying any search context', async () => {
+		const sql = createSqlMock((query) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('from public.financial_events as fe')) {
+				return [{ search_key: 'BUNDLTECHNOLOGIES', counterparty_raw: 'BUNDL TECHNOLOGIES' }];
+			}
+			return [];
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const fetchMock = vi.fn(async () => new Response('Forbidden', { status: 403 }));
+		vi.stubGlobal('fetch', fetchMock);
+
+		const { previewMerchantMappings } = await import('../src/workers/merchant-mapper');
+		const result = await previewMerchantMappings(createEnv({ TAVILY_API_KEY: 'tvly-key' }));
+
+		expect(result.candidate_count).toBe(1);
+		expect(result.web_search_count).toBe(0);
+		expect(result.skipped_reason).toContain('HTTP 403');
+		// Exactly one call: the probe. Nothing reached Tavily.
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(
+			fetchMock.mock.calls.filter(([url]) => String(url).includes('tavily')),
+		).toHaveLength(0);
+	});
+
+	it('returns the searched context even when the model answer is unusable', async () => {
+		const sql = createSqlMock((query) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('from public.financial_events as fe')) {
+				return [{ search_key: 'BUNDLTECHNOLOGIES', counterparty_raw: 'BUNDL TECHNOLOGIES' }];
+			}
+			return [];
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		let probed = false;
+		const fetchMock = vi.fn(async (url: string) => {
+			if (String(url).includes('tavily')) {
+				return new Response(
+					JSON.stringify({ results: [{ content: 'Bundl Technologies operates Swiggy.' }] }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			if (!probed) {
+				probed = true;
+				return modelResponse([]);
+			}
+			// The real mapping call comes back as unparseable content.
+			return new Response(
+				JSON.stringify({ choices: [{ message: { content: 'not json at all' } }] }),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const { previewMerchantMappings } = await import('../src/workers/merchant-mapper');
+		const result = await previewMerchantMappings(createEnv({ TAVILY_API_KEY: 'tvly-key' }));
+
+		expect(result.proposals).toHaveLength(0);
+		expect(result.skipped_reason).toBe('invalid model response');
+		// The credits were spent, so what they bought must come back.
+		expect(result.searched).toEqual([
+			{
+				search_key: 'BUNDLTECHNOLOGIES',
+				raw_name: 'BUNDL TECHNOLOGIES',
+				web_context: 'Bundl Technologies operates Swiggy.',
+			},
+		]);
 	});
 
 	it('returns proposals with web context and writes nothing to mapping state', async () => {

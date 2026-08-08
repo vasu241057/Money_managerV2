@@ -1,22 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { isMerchantMappingEnabled } from '../src/lib/feature-flags';
+import { isMerchantMappingKillSwitched } from '../src/lib/feature-flags';
 
-describe('merchant mapping feature flag', () => {
-	it.each(['1', 'on', 'true', 'yes', ' TRUE '])(
-		'enables only for an explicit supported value (%s)',
+describe('merchant mapping kill switch', () => {
+	it.each(['0', 'off', 'false', 'no', ' FALSE '])(
+		'forces the mapper off for an explicit disabled value (%s)',
 		(value) => {
 			expect(
-				isMerchantMappingEnabled({ MERCHANT_MAPPING_ENABLED: value } as Env),
+				isMerchantMappingKillSwitched({ MERCHANT_MAPPING_ENABLED: value } as Env),
 			).toBe(true);
 		},
 	);
 
-	it.each([undefined, '', '0', 'off', 'false', 'no', 'unexpected'])(
-		'fails closed for %s',
+	// Anything else defers to the schedule, which ships disabled — so an absent
+	// or unrecognized value still means "does not run" until it is turned on.
+	it.each([undefined, '', '1', 'on', 'true', 'yes', 'unexpected'])(
+		'defers to the schedule for %s',
 		(value) => {
 			expect(
-				isMerchantMappingEnabled({ MERCHANT_MAPPING_ENABLED: value } as Env),
+				isMerchantMappingKillSwitched({ MERCHANT_MAPPING_ENABLED: value } as Env),
 			).toBe(false);
 		},
 	);

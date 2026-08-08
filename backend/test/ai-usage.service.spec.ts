@@ -221,6 +221,18 @@ describe('AI usage dashboard queries', () => {
 					average_latency_ms: '1250',
 				}];
 			}
+			if (query.includes('group by aue.operation')) {
+				return [{
+					operation: 'MERCHANT_MAPPING',
+					request_count: '3',
+					success_count: '1',
+					cost: '0.00144',
+					total_tokens: '16246',
+					item_count: '34',
+					average_latency_ms: '9000',
+					background_only: true,
+				}];
+			}
 			if (query.includes('count(*) over ()')) {
 				expect(values.at(-1)).toBe(30);
 				return [{
@@ -310,6 +322,18 @@ describe('AI usage dashboard queries', () => {
 			page_size: 30,
 			total_event_count: 2,
 		});
+		// Background work has no user_id; a plain equality filter used to hide it
+		// from every aggregate, which is why mapping spend never appeared here.
+		expect(dashboard.operations).toEqual([{
+			operation: 'MERCHANT_MAPPING',
+			request_count: 3,
+			success_count: 1,
+			cost_usd: 0.00144,
+			total_tokens: 16246,
+			item_count: 34,
+			average_latency_ms: 9000,
+			background_only: true,
+		}]);
 		expect(dashboard.models[0]).toMatchObject({
 			request_count: 2,
 			cost_usd: 0.01,
@@ -363,15 +387,37 @@ describe('AI usage dashboard queries', () => {
 });
 
 describe('Tavily key credit reporting', () => {
-	it('reports per-key usage with the account plan as the fallback ceiling', async () => {
-		const fetcher = vi.fn().mockImplementation(async (input: string | URL | Request) => {
-			return new Response(JSON.stringify({
-				key: { usage: 150, limit: 1000, search_usage: 150 },
-				account: { current_plan: 'Bootstrap', plan_usage: 500, plan_limit: 15000 },
-			}), { status: 200 });
+	// The balance comes from our own ledger. Tavily's /usage reports zero on
+	// free-tier keys even immediately after a billed search (verified against a
+	// live key), so its numbers are shown only as a reported-vs-actual contrast.
+	function createLedgerSql(creditsByCounter: Record<string, number>): SqlClient {
+		return createSqlMock((query) => {
+			if (!query.includes('from public.usage_counters as uc')) {
+				throw new Error(`Unexpected query: ${query}`);
+			}
+			return Object.entries(creditsByCounter).map(([counter, credits]) => ({
+				counter,
+				credits,
+			}));
 		});
+	}
+
+	function usageResponder(planUsage: number, planLimit: number | null) {
+		// A fresh Response per call: one body can only be read once, so a shared
+		// instance would make the second key look unreachable.
+		return vi.fn().mockImplementation(async () =>
+			new Response(JSON.stringify({
+				key: { usage: 0, limit: null },
+				account: { current_plan: 'Researcher', plan_usage: planUsage, plan_limit: planLimit },
+			}), { status: 200 }),
+		);
+	}
+
+	it('derives the balance from recorded credits, not from the usage endpoint', async () => {
+		const fetcher = usageResponder(0, 1000);
 
 		const keys = await fetchTavilyKeysUsage(
+			createLedgerSql({ tavily_credits_key_1: 234 }),
 			{ TAVILY_API_KEY: 'tvly-one,tvly-two' } as unknown as Env,
 			fetcher,
 		);
@@ -380,131 +426,111 @@ describe('Tavily key credit reporting', () => {
 		expect(keys[0]).toMatchObject({
 			label: 'Key 1',
 			is_live: true,
-			used_credits: 150,
+			used_credits: 234,
 			limit_credits: 1000,
-			remaining_credits: 850,
-			plan_name: 'Bootstrap',
-			plan_used_credits: 500,
-			plan_limit_credits: 15000,
+			remaining_credits: 766,
+			plan_name: 'Researcher',
+			// Tavily disagrees with us, and that disagreement is surfaced, not hidden.
+			reported_plan_usage: 0,
 			unavailable: false,
 		});
 		expect(keys[0].fetched_at).toBeTruthy();
-		expect(keys[1]).toMatchObject({ label: 'Key 2', is_live: false });
-		expect(fetcher).toHaveBeenCalledTimes(2);
+		expect(keys[1]).toMatchObject({ label: 'Key 2', used_credits: 0, remaining_credits: 1000 });
 		expect(String(fetcher.mock.calls[0][0])).toBe('https://api.tavily.com/usage');
 	});
 
-	it('marks the first key with credits left as live, not simply the first key', async () => {
-		// Key 1 is spent, so Key 2 is what the mapper's rotation will actually
-		// reach. Reporting Key 1 as live would hide exactly the exhaustion this
-		// panel exists to surface.
-		const fetcher = vi.fn().mockImplementation(async (_url, init) => {
-			const auth = String((init as RequestInit | undefined)?.headers
-				? new Headers((init as RequestInit).headers).get('Authorization')
-				: '');
-			const spent = auth.includes('tvly-one');
-			return new Response(JSON.stringify({
-				key: { usage: spent ? 1000 : 20, limit: 1000 },
-				account: { current_plan: 'Free', plan_usage: 1020, plan_limit: 2000 },
-			}), { status: 200 });
-		});
-
+	it('tracks each key position separately', async () => {
 		const keys = await fetchTavilyKeysUsage(
+			createLedgerSql({ tavily_credits_key_1: 1000, tavily_credits_key_2: 20 }),
 			{ TAVILY_API_KEY: 'tvly-one,tvly-two' } as unknown as Env,
-			fetcher,
+			usageResponder(0, 1000),
 		);
 
-		expect(keys[0]).toMatchObject({ label: 'Key 1', remaining_credits: 0, is_live: false });
-		expect(keys[1]).toMatchObject({ label: 'Key 2', remaining_credits: 980, is_live: true });
+		// Key 1 is spent, so Key 2 is what the mapper's rotation will actually
+		// reach. Reporting Key 1 as live would hide exactly that exhaustion.
+		expect(keys[0]).toMatchObject({ remaining_credits: 0, is_live: false });
+		expect(keys[1]).toMatchObject({ remaining_credits: 980, is_live: true });
 	});
 
 	it('falls back to the first key when every balance is exhausted', async () => {
-		// A fresh Response per call: one body can only be read once, so a shared
-		// instance would make the second key look unreachable rather than spent.
-		const fetcher = vi.fn().mockImplementation(async () =>
-			new Response(JSON.stringify({
-				key: { usage: 1000, limit: 1000 },
-				account: { current_plan: 'Free', plan_usage: 1000, plan_limit: 1000 },
-			}), { status: 200 }),
-		);
-
 		const keys = await fetchTavilyKeysUsage(
+			createLedgerSql({ tavily_credits_key_1: 1000, tavily_credits_key_2: 1000 }),
 			{ TAVILY_API_KEY: 'tvly-one,tvly-two' } as unknown as Env,
-			fetcher,
+			usageResponder(0, 1000),
 		);
 
 		expect(keys.filter(key => key.is_live)).toHaveLength(1);
 		expect(keys[0].is_live).toBe(true);
 	});
 
-	it('uses the account plan when a free-tier key has no per-key limit', async () => {
-		const fetcher = vi.fn().mockResolvedValue(
-			new Response(JSON.stringify({
-				key: { usage: 210, limit: null },
-				account: { current_plan: 'Bootstrap', plan_usage: 210, plan_limit: 1000 },
-			}), { status: 200 }),
-		);
-
+	it('never reports a negative balance when the plan limit is overshot', async () => {
 		const keys = await fetchTavilyKeysUsage(
-			{ TAVILY_API_KEY: 'tvly-free' } as unknown as Env,
-			fetcher,
+			createLedgerSql({ tavily_credits_key_1: 1200 }),
+			{ TAVILY_API_KEY: 'tvly-one' } as unknown as Env,
+			usageResponder(0, 1000),
 		);
 
-		expect(keys[0]).toMatchObject({
-			used_credits: 210,
-			limit_credits: null,
-			remaining_credits: 790,
-			plan_name: 'Bootstrap',
-		});
+		expect(keys[0]).toMatchObject({ used_credits: 1200, remaining_credits: 0 });
 	});
 
-	it('marks a key unavailable instead of failing when the usage call errors', async () => {
-		const fetcher = vi.fn().mockImplementation(
-			async (input: string | URL | Request, init?: { headers?: Record<string, string> }) => {
-				const auth = init?.headers?.Authorization ?? '';
-				if (auth.includes('tvly-dead')) {
-					throw new Error('network down');
-				}
-				return new Response(JSON.stringify({
-					key: { usage: 40, limit: 1000 },
-					account: { current_plan: 'Bootstrap', plan_usage: 40, plan_limit: 1000 },
-				}), { status: 200 });
-			},
-		);
+	// The whole point of the rewrite: the balance must survive Tavily being
+	// unreachable, because it never depended on that call in the first place.
+	it('still reports a balance when the usage endpoint cannot be reached', async () => {
+		const fetcher = vi.fn().mockImplementation(async (_input, init) => {
+			const auth = String(new Headers((init as RequestInit).headers).get('Authorization'));
+			if (auth.includes('tvly-dead')) throw new Error('network down');
+			return new Response(JSON.stringify({
+				key: { usage: 0, limit: null },
+				account: { current_plan: 'Researcher', plan_usage: 0, plan_limit: 1000 },
+			}), { status: 200 });
+		});
 
 		const keys = await fetchTavilyKeysUsage(
+			createLedgerSql({ tavily_credits_key_1: 40, tavily_credits_key_2: 65 }),
 			{ TAVILY_API_KEY: 'tvly-live,tvly-dead' } as unknown as Env,
 			fetcher,
 		);
 
-		expect(keys[0]).toMatchObject({ unavailable: false, used_credits: 40 });
+		expect(keys[0]).toMatchObject({ unavailable: false, used_credits: 40, remaining_credits: 960 });
 		expect(keys[1]).toMatchObject({
 			unavailable: true,
-			used_credits: null,
-			remaining_credits: null,
+			used_credits: 65,
+			// Falls back to the published free-tier ceiling.
+			limit_credits: 1000,
+			remaining_credits: 935,
+			plan_name: null,
+			reported_plan_usage: null,
 			fetched_at: null,
 		});
 	});
 
-	it('treats a revoked key (401) as unavailable', async () => {
-		const fetcher = vi.fn().mockResolvedValue(new Response('Unauthorized', { status: 401 }));
-
+	it('treats a revoked key (401) as unavailable but still counts its spend', async () => {
 		const keys = await fetchTavilyKeysUsage(
+			createLedgerSql({ tavily_credits_key_1: 12 }),
 			{ TAVILY_API_KEY: 'tvly-revoked' } as unknown as Env,
-			fetcher,
+			vi.fn().mockResolvedValue(new Response('Unauthorized', { status: 401 })),
 		);
 
-		expect(keys[0]).toMatchObject({ unavailable: true, used_credits: null });
+		expect(keys[0]).toMatchObject({ unavailable: true, used_credits: 12 });
 	});
 
-	it('returns an empty list when no Tavily key is configured', async () => {
+	it('returns an empty list without touching the ledger when no key is configured', async () => {
 		const fetcher = vi.fn();
+		let queried = false;
+		const sql = createSqlMock(() => {
+			queried = true;
+			return [];
+		});
+
 		const keys = await fetchTavilyKeysUsage(
+			sql,
 			{ TAVILY_API_KEY: '  ,  ' } as unknown as Env,
 			fetcher,
 		);
+
 		expect(keys).toEqual([]);
 		expect(fetcher).not.toHaveBeenCalled();
+		expect(queried).toBe(false);
 	});
 });
 
@@ -595,27 +621,63 @@ describe('Merchant mapping summary', () => {
 		expect(summary.days[1].mappings).toEqual([]);
 	});
 
-	it('skips the mapping query and reports the flag when no day qualifies', async () => {
-		let mappingQueried = false;
-		const sql = createSqlMock((query) => {
+	function createScheduleAwareSqlMock(scheduleEnabled: boolean, onMappingQuery: () => void) {
+		return createSqlMock((query) => {
 			if (query.includes('with day_counts as')) return [];
+			if (query.includes('from public.job_schedules as js')) {
+				return [
+					{
+						job: 'merchant_mapping',
+						enabled: scheduleEnabled,
+						run_at_local: '03:00',
+						timezone: 'Asia/Kolkata',
+						last_enqueued_at: null,
+						next_run_at: null,
+					},
+				];
+			}
 			if (query.includes('to_char(date(gma.created_at)')) {
-				mappingQueried = true;
+				onMappingQuery();
 				return [];
 			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
+	}
 
-		const summary = await getMerchantMappingSummary(
-			sql,
-			{ MERCHANT_MAPPING_ENABLED: '1' } as unknown as Env,
-		);
+	it('skips the mapping query and reads the schedule when no day qualifies', async () => {
+		let mappingQueried = false;
+		const sql = createScheduleAwareSqlMock(true, () => {
+			mappingQueried = true;
+		});
+
+		const summary = await getMerchantMappingSummary(sql, {} as unknown as Env);
 
 		expect(summary.mapper_enabled).toBe(true);
 		expect(summary.days).toEqual([]);
 		expect(summary.truncated).toBe(false);
 		// No days means nothing to scope mappings to; the second query is skipped.
 		expect(mappingQueried).toBe(false);
+	});
+
+	// The banner must not claim the mapper is running when the dispatcher will
+	// never offer it to the claim.
+	it('reports the mapper off when the env kill switch overrides an enabled schedule', async () => {
+		const sql = createScheduleAwareSqlMock(true, () => undefined);
+
+		const summary = await getMerchantMappingSummary(
+			sql,
+			{ MERCHANT_MAPPING_ENABLED: 'off' } as unknown as Env,
+		);
+
+		expect(summary.mapper_enabled).toBe(false);
+	});
+
+	it('reports the mapper off when the schedule is disabled', async () => {
+		const sql = createScheduleAwareSqlMock(false, () => undefined);
+
+		const summary = await getMerchantMappingSummary(sql, {} as unknown as Env);
+
+		expect(summary.mapper_enabled).toBe(false);
 	});
 
 	it('caps the day window and flags that older days remain', async () => {
