@@ -1094,6 +1094,24 @@ export interface AiProcessingSummary {
   recent_runs: AiProcessingRun[];
 }
 
+/**
+ * Spend split by what the model was asked to do, for the selected month.
+ * Model breakdowns cannot answer this: every operation uses the same model, so
+ * mapping and sender-check spend hides inside the email row.
+ */
+export interface AiUsageOperationBreakdown {
+  operation: AiUsageOperation;
+  request_count: number;
+  success_count: number;
+  cost_usd: number;
+  total_tokens: number;
+  /** Emails, payees or senders handled — the unit differs per operation. */
+  item_count: number;
+  average_latency_ms: number;
+  /** True when no call carried a user: background work, not something you did. */
+  background_only: boolean;
+}
+
 export interface AiTavilyKeyCredits {
   /** Stable non-secret label (position only — key material never leaves the server). */
   label: string;
@@ -1103,16 +1121,24 @@ export interface AiTavilyKeyCredits {
    * which is exactly what this panel exists to reveal.
    */
   is_live: boolean;
-  /** Credits used this billing cycle, or null when the key could not report. */
-  used_credits: number | null;
-  /** Per-key limit; null on the free tier where the account plan is the cap. */
-  limit_credits: number | null;
-  /** Remaining credits (per-key limit, falling back to the account plan). */
-  remaining_credits: number | null;
+  /**
+   * Credits spent this calendar month, summed from our own ledger — every
+   * search asks Tavily what it billed and the answer is banked in
+   * usage_counters. Not read from Tavily's /usage endpoint, which reports zero
+   * on free-tier keys even straight after a billed search.
+   */
+  used_credits: number;
+  /** Monthly ceiling: the plan limit Tavily reports, else the free-tier 1,000. */
+  limit_credits: number;
+  /** limit_credits − used_credits, floored at zero. */
+  remaining_credits: number;
   plan_name: string | null;
-  plan_used_credits: number | null;
-  plan_limit_credits: number | null;
-  /** True when the live Tavily query failed (network, rate limit, revoked key). */
+  /**
+   * What Tavily's /usage endpoint claims was spent on the plan. Kept only to
+   * show the discrepancy; known unreliable, never used for the balance.
+   */
+  reported_plan_usage: number | null;
+  /** True when Tavily could not be reached at all (network, revoked key). */
   unavailable: boolean;
   fetched_at: ISODateTimeString | null;
 }
@@ -1150,7 +1176,7 @@ export interface AiMerchantMappingDay {
 }
 
 export interface AiMerchantMappingSummary {
-  /** MERCHANT_MAPPING_ENABLED flag — a disabled mapper is not idle, it is off. */
+  /** Schedule toggle (and env kill switch) — a disabled mapper is not idle, it is off. */
   mapper_enabled: boolean;
   /** Days with recorded activity (counters or mappings), newest first. */
   days: AiMerchantMappingDay[];
@@ -1163,6 +1189,42 @@ export interface AiTavilyKeysResponse {
   keys: AiTavilyKeyCredits[];
 }
 
+// ---- Nightly job schedules (admin-controlled, database-owned) ----
+
+export const SCHEDULED_JOB_NAMES = ['merchant_mapping', 'sender_classification'] as const;
+
+export type ScheduledJobName = (typeof SCHEDULED_JOB_NAMES)[number];
+
+export interface JobSchedule {
+  job: ScheduledJobName;
+  enabled: boolean;
+  /**
+   * Local wall-clock start time as HH:MM, always on a 10-minute boundary
+   * because the dispatcher that claims due jobs only ticks that often.
+   */
+  run_at_local: string;
+  /** IANA zone the time above is read in (Asia/Kolkata). */
+  timezone: string;
+  /** When the job was last handed to the queue, or null if it never has been. */
+  last_enqueued_at: ISODateTimeString | null;
+  /**
+   * When it will next be claimed; null while disabled. A value in the past
+   * means the slot is already due and the next tick will take it.
+   */
+  next_run_at: ISODateTimeString | null;
+  /** True when an env kill switch is forcing the job off regardless of the toggle. */
+  kill_switched: boolean;
+}
+
+export interface JobSchedulesResponse {
+  schedules: JobSchedule[];
+}
+
+export interface JobScheduleUpdateRequest {
+  enabled?: boolean;
+  run_at_local?: string;
+}
+
 export interface AiUsageDashboardResponse {
   selected_month: string;
   page: number;
@@ -1170,6 +1232,7 @@ export interface AiUsageDashboardResponse {
   total_event_count: number;
   months: AiUsageMonthSummary[];
   models: AiUsageModelBreakdown[];
+  operations: AiUsageOperationBreakdown[];
   events: AiUsageEvent[];
   processing: AiProcessingSummary;
   merchant_mapping: AiMerchantMappingSummary;
