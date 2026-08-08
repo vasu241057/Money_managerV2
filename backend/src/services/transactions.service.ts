@@ -19,7 +19,7 @@ import type {
 	UpdateTransactionRequest,
 } from '../../../shared/types';
 import { calculateBudget, type BudgetCalculationTransaction } from './budget-calculator';
-import { backfillMerchantCategory } from './merchants.service';
+import { backfillDescriptorCategory } from './merchants.service';
 import type { SqlClient } from '../lib/db/client';
 import {
 	toIsoDateTime,
@@ -1853,44 +1853,24 @@ export async function reviewTransaction(
 			`;
 		}
 
-		// The search-key rule above only ever covers the exact counterparty
-		// string this transaction arrived with, but one merchant owns many
-		// aliases — which is why the same merchant kept coming back for review.
-		// A merchant-level default closes that, and carrying it backwards over
-		// the transactions already on file means the merchant is answered once.
-		// Aggregators stay out for the same reason they skip the search-key
-		// rule: the gateway is not the real merchant behind the charge.
+		// Review answers one raw counterparty, never a whole brand. One merchant
+		// can cover several kinds of spending — "AMAZON PAY IN GROCERY" and
+		// "AMAZON PAY IN E COMMERCE" are both Amazon Pay — so a merchant-wide
+		// answer from a single transaction would be wrong for the others.
+		// Merchant-wide changes live in Settings, where they are deliberate and
+		// confirmed. The backfill scope is exactly the search-key rule written
+		// above: if that rule is safe to save, the same rows are safe to carry
+		// it. The reviewed row already matches, so it never counts twice.
 		let backfilledCount = 0;
-		if (nextMerchantId && nextCategoryId) {
-			const merchantRows = await transactionSql<Array<{ type: unknown }>>`
-				select gm.type
-				from public.global_merchants as gm
-				where gm.id = ${nextMerchantId}
-				limit 1
-			`;
-			if (merchantRows[0]?.type !== 'AGGREGATOR') {
-				await transactionSql`
-					insert into public.user_merchant_category_rules (
-						user_id,
-						merchant_id,
-						transaction_type,
-						category_id
-					)
-					values (${userId}, ${nextMerchantId}, ${nextType}, ${nextCategoryId})
-					on conflict (user_id, merchant_id, transaction_type) do update
-					set category_id = excluded.category_id,
-						updated_at = now()
-				`;
-				backfilledCount = await backfillMerchantCategory(
-					transactionSql,
-					userId,
-					nextMerchantId,
-					nextType,
-					nextCategoryId,
-					'AI_ONLY',
-					transactionId,
-				);
-			}
+		if (nextCategoryId) {
+			backfilledCount = await backfillDescriptorCategory(
+				transactionSql,
+				userId,
+				appliedSearchKey,
+				nextType,
+				nextCategoryId,
+				'AI_ONLY',
+			);
 		}
 
 		return {
