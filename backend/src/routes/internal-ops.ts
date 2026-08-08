@@ -15,11 +15,14 @@ import {
 	runSenderMetadataBackfill,
 	runStatementHarvest,
 } from '../workers/email-sync-fetcher';
+import { previewMerchantMappings } from '../workers/merchant-mapper';
 
 const DEFAULT_PROBE_LIMIT = 10;
 const MAX_PROBE_LIMIT = 100;
 const DEFAULT_BACKFILL_LIMIT = 200;
 const MAX_BACKFILL_LIMIT = 1000;
+const DEFAULT_MAP_PREVIEW_LIMIT = 200;
+const MAX_MAP_PREVIEW_LIMIT = 500;
 
 function parseLimit(raw: unknown, fallback: number, max: number): number {
 	const parsed = parseInt(String(raw ?? ''), 10);
@@ -84,6 +87,28 @@ export function createInternalOpsRouter(): Router {
 			const windowDays =
 				Number.isFinite(parsedDays) && parsedDays > 0 ? Math.min(parsedDays, 3650) : null;
 			const result = await runStatementHarvest(limit, dryRun, runtimeEnv, windowDays);
+			res.json(result);
+		}),
+	);
+
+	// Dry-runs merchant mapping: real Tavily searches and a real model call,
+	// but nothing is persisted, so the proposals can be judged before the
+	// mapper is trusted to write them. Defaults ignore the 14-day lookback and
+	// the retry cooldown so the whole stuck backlog is visible.
+	router.post(
+		'/merchants/map-preview',
+		asyncHandler(async (req, res) => {
+			requireSecret(req);
+			const body = (req.body ?? {}) as Record<string, unknown>;
+			const searchKeys = Array.isArray(body.search_keys)
+				? body.search_keys.filter((key): key is string => typeof key === 'string')
+				: undefined;
+			const result = await previewMerchantMappings(runtimeEnv, {
+				ignoreLookback: body.ignore_lookback !== false,
+				ignoreCooldown: body.ignore_cooldown !== false,
+				...(searchKeys === undefined || searchKeys.length === 0 ? {} : { searchKeys }),
+				limit: parseLimit(req.query.limit, DEFAULT_MAP_PREVIEW_LIMIT, MAX_MAP_PREVIEW_LIMIT),
+			});
 			res.json(result);
 		}),
 	);

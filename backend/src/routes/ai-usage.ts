@@ -7,6 +7,7 @@ import { getSqlClient } from '../lib/db/client';
 import { asyncHandler } from '../lib/http/async';
 import { badRequest, notFound } from '../lib/http/errors';
 import {
+	fetchTavilyKeysUsage,
 	getAiUsageDashboard,
 	getAiUsageSummary,
 	isAiUsageAdmin,
@@ -34,6 +35,19 @@ export function createAiUsageRouter(): Router {
 		}),
 	);
 
+	// Separate from the dashboard on purpose: this reaches out to Tavily once
+	// per configured key, so it must not add latency to a screen the admin may
+	// open only to read spend. The merchant mapping tab requests it on open.
+	router.get(
+		'/tavily-keys',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			requireAiUsageAdmin(userId);
+			const keys = await fetchTavilyKeysUsage(runtimeEnv);
+			res.status(200).json({ data: { keys } });
+		}),
+	);
+
 	router.get(
 		'/',
 		asyncHandler(async (req, res) => {
@@ -53,7 +67,7 @@ export function createAiUsageRouter(): Router {
 			}
 
 			const sql = getSqlClient(getAppConfig(runtimeEnv));
-			const dashboard = await getAiUsageDashboard(sql, userId, month, page);
+			const dashboard = await getAiUsageDashboard(sql, userId, month, page, runtimeEnv);
 			res.status(200).json({ data: dashboard });
 		}),
 	);
