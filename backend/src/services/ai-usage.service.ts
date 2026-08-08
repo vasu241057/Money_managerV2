@@ -8,6 +8,7 @@ import type {
 	AiUsageModelBreakdown,
 	AiUsageMonthSummary,
 	AiUsageOperation,
+	AiUsageOperationBreakdown,
 	AiProcessingRun,
 	AiProcessingSummary,
 	AiUsageProvider,
@@ -15,7 +16,9 @@ import type {
 	AiUsageSummaryResponse,
 	MerchantType,
 } from '../../../shared/types';
-import { isMerchantMappingEnabled } from '../lib/feature-flags';
+import { isMerchantMappingKillSwitched } from '../lib/feature-flags';
+import { tavilyCreditCounterName } from '../workers/merchant-mapper';
+import { listJobSchedules } from './job-schedules.service';
 import type { SqlClient } from '../lib/db/client';
 import {
 	toBoolean,
@@ -33,6 +36,9 @@ export const AI_USAGE_PAGE_SIZE = 30;
 const TAVILY_USAGE_URL = 'https://api.tavily.com/usage';
 const TAVILY_USAGE_TIMEOUT_MS = 5_000;
 const MERCHANT_MAPPING_MAX_DAYS = 30;
+// Published free-tier allowance, reset on the 1st. Used as the ceiling when
+// Tavily's endpoint is unreachable so a derived balance still renders.
+const TAVILY_FREE_PLAN_CREDITS = 1_000;
 
 export interface AiUsageMetrics {
 	promptTokens: number;
@@ -161,6 +167,17 @@ interface ProcessingRunRowRaw {
 	error_code: unknown;
 	cost_usd: unknown;
 	latency_ms: unknown;
+}
+
+interface OperationRowRaw {
+	operation: unknown;
+	request_count: unknown;
+	success_count: unknown;
+	cost: unknown;
+	total_tokens: unknown;
+	item_count: unknown;
+	average_latency_ms: unknown;
+	background_only: unknown;
 }
 
 interface MappingDayRowRaw {
@@ -486,7 +503,42 @@ export async function fetchTavilyKeyUsage(
  * on the first. This reports each key's own credit state with a position
  * label only — the key material itself never leaves the server.
  */
+/**
+ * Credits this month, per key position, from our own ledger.
+ *
+ * Tavily's GET /usage reports zero on free-tier keys even immediately after a
+ * billed search (verified against a live key), so it cannot be used as a
+ * balance. Every search instead asks for `include_usage` and the billed figure
+ * is banked in usage_counters, which makes this the authoritative number.
+ * Allowances reset on the 1st, so the window is the calendar month.
+ */
+async function loadTavilyCreditsThisMonth(
+	sql: SqlClient,
+	keyCount: number,
+): Promise<number[]> {
+	const counters = Array.from({ length: keyCount }, (_unused, index) =>
+		tavilyCreditCounterName(index),
+	);
+	const rows = await sql<Array<{ counter: unknown; credits: unknown }>>`
+		select uc.counter, coalesce(sum(uc.count), 0) as credits
+		from public.usage_counters as uc
+		where uc.counter = any(${counters}::text[])
+			and uc.day >= date_trunc('month', current_date)::date
+		group by uc.counter
+	`;
+
+	const byCounter = new Map<string, number>();
+	for (const row of rows) {
+		byCounter.set(
+			toRequiredString(row.counter, 'usage_counters.counter'),
+			toSafeInteger(row.credits, 'usage_counters.count'),
+		);
+	}
+	return counters.map(counter => byCounter.get(counter) ?? 0);
+}
+
 export async function fetchTavilyKeysUsage(
+	sql: SqlClient,
 	env: Env,
 	fetcher: typeof fetch = fetch,
 ): Promise<AiTavilyKeyCredits[]> {
@@ -496,41 +548,34 @@ export async function fetchTavilyKeysUsage(
 		.filter(key => key.length > 0);
 	if (apiKeys.length === 0) return [];
 
-	const settled = await Promise.allSettled(
-		apiKeys.map(key => fetchTavilyKeyUsage(key, fetcher)),
-	);
+	const [settled, creditsByKey] = await Promise.all([
+		Promise.allSettled(apiKeys.map(key => fetchTavilyKeyUsage(key, fetcher))),
+		loadTavilyCreditsThisMonth(sql, apiKeys.length),
+	]);
 
 	const keys = apiKeys.map((_, index) => {
 		const payload = settled[index].status === 'fulfilled' ? settled[index].value : null;
-		const keyUsage = finiteNonNegativeNumber(payload?.key?.usage);
-		const keyLimit = finiteNonNegativeNumber(payload?.key?.limit);
-		const planUsed = finiteNonNegativeNumber(payload?.account?.plan_usage);
 		const planLimit = finiteNonNegativeNumber(payload?.account?.plan_limit);
-
-		// Free-tier keys carry no per-key cap, so the account plan is the
-		// effective ceiling (matches what Tavily's own dashboard shows).
-		const usedCredits = keyUsage ?? planUsed;
-		const remainingCredits =
-			keyLimit !== null && keyUsage !== null
-				? Math.max(0, keyLimit - keyUsage)
-				: planLimit !== null && planUsed !== null
-					? Math.max(0, planLimit - planUsed)
-					: null;
-		const unavailable = payload === null || (keyUsage === null && planUsed === null);
+		// The plan ceiling is still worth reading from Tavily — only its usage
+		// figures are untrustworthy. Free keys with an unreachable endpoint fall
+		// back to the published free-tier allowance so a balance still shows.
+		const limitCredits = planLimit ?? TAVILY_FREE_PLAN_CREDITS;
+		const usedCredits = creditsByKey[index] ?? 0;
 
 		return {
 			label: `Key ${index + 1}`,
 			is_live: false,
-			used_credits: unavailable ? null : usedCredits,
-			limit_credits: unavailable ? null : keyLimit,
-			remaining_credits: unavailable ? null : remainingCredits,
+			used_credits: usedCredits,
+			limit_credits: limitCredits,
+			remaining_credits: Math.max(0, limitCredits - usedCredits),
 			plan_name:
 				payload === null
 					? null
 					: toNullableString(payload.account?.current_plan, 'tavily.account.current_plan'),
-			plan_used_credits: unavailable ? null : planUsed,
-			plan_limit_credits: unavailable ? null : planLimit,
-			unavailable,
+			reported_plan_usage: finiteNonNegativeNumber(payload?.account?.plan_usage),
+			// Now strictly "could not reach Tavily" — the balance no longer
+			// depends on that call succeeding.
+			unavailable: payload === null,
 			fetched_at: payload === null ? null : new Date().toISOString(),
 		};
 	});
@@ -538,8 +583,7 @@ export async function fetchTavilyKeysUsage(
 	// The mapper starts each run on the first key and rotates forward only when
 	// one is exhausted, so the key that will actually serve is the first with
 	// credits left. Marking key 1 live regardless would hide an exhausted key —
-	// the precise failure this panel exists to surface. A key whose balance is
-	// unknown is treated as usable, matching what the mapper would attempt.
+	// the precise failure this panel exists to surface.
 	const liveIndex = keys.findIndex(
 		key => key.remaining_credits === null || key.remaining_credits > 0,
 	);
@@ -674,8 +718,18 @@ export async function getMerchantMappingSummary(
 		};
 	});
 
+	// Sourced from the schedule the dispatcher actually reads, so this banner
+	// cannot claim the mapper is running while the claim query ignores it.
+	const mapperEnabled =
+		env === undefined
+			? false
+			: !isMerchantMappingKillSwitched(env) &&
+				(await listJobSchedules(sql, env)).some(
+					schedule => schedule.job === 'merchant_mapping' && schedule.enabled,
+				);
+
 	return {
-		mapper_enabled: env === undefined ? false : isMerchantMappingEnabled(env),
+		mapper_enabled: mapperEnabled,
 		days,
 		truncated,
 	};
@@ -706,7 +760,10 @@ export async function getAiUsageSummary(
 					)
 				) as month_requests
 			from public.ai_usage_events as aue
-			where aue.user_id = ${userId}
+			-- Background jobs (sender classification, merchant mapping) record no
+			-- user, so a plain equality filter hid their spend entirely. This is
+			-- an admin-only view of a single-user deployment: system work counts.
+			where (aue.user_id = ${userId} or aue.user_id is null)
 		`,
 		fetchOpenRouterKeyUsage(
 			env.OPENROUTER_API_KEY?.trim() || null,
@@ -748,6 +805,25 @@ function mapMonth(row: MonthRowRaw): AiUsageMonthSummary {
 			'ai_usage_events.average_latency_ms',
 		),
 		total_tokens: toSafeInteger(row.total_tokens, 'ai_usage_events.total_tokens'),
+	};
+}
+
+function mapOperation(row: OperationRowRaw): AiUsageOperationBreakdown {
+	return {
+		operation: toRequiredString(
+			row.operation,
+			'ai_usage_events.operation',
+		) as AiUsageOperation,
+		request_count: toSafeInteger(row.request_count, 'ai_usage_events.request_count'),
+		success_count: toSafeInteger(row.success_count, 'ai_usage_events.success_count'),
+		cost_usd: toNullableNumber(row.cost, 'ai_usage_events.cost') ?? 0,
+		total_tokens: toSafeInteger(row.total_tokens, 'ai_usage_events.total_tokens'),
+		item_count: toSafeInteger(row.item_count, 'ai_usage_events.item_count'),
+		average_latency_ms: toSafeInteger(
+			row.average_latency_ms,
+			'ai_usage_events.average_latency_ms',
+		),
+		background_only: toBoolean(row.background_only, 'ai_usage_events.background_only'),
 	};
 }
 
@@ -887,7 +963,15 @@ export async function getAiUsageDashboard(
 	env?: Env,
 ): Promise<AiUsageDashboardResponse> {
 	const offset = (page - 1) * AI_USAGE_PAGE_SIZE;
-	const [monthRows, modelRows, eventRows, processingRows, processingRunRows, merchantMapping] =
+	const [
+		monthRows,
+		modelRows,
+		operationRows,
+		eventRows,
+		processingRows,
+		processingRunRows,
+		merchantMapping,
+	] =
 		await Promise.all([
 			sql<MonthRowRaw[]>`
 			select
@@ -899,7 +983,10 @@ export async function getAiUsageDashboard(
 				coalesce(round(avg(aue.latency_ms)), 0) as average_latency_ms,
 				coalesce(sum(aue.total_tokens), 0) as total_tokens
 			from public.ai_usage_events as aue
-			where aue.user_id = ${userId}
+			-- Background jobs (sender classification, merchant mapping) record no
+			-- user, so a plain equality filter hid their spend entirely. This is
+			-- an admin-only view of a single-user deployment: system work counts.
+			where (aue.user_id = ${userId} or aue.user_id is null)
 			group by 1
 			order by 1 desc
 		`,
@@ -918,7 +1005,10 @@ export async function getAiUsageDashboard(
 				coalesce(sum(aue.item_count), 0) as item_count,
 				coalesce(round(avg(aue.latency_ms)), 0) as average_latency_ms
 			from public.ai_usage_events as aue
-			where aue.user_id = ${userId}
+			-- Background jobs (sender classification, merchant mapping) record no
+			-- user, so a plain equality filter hid their spend entirely. This is
+			-- an admin-only view of a single-user deployment: system work counts.
+			where (aue.user_id = ${userId} or aue.user_id is null)
 			and aue.created_at >= (
 				to_date(${`${selectedMonth}-01`}, 'YYYY-MM-DD')::timestamp
 				at time zone 'Asia/Kolkata'
@@ -930,6 +1020,32 @@ export async function getAiUsageDashboard(
 			group by aue.provider, aue.model
 			order by cost desc, request_count desc, aue.provider, aue.model
 		`,
+		sql<OperationRowRaw[]>`
+			select
+				aue.operation,
+				count(*) as request_count,
+				count(*) filter (where aue.status = 'SUCCESS') as success_count,
+				coalesce(sum(aue.cost_usd), 0) as cost,
+				coalesce(sum(aue.total_tokens), 0) as total_tokens,
+				coalesce(sum(aue.item_count), 0) as item_count,
+				coalesce(round(avg(aue.latency_ms)), 0) as average_latency_ms,
+				bool_and(aue.user_id is null) as background_only
+			from public.ai_usage_events as aue
+			-- Background jobs (sender classification, merchant mapping) record no
+			-- user, so a plain equality filter hid their spend entirely. This is
+			-- an admin-only view of a single-user deployment: system work counts.
+			where (aue.user_id = ${userId} or aue.user_id is null)
+			and aue.created_at >= (
+				to_date(${`${selectedMonth}-01`}, 'YYYY-MM-DD')::timestamp
+				at time zone 'Asia/Kolkata'
+			)
+			and aue.created_at < (
+				(to_date(${`${selectedMonth}-01`}, 'YYYY-MM-DD') + interval '1 month')::timestamp
+				at time zone 'Asia/Kolkata'
+			)
+			group by aue.operation
+			order by cost desc, request_count desc, aue.operation
+		`,
 		sql<EventRowRaw[]>`
 			select
 				aue.id, aue.call_id, aue.attempt_number,
@@ -940,7 +1056,10 @@ export async function getAiUsageDashboard(
 				aue.generation_id, aue.created_at,
 				count(*) over () as total_event_count
 			from public.ai_usage_events as aue
-			where aue.user_id = ${userId}
+			-- Background jobs (sender classification, merchant mapping) record no
+			-- user, so a plain equality filter hid their spend entirely. This is
+			-- an admin-only view of a single-user deployment: system work counts.
+			where (aue.user_id = ${userId} or aue.user_id is null)
 			and aue.created_at >= (
 				to_date(${`${selectedMonth}-01`}, 'YYYY-MM-DD')::timestamp
 				at time zone 'Asia/Kolkata'
@@ -1049,6 +1168,7 @@ export async function getAiUsageDashboard(
 		total_event_count: totalEventCount,
 		months: monthRows.map(mapMonth),
 		models: modelRows.map(mapModel),
+		operations: operationRows.map(mapOperation),
 		events: eventRows.map(mapEvent),
 		processing: mapProcessingSummary(
 			processingRows[0],
