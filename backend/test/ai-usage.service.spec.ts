@@ -5,8 +5,10 @@ import {
 	captureAiUsageAttempt,
 	extractAiUsageMetrics,
 	fetchOpenRouterKeyUsage,
+	fetchTavilyKeysUsage,
 	getAiUsageDashboard,
 	getAiUsageSummary,
+	getMerchantMappingSummary,
 	isAiUsageAdmin,
 	isValidAiUsageMonth,
 } from '../src/services/ai-usage.service';
@@ -181,6 +183,16 @@ describe('AI usage dashboard queries', () => {
 
 	it('returns month, model, and paginated event receipts', async () => {
 		const sql = createSqlMock((query, values) => {
+			if (query.includes('with day_counts as')) {
+				return [{
+					day: '2026-07-19',
+					tavily_searches: '42',
+					merchant_ai_calls: '2',
+					merchants_mapped: '18',
+					merchants_skipped_unsure: '3',
+					counters_available: true,
+				}];
+			}
 			if (query.includes('group by 1')) {
 				return [{
 					month: '2026-08',
@@ -267,6 +279,26 @@ describe('AI usage dashboard queries', () => {
 					latency_ms: 400,
 				}];
 			}
+			if (query.includes('with day_counts as')) {
+				return [{
+					day: '2026-07-19',
+					tavily_searches: '42',
+					merchant_ai_calls: '2',
+					merchants_mapped: '18',
+					merchants_skipped_unsure: '3',
+					counters_available: true,
+				}];
+			}
+			if (query.includes('to_char(date(gma.created_at)')) {
+				return [{
+					day: '2026-07-19',
+					search_key: 'BUNDL TECHNOLOGIES',
+					canonical_name: 'Swiggy',
+					merchant_type: 'MERCHANT',
+					default_category_name: 'Food',
+					confirmed: true,
+				}];
+			}
 			throw new Error(`Unexpected query: ${query}`);
 		});
 
@@ -306,6 +338,306 @@ describe('AI usage dashboard queries', () => {
 			status: 'SUCCESS',
 			attempt_count: 2,
 		});
+		// Tavily credits are no longer bundled here — the dashboard must stay a
+		// pure database read, with key balances fetched only by the mapping tab.
+		expect(dashboard.merchant_mapping).toMatchObject({
+			mapper_enabled: false,
+			truncated: false,
+		});
+		expect('tavily_keys' in dashboard.merchant_mapping).toBe(false);
+		expect(dashboard.merchant_mapping.days[0]).toMatchObject({
+			day: '2026-07-19',
+			tavily_searches: 42,
+			merchant_ai_calls: 2,
+			merchants_mapped: 18,
+			merchants_skipped_unsure: 3,
+		});
+		expect(dashboard.merchant_mapping.days[0].mappings[0]).toMatchObject({
+			search_key: 'BUNDL TECHNOLOGIES',
+			canonical_name: 'Swiggy',
+			merchant_type: 'MERCHANT',
+			default_category: 'Food',
+			confirmed: true,
+		});
+	});
+});
+
+describe('Tavily key credit reporting', () => {
+	it('reports per-key usage with the account plan as the fallback ceiling', async () => {
+		const fetcher = vi.fn().mockImplementation(async (input: string | URL | Request) => {
+			return new Response(JSON.stringify({
+				key: { usage: 150, limit: 1000, search_usage: 150 },
+				account: { current_plan: 'Bootstrap', plan_usage: 500, plan_limit: 15000 },
+			}), { status: 200 });
+		});
+
+		const keys = await fetchTavilyKeysUsage(
+			{ TAVILY_API_KEY: 'tvly-one,tvly-two' } as unknown as Env,
+			fetcher,
+		);
+
+		expect(keys).toHaveLength(2);
+		expect(keys[0]).toMatchObject({
+			label: 'Key 1',
+			is_live: true,
+			used_credits: 150,
+			limit_credits: 1000,
+			remaining_credits: 850,
+			plan_name: 'Bootstrap',
+			plan_used_credits: 500,
+			plan_limit_credits: 15000,
+			unavailable: false,
+		});
+		expect(keys[0].fetched_at).toBeTruthy();
+		expect(keys[1]).toMatchObject({ label: 'Key 2', is_live: false });
+		expect(fetcher).toHaveBeenCalledTimes(2);
+		expect(String(fetcher.mock.calls[0][0])).toBe('https://api.tavily.com/usage');
+	});
+
+	it('marks the first key with credits left as live, not simply the first key', async () => {
+		// Key 1 is spent, so Key 2 is what the mapper's rotation will actually
+		// reach. Reporting Key 1 as live would hide exactly the exhaustion this
+		// panel exists to surface.
+		const fetcher = vi.fn().mockImplementation(async (_url, init) => {
+			const auth = String((init as RequestInit | undefined)?.headers
+				? new Headers((init as RequestInit).headers).get('Authorization')
+				: '');
+			const spent = auth.includes('tvly-one');
+			return new Response(JSON.stringify({
+				key: { usage: spent ? 1000 : 20, limit: 1000 },
+				account: { current_plan: 'Free', plan_usage: 1020, plan_limit: 2000 },
+			}), { status: 200 });
+		});
+
+		const keys = await fetchTavilyKeysUsage(
+			{ TAVILY_API_KEY: 'tvly-one,tvly-two' } as unknown as Env,
+			fetcher,
+		);
+
+		expect(keys[0]).toMatchObject({ label: 'Key 1', remaining_credits: 0, is_live: false });
+		expect(keys[1]).toMatchObject({ label: 'Key 2', remaining_credits: 980, is_live: true });
+	});
+
+	it('falls back to the first key when every balance is exhausted', async () => {
+		// A fresh Response per call: one body can only be read once, so a shared
+		// instance would make the second key look unreachable rather than spent.
+		const fetcher = vi.fn().mockImplementation(async () =>
+			new Response(JSON.stringify({
+				key: { usage: 1000, limit: 1000 },
+				account: { current_plan: 'Free', plan_usage: 1000, plan_limit: 1000 },
+			}), { status: 200 }),
+		);
+
+		const keys = await fetchTavilyKeysUsage(
+			{ TAVILY_API_KEY: 'tvly-one,tvly-two' } as unknown as Env,
+			fetcher,
+		);
+
+		expect(keys.filter(key => key.is_live)).toHaveLength(1);
+		expect(keys[0].is_live).toBe(true);
+	});
+
+	it('uses the account plan when a free-tier key has no per-key limit', async () => {
+		const fetcher = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({
+				key: { usage: 210, limit: null },
+				account: { current_plan: 'Bootstrap', plan_usage: 210, plan_limit: 1000 },
+			}), { status: 200 }),
+		);
+
+		const keys = await fetchTavilyKeysUsage(
+			{ TAVILY_API_KEY: 'tvly-free' } as unknown as Env,
+			fetcher,
+		);
+
+		expect(keys[0]).toMatchObject({
+			used_credits: 210,
+			limit_credits: null,
+			remaining_credits: 790,
+			plan_name: 'Bootstrap',
+		});
+	});
+
+	it('marks a key unavailable instead of failing when the usage call errors', async () => {
+		const fetcher = vi.fn().mockImplementation(
+			async (input: string | URL | Request, init?: { headers?: Record<string, string> }) => {
+				const auth = init?.headers?.Authorization ?? '';
+				if (auth.includes('tvly-dead')) {
+					throw new Error('network down');
+				}
+				return new Response(JSON.stringify({
+					key: { usage: 40, limit: 1000 },
+					account: { current_plan: 'Bootstrap', plan_usage: 40, plan_limit: 1000 },
+				}), { status: 200 });
+			},
+		);
+
+		const keys = await fetchTavilyKeysUsage(
+			{ TAVILY_API_KEY: 'tvly-live,tvly-dead' } as unknown as Env,
+			fetcher,
+		);
+
+		expect(keys[0]).toMatchObject({ unavailable: false, used_credits: 40 });
+		expect(keys[1]).toMatchObject({
+			unavailable: true,
+			used_credits: null,
+			remaining_credits: null,
+			fetched_at: null,
+		});
+	});
+
+	it('treats a revoked key (401) as unavailable', async () => {
+		const fetcher = vi.fn().mockResolvedValue(new Response('Unauthorized', { status: 401 }));
+
+		const keys = await fetchTavilyKeysUsage(
+			{ TAVILY_API_KEY: 'tvly-revoked' } as unknown as Env,
+			fetcher,
+		);
+
+		expect(keys[0]).toMatchObject({ unavailable: true, used_credits: null });
+	});
+
+	it('returns an empty list when no Tavily key is configured', async () => {
+		const fetcher = vi.fn();
+		const keys = await fetchTavilyKeysUsage(
+			{ TAVILY_API_KEY: '  ,  ' } as unknown as Env,
+			fetcher,
+		);
+		expect(keys).toEqual([]);
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+});
+
+describe('Merchant mapping summary', () => {
+	it('merges counter days with AI-alias days and attaches mappings', async () => {
+		let queryCount = 0;
+		const sql = createSqlMock((query) => {
+			queryCount += 1;
+			if (query.includes('with day_counts as')) {
+				// The day query only admits alias days backed by an AI-created
+				// merchant, so the seed migration's burst never appears here.
+				expect(query).toContain("gm.source = 'AI'");
+				return [
+					{
+						day: '2026-07-19',
+						tavily_searches: '7',
+						merchant_ai_calls: '1',
+						merchants_mapped: '2',
+						merchants_skipped_unsure: '1',
+						counters_available: true,
+					},
+					{
+						day: '2026-07-18',
+						tavily_searches: '0',
+						merchant_ai_calls: '0',
+						merchants_mapped: '0',
+						merchants_skipped_unsure: '0',
+						counters_available: false,
+					},
+				];
+			}
+			if (query.includes('to_char(date(gma.created_at)')) {
+				// Mappings are scoped to the days actually being rendered.
+				expect(query).toContain('= any(');
+				// A run also aliases seeded and manual merchants, so the
+				// mapping list itself must not filter on merchant source.
+				expect(query).not.toContain("gm.source = 'AI'");
+				return [
+					{
+						day: '2026-07-19',
+						search_key: 'BUNDLTECHNOLOGIES',
+						raw_payee: 'BUNDL TECHNOLOGIES',
+						canonical_name: 'Swiggy',
+						merchant_type: 'MERCHANT',
+						default_category_name: 'Food',
+						confirmed: false,
+					},
+					{
+						day: '2026-07-19',
+						search_key: 'ANURAGS',
+						raw_payee: null,
+						canonical_name: 'Anurag S',
+						merchant_type: 'P2P',
+						default_category_name: null,
+						confirmed: false,
+					},
+				];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+
+		const summary = await getMerchantMappingSummary(sql, undefined);
+
+		expect(queryCount).toBe(2);
+		expect(summary.mapper_enabled).toBe(false);
+		expect(summary.truncated).toBe(false);
+		expect(summary.days).toHaveLength(2);
+		expect(summary.days[0]).toMatchObject({
+			day: '2026-07-19',
+			tavily_searches: 7,
+			merchants_mapped: 2,
+			counters_available: true,
+		});
+		expect(summary.days[0].mappings).toHaveLength(2);
+		expect(summary.days[0].mappings[0]).toMatchObject({
+			search_key: 'BUNDLTECHNOLOGIES',
+			raw_payee: 'BUNDL TECHNOLOGIES',
+			canonical_name: 'Swiggy',
+		});
+		expect(summary.days[0].mappings[1]).toMatchObject({
+			search_key: 'ANURAGS',
+			raw_payee: null,
+			merchant_type: 'P2P',
+			default_category: null,
+		});
+		// A day whose counters were never written must not read as zeros.
+		expect(summary.days[1].counters_available).toBe(false);
+		expect(summary.days[1].mappings).toEqual([]);
+	});
+
+	it('skips the mapping query and reports the flag when no day qualifies', async () => {
+		let mappingQueried = false;
+		const sql = createSqlMock((query) => {
+			if (query.includes('with day_counts as')) return [];
+			if (query.includes('to_char(date(gma.created_at)')) {
+				mappingQueried = true;
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		});
+
+		const summary = await getMerchantMappingSummary(
+			sql,
+			{ MERCHANT_MAPPING_ENABLED: '1' } as unknown as Env,
+		);
+
+		expect(summary.mapper_enabled).toBe(true);
+		expect(summary.days).toEqual([]);
+		expect(summary.truncated).toBe(false);
+		// No days means nothing to scope mappings to; the second query is skipped.
+		expect(mappingQueried).toBe(false);
+	});
+
+	it('caps the day window and flags that older days remain', async () => {
+		const sql = createSqlMock((query) => {
+			if (query.includes('with day_counts as')) {
+				return Array.from({ length: 31 }, (_unused, index) => ({
+					day: `2026-07-${String(31 - index).padStart(2, '0')}`,
+					tavily_searches: '1',
+					merchant_ai_calls: '1',
+					merchants_mapped: '0',
+					merchants_skipped_unsure: '0',
+					counters_available: true,
+				}));
+			}
+			if (query.includes('to_char(date(gma.created_at)')) return [];
+			throw new Error(`Unexpected query: ${query}`);
+		});
+
+		const summary = await getMerchantMappingSummary(sql, undefined);
+
+		expect(summary.days).toHaveLength(30);
+		expect(summary.truncated).toBe(true);
 	});
 });
 

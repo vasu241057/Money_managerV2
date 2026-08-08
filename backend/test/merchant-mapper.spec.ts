@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../src/lib/config';
 import type { SqlClient } from '../src/lib/db/client';
-import { runMerchantMappingJob } from '../src/workers/merchant-mapper';
+import { previewMerchantMappings, runMerchantMappingJob } from '../src/workers/merchant-mapper';
 
 const { getAppConfigMock, getSqlClientMock } = vi.hoisted(() => ({
 	getAppConfigMock: vi.fn(),
@@ -413,5 +413,89 @@ describe('sure-gate and web context', () => {
 		expect(outcome.context.size).toBe(0);
 		expect(outcome.searches_performed).toBe(0);
 		expect(fetcher).not.toHaveBeenCalled();
+	});
+});
+
+describe('merchant mapping preview (dry run)', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		getAppConfigMock.mockReturnValue(appConfig);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('returns proposals with web context and writes nothing to mapping state', async () => {
+		const writes: string[] = [];
+		let candidateQuery = '';
+		let candidateValues: unknown[] = [];
+
+		const sql = createSqlMock((query, values) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+
+			if (query.includes('from public.financial_events as fe') && query.includes('group by fe.search_key')) {
+				candidateQuery = query;
+				candidateValues = values;
+				return [
+					{ search_key: 'BUNDLTECHNOLOGIES', counterparty_raw: 'BUNDL TECHNOLOGIES' },
+					{ search_key: 'ETERNALLIMITED', counterparty_raw: 'ETERNAL LIMITED' },
+				];
+			}
+			// Day-bucketed cost counters are the one write a preview keeps: the
+			// Tavily and model calls really happened.
+			if (query.includes('usage')) return [];
+			writes.push(query);
+			return [];
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const fetchMock = vi.fn(async (url: string) => {
+			if (String(url).includes('tavily')) {
+				return new Response(
+					JSON.stringify({ results: [{ content: 'Bundl Technologies operates Swiggy.' }] }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			return modelResponse([
+				{ key: 'BUNDLTECHNOLOGIES', canonical_name: 'Swiggy', type: 'MERCHANT', category: 'Shopping' },
+				{ key: 'ETERNALLIMITED', canonical_name: 'Zomato', type: 'MERCHANT', category: 'Shopping' },
+			]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await previewMerchantMappings(createEnv({ TAVILY_API_KEY: 'tav-key' }));
+
+		expect(result.candidate_count).toBe(2);
+		expect(result.proposal_count).toBe(2);
+		expect(result.ai_call_count).toBe(1);
+		expect(result.unanswered_keys).toEqual([]);
+		expect(result.proposals.map(p => p.canonical_name)).toEqual(['Swiggy', 'Zomato']);
+		expect(result.proposals[0]?.raw_name).toBe('BUNDL TECHNOLOGIES');
+		expect(result.proposals[0]?.web_context).toContain('Swiggy');
+		// Category ids are resolved back to names so the output is readable.
+		expect(result.proposals[0]?.default_category).toBe('Shopping');
+
+		// Nothing that the real job would persist may be written here.
+		expect(writes).toEqual([]);
+		// Defaults widen the candidate query past both gates that strand keys:
+		// applyLookback (first bind) and applyCooldown (fifth) both arrive false.
+		expect(candidateQuery).toContain('from public.financial_events as fe');
+		expect(candidateValues[0]).toBe(false);
+		expect(candidateValues[4]).toBe(false);
+	});
+
+	it('skips without an AI key and never searches', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await previewMerchantMappings(
+			createEnv({ OPENCODE_GO_API_KEY: undefined, TAVILY_API_KEY: 'tav-key' }),
+		);
+
+		expect(result.skipped_reason).toContain('OPENCODE_GO_API_KEY');
+		expect(result.candidate_count).toBe(0);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });
