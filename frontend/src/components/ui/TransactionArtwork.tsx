@@ -1,6 +1,7 @@
 import { createElement, useState } from 'react';
 import {
-	AppWindow, ArrowDownCircle, ArrowLeftRight, ArrowUpCircle, Armchair, Award,
+	AppWindow, ArrowDownCircle, ArrowDownLeft, ArrowLeftRight, ArrowUpCircle,
+	ArrowUpRight, Armchair, Award,
 	Baby, BadgePercent, BedDouble, Bike, Bitcoin, Blocks, Bone, Book, BookOpen,
 	Briefcase, Building, Bus, Car, CarTaxiFront, Circle, CircleDashed, CircleParking,
 	CirclePlus, Clapperboard, Clock, Coffee, CreditCard, Droplets, Dumbbell, Film,
@@ -9,11 +10,17 @@ import {
 	MonitorPlay, Palette, PawPrint, Percent, Pill, Plane, Receipt, ReceiptText,
 	Repeat, Scissors, School, Shield, Shirt, ShoppingBag, ShoppingCart, Signal,
 	Smartphone, Sparkles, Stethoscope, Store, TestTube, Ticket, TrainFront,
-	TrendingUp, Tv, Undo2, Utensils, UtensilsCrossed, Wallet, Wifi, Wrench,
-	Zap, PackageOpen, type LucideIcon,
+	TrendingUp, Tv, Undo2, UserRound, Utensils, UtensilsCrossed, Wallet, Wifi,
+	Wrench, Zap, PackageOpen, type LucideIcon,
 } from 'lucide-react';
 import type { Transaction } from '../../types/domain';
 import type { MerchantArtworkPhase } from '../../hooks/useMerchantArtworkPhase';
+import {
+	isIncomingTransaction,
+	personInitials,
+	personTint,
+	transactionIdentityName,
+} from '../../lib/transaction-display';
 import '../../styles/merchant-logo-flip.css';
 
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
@@ -235,22 +242,36 @@ export function TransactionArtwork({
 }: TransactionArtworkProps) {
 	const [failedMerchantLogoUrl, setFailedMerchantLogoUrl] = useState<string | null>(null);
 	const merchantLogoUrl = transaction.merchantLogoUrl ?? null;
-	const hasUsableMerchantLogo = merchantLogoUrl !== null
+	// A person always gets the person face, even on the impossible day a logo
+	// row exists for their name: a brand mark on a human payee is never right.
+	const isPersonTransfer = transaction.merchantType === 'P2P';
+	const personName = isPersonTransfer ? transactionIdentityName(transaction) : null;
+	const personInitialsLabel = isPersonTransfer ? personInitials(personName) : null;
+	const hasUsableMerchantLogo = !isPersonTransfer
+		&& merchantLogoUrl !== null
 		&& merchantLogoUrl !== failedMerchantLogoUrl;
-	const showMerchantFace = phase.showMerchantLogos && hasUsableMerchantLogo;
-	const animationClass = hasUsableMerchantLogo && phase.animationCycle > 0
+	const hasMerchantFace = isPersonTransfer || hasUsableMerchantLogo;
+	const showMerchantFace = phase.showMerchantLogos && hasMerchantFace;
+	const animationClass = hasMerchantFace && phase.animationCycle > 0
 		? showMerchantFace
 			? ' ledger-artwork__rotor--flip-to-merchant'
 			: ' ledger-artwork__rotor--flip-to-category'
 		: '';
 	const iconColor = categoryColorFor(transaction);
+	const personColor = personTint(personName);
+	const incoming = isIncomingTransaction(transaction);
+	const merchantFaceLabel = isPersonTransfer
+		? `, ${personName ?? 'unnamed person'}, ${incoming ? 'received from a person' : 'paid to a person'}`
+		: transaction.merchantName
+			? `, ${transaction.merchantName} merchant`
+			: '';
 
 	return (
 		<div
 			className={`ledger-artwork${size === 'compact' ? ' ledger-artwork--compact' : ''}`}
 			data-artwork-face={showMerchantFace ? 'merchant' : 'category'}
 			role="img"
-			aria-label={`${transaction.category} category${transaction.merchantName ? `, ${transaction.merchantName} merchant` : ''}`}
+			aria-label={`${transaction.category} category${merchantFaceLabel}`}
 		>
 			<div className={`ledger-artwork__rotor${animationClass}`}>
 				<span
@@ -265,15 +286,44 @@ export function TransactionArtwork({
 						strokeWidth: 1.9,
 					})}
 				</span>
-				<span className="ledger-artwork__face ledger-artwork__face--merchant">
-					{merchantLogoUrl && (
-						<img
-							src={merchantLogoUrl}
-							alt=""
-							loading="lazy"
-							decoding="async"
-							onError={() => setFailedMerchantLogoUrl(merchantLogoUrl)}
-						/>
+				<span
+					className={`ledger-artwork__face ledger-artwork__face--merchant${
+						isPersonTransfer ? ' ledger-artwork__face--person' : ''
+					}`}
+					style={
+						isPersonTransfer
+							? {
+									background: `color-mix(in srgb, ${personColor} 14%, var(--ledger-card))`,
+									color: personColor,
+								}
+							: undefined
+					}
+				>
+					{isPersonTransfer ? (
+						<>
+							{personInitialsLabel ? (
+								<span className="ledger-artwork__initials">{personInitialsLabel}</span>
+							) : (
+								<UserRound size={size === 'compact' ? 16 : 17} strokeWidth={1.9} />
+							)}
+							{/* Direction is carried by the arrow's shape, never by colour alone. */}
+							<span className="ledger-artwork__person-badge">
+								{createElement(incoming ? ArrowDownLeft : ArrowUpRight, {
+									size: size === 'compact' ? 8 : 9,
+									strokeWidth: 3,
+								})}
+							</span>
+						</>
+					) : (
+						merchantLogoUrl && (
+							<img
+								src={merchantLogoUrl}
+								alt=""
+								loading="lazy"
+								decoding="async"
+								onError={() => setFailedMerchantLogoUrl(merchantLogoUrl)}
+							/>
+						)
 					)}
 				</span>
 			</div>

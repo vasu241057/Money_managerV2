@@ -63,6 +63,41 @@
   object-fit: contain;
 }
 
+/* Person transfers: initials fill the tile edge to edge, so no logo padding. */
+.ledger-artwork__face--person {
+  padding: 0;
+}
+
+.ledger-artwork__initials {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.ledger-artwork--compact .ledger-artwork__initials {
+  font-size: 12px;
+}
+
+.ledger-artwork__person-badge {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--ledger-card);
+  box-shadow: 0 0 0 1px var(--ledger-rule);
+}
+
+.ledger-artwork--compact .ledger-artwork__person-badge {
+  width: 13px;
+  height: 13px;
+}
+
 @keyframes ledger-artwork-flip-to-merchant {
   0% { transform: rotateY(0deg); }
   46% { transform: rotateY(82deg); }
