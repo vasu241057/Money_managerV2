@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Loader2, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import type { BudgetTreatment } from '../../../../shared/types';
 import type { ScreenId } from '../layout/BottomNav';
@@ -85,17 +85,68 @@ interface LedgerTransactionRowProps {
 	isLast: boolean;
 	viewMode: 'daily' | 'monthly';
 	artworkPhase: MerchantArtworkPhase;
-	onEditTransaction?: (transaction: Transaction) => void;
-	onReviewTransaction?: (transaction: Transaction) => void;
+	/**
+	 * Always defined so the row's props stay referentially stable for memo.
+	 * The ledger owns the "review handler present?" fallback that the row used
+	 * to make itself.
+	 */
+	onEditTransaction: (transaction: Transaction) => void;
+	onReviewTransaction: (transaction: Transaction) => void;
 	onRequestDelete: (transaction: Transaction) => void;
 	onSetBudgetTreatment: (transaction: Transaction, treatment: BudgetTreatment) => Promise<void>;
-	openRowId: string | null;
+	/**
+	 * Derived from the open row id by the parent. Passing the id itself would
+	 * change on every row's props whenever any row opened, re-rendering the
+	 * whole list on each swipe.
+	 */
+	isOpen: boolean;
 	setOpenRowId: (id: string | null) => void;
 }
 
 const SWIPE_ACTION_WIDTH = 88;
 const SWIPE_SECONDARY_ACTIONS_WIDTH = 160;
 const SWIPE_AXIS_SLOP = 5;
+
+// Windowing. content-visibility already keeps painting proportional to the
+// viewport, but every mounted row still costs DOM nodes and a reconciliation
+// pass, both of which grow with how far the ledger has been scrolled. Groups
+// outside the window are replaced by a spacer of their measured height, so the
+// scrollbar and every offset below them stay exactly where they were.
+//
+// Group granularity is deliberate: rows keep their markup, their swipe
+// gestures and their position inside the rounded day card untouched.
+const WINDOW_OVERSCAN_PX = 1200;
+// Below this the whole list is cheap enough that windowing would only add risk.
+const WINDOW_MIN_GROUPS = 40;
+const ESTIMATED_ROW_HEIGHT = 68;
+const ESTIMATED_DAY_HEADER_HEIGHT = 34;
+const ESTIMATED_MONTH_HEADER_HEIGHT = 64;
+
+/**
+ * Height used until a group has been measured once. Only ever wrong for groups
+ * that have never been on screen, and always below the viewport, so correcting
+ * it cannot move content the reader is currently looking at.
+ */
+function estimateGroupHeight(
+	group: DayGroup,
+	viewMode: 'daily' | 'monthly',
+	isExpanded: boolean,
+): number {
+	if (viewMode === 'monthly') {
+		return ESTIMATED_MONTH_HEADER_HEIGHT
+			+ (isExpanded ? group.transactions.length * ESTIMATED_ROW_HEIGHT : 0);
+	}
+	return ESTIMATED_DAY_HEADER_HEIGHT + group.transactions.length * ESTIMATED_ROW_HEIGHT;
+}
+
+/**
+ * Cache key for a measured height. It carries everything that changes a
+ * group's size, so a day that gains rows under a different filter — or a month
+ * that gets expanded — misses the cache instead of reusing a stale height.
+ */
+function groupSizeKey(group: DayGroup, isExpanded: boolean): string {
+	return `${group.key}|${group.transactions.length}|${isExpanded ? 1 : 0}`;
+}
 
 type SwipeDirection = 'left' | 'right';
 
@@ -105,7 +156,7 @@ function directionForOffset(offset: number): SwipeDirection | null {
 	return null;
 }
 
-function LedgerTransactionRow({
+const LedgerTransactionRow = memo(function LedgerTransactionRow({
 	transaction,
 	isLast,
 	viewMode,
@@ -114,7 +165,7 @@ function LedgerTransactionRow({
 	onReviewTransaction,
 	onRequestDelete,
 	onSetBudgetTreatment,
-	openRowId,
+	isOpen,
 	setOpenRowId,
 }: LedgerTransactionRowProps) {
 	const [settledOffset, setSettledOffset] = useState(0);
@@ -160,7 +211,7 @@ function LedgerTransactionRow({
 		.filter(Boolean)
 		.join(' · ');
 
-	const displayedOffset = openRowId === transaction.id ? settledOffset : 0;
+	const displayedOffset = isOpen ? settledOffset : 0;
 	const budgetActionLabel = nextTreatment === 'INCLUDE' ? 'Count' : 'Outside';
 
 	const applyOffset = (nextOffset: number, animate: boolean) => {
@@ -191,8 +242,8 @@ function LedgerTransactionRow({
 	};
 	const runReviewAction = () => {
 		closeRow();
-		if (isReview && onReviewTransaction) onReviewTransaction(transaction);
-		else onEditTransaction?.(transaction);
+		if (isReview) onReviewTransaction(transaction);
+		else onEditTransaction(transaction);
 	};
 
 	const commitBudgetSwipe = (rowWidth: number) => {
@@ -289,7 +340,7 @@ function LedgerTransactionRow({
 				disabled={committing !== null}
 				onPointerDown={(event) => {
 					if (event.button !== 0 || committing !== null) return;
-					const startOffset = openRowId === transaction.id ? settledOffset : 0;
+					const startOffset = isOpen ? settledOffset : 0;
 					applyOffset(startOffset, false);
 					gesture.current = {
 						x: event.clientX,
@@ -299,7 +350,7 @@ function LedgerTransactionRow({
 						velocityX: 0,
 						startOffset,
 						rowWidth: event.currentTarget.getBoundingClientRect().width,
-						opened: openRowId === transaction.id,
+						opened: isOpen,
 						axis: null,
 					};
 					event.currentTarget.setPointerCapture(event.pointerId);
@@ -342,7 +393,7 @@ function LedgerTransactionRow({
 						closeRow();
 						return;
 					}
-					onEditTransaction?.(transaction);
+					onEditTransaction(transaction);
 				}}
 				className="ledger-swipe-foreground relative w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-black/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 				style={{
@@ -402,7 +453,7 @@ function LedgerTransactionRow({
 			</button>
 		</div>
 	);
-}
+});
 
 export function TransactionsLedger({
 	onNavigate,
@@ -445,6 +496,15 @@ export function TransactionsLedger({
 		from: dateQuery.from,
 		to: dateQuery.to,
 		autoLoadAll: false,
+	});
+
+	// Rows are memoized, so any handler passed to them has to keep a stable
+	// identity or every parent render invalidates the whole list. The parent's
+	// props and the hook's mutators are all recreated each render, so they are
+	// read through a ref that is refreshed after every commit.
+	const latestHandlers = useRef({ onEditTransaction, onReviewTransaction, setBudgetTreatment });
+	useEffect(() => {
+		latestHandlers.current = { onEditTransaction, onReviewTransaction, setBudgetTreatment };
 	});
 
 	const [viewMode, setViewMode] = useState<'daily' | 'monthly'>('daily');
@@ -608,11 +668,112 @@ export function TransactionsLedger({
 		return Array.from(map.values());
 	}, [filtered, viewMode, filterChip]);
 
-	const requestDelete = (transaction: Transaction) => {
+	// --- Group windowing -------------------------------------------------
+	// Heights live in state, not a ref, so the window below can depend on them
+	// honestly instead of being poked by a version counter.
+	const [groupHeights, setGroupHeights] = useState<ReadonlyMap<string, number>>(
+		() => new Map(),
+	);
+	const groupNodes = useRef(new Map<string, HTMLDivElement>());
+	const [scrollWindow, setScrollWindow] = useState({ top: 0, height: 0 });
+
+	const registerGroupNode = useCallback(
+		(sizeKey: string) => (node: HTMLDivElement | null) => {
+			if (node) groupNodes.current.set(sizeKey, node);
+			else groupNodes.current.delete(sizeKey);
+		},
+		[],
+	);
+
+	useEffect(() => {
+		const container = scrollContainerRef.current;
+		if (!container) return;
+		let frame = 0;
+		const read = () => {
+			frame = 0;
+			setScrollWindow(previous => {
+				const top = container.scrollTop;
+				const height = container.clientHeight;
+				return Math.abs(previous.top - top) < 1 && previous.height === height
+					? previous
+					: { top, height };
+			});
+		};
+		const schedule = () => {
+			if (frame === 0) frame = window.requestAnimationFrame(read);
+		};
+		read();
+		container.addEventListener('scroll', schedule, { passive: true });
+		const resizeObserver = new ResizeObserver(schedule);
+		resizeObserver.observe(container);
+		return () => {
+			container.removeEventListener('scroll', schedule);
+			resizeObserver.disconnect();
+			if (frame !== 0) window.cancelAnimationFrame(frame);
+		};
+	}, []);
+
+	const groupWindow = useMemo(() => {
+		if (groups.length < WINDOW_MIN_GROUPS) return null;
+		const windowTop = scrollWindow.top - WINDOW_OVERSCAN_PX;
+		const windowBottom = scrollWindow.top + scrollWindow.height + WINDOW_OVERSCAN_PX;
+		const spacerHeights = new Map<string, number>();
+		let offset = 0;
+
+		for (const group of groups) {
+			const isExpanded = viewMode === 'monthly' && expandedMonthKey === group.key;
+			const height = groupHeights.get(groupSizeKey(group, isExpanded))
+				?? estimateGroupHeight(group, viewMode, isExpanded);
+			// A swiped-open row must never be unmounted underneath the gesture:
+			// its offset lives in row-local state and would be lost.
+			const holdsOpenRow = openRowId !== null
+				&& group.transactions.some(transaction => transaction.id === openRowId);
+			if (!holdsOpenRow && (offset + height < windowTop || offset > windowBottom)) {
+				spacerHeights.set(group.key, height);
+			}
+			offset += height;
+		}
+
+		return { spacerHeights };
+	}, [groups, groupHeights, scrollWindow, viewMode, expandedMonthKey, openRowId]);
+
+	// Replaces a group's estimate with its real height the first time it is on
+	// screen. This effect runs on every scroll frame, so already-measured groups
+	// must short-circuit *before* touching offsetHeight — reading it forces a
+	// synchronous reflow, and doing that every frame would reintroduce the jank the
+	// windowing exists to remove. A genuine size change mints a new size key, so
+	// skipping known keys never leaves a stale height behind.
+	useLayoutEffect(() => {
+		let next: Map<string, number> | null = null;
+		for (const [sizeKey, node] of groupNodes.current) {
+			if (groupHeights.has(sizeKey) || next?.has(sizeKey)) continue;
+			const height = node.offsetHeight;
+			if (height <= 0) continue;
+			// Filters and date ranges mint new size keys; drop the accumulated
+			// history rather than let the cache grow without bound.
+			next ??= groupHeights.size > 2000 ? new Map() : new Map(groupHeights);
+			next.set(sizeKey, height);
+		}
+		if (next) setGroupHeights(next);
+	}, [groupHeights, groupWindow]);
+
+	const requestDelete = useCallback((transaction: Transaction) => {
 		setActionError(null);
 		setOpenRowId(null);
 		setPendingDeleteTransaction(transaction);
-	};
+	}, []);
+
+	const handleEditTransaction = useCallback((transaction: Transaction) => {
+		latestHandlers.current.onEditTransaction?.(transaction);
+	}, []);
+
+	// Keeps the row's original fallback: with no review handler wired up,
+	// reviewing a row opens the editor instead of doing nothing.
+	const handleReviewTransaction = useCallback((transaction: Transaction) => {
+		const { onReviewTransaction: review, onEditTransaction: edit } = latestHandlers.current;
+		if (review) review(transaction);
+		else edit?.(transaction);
+	}, []);
 
 	const confirmDelete = async () => {
 		if (!pendingDeleteTransaction || deletePending) return;
@@ -629,15 +790,18 @@ export function TransactionsLedger({
 		}
 	};
 
-	const handleBudgetTreatment = async (transaction: Transaction, treatment: BudgetTreatment) => {
+	const handleBudgetTreatment = useCallback(async (
+		transaction: Transaction,
+		treatment: BudgetTreatment,
+	) => {
 		setActionError(null);
 		setOpenRowId(null);
 		try {
-			await setBudgetTreatment(transaction.id, treatment);
+			await latestHandlers.current.setBudgetTreatment(transaction.id, treatment);
 		} catch (cause) {
 			setActionError(cause instanceof Error ? cause.message : 'Could not update the monthly plan.');
 		}
-	};
+	}, []);
 
 	const undoDelete = async () => {
 		if (!deletedTransaction) return;
@@ -1025,6 +1189,21 @@ export function TransactionsLedger({
 					</div>
 				) : (
 					groups.map((group) => {
+						const spacerHeight = groupWindow?.spacerHeights.get(group.key);
+						if (spacerHeight !== undefined) {
+							// Same margin class as the real group, so removing it changes
+							// nothing about the spacing around it.
+							return (
+								<div
+									key={group.key}
+									className={viewMode === 'monthly' ? 'mb-3' : 'mb-2'}
+									style={{ height: spacerHeight }}
+									aria-hidden="true"
+								/>
+							);
+						}
+						const isMonthExpanded = viewMode === 'monthly' && expandedMonthKey === group.key;
+						const sizeKey = groupSizeKey(group, isMonthExpanded);
 						const netColor = group.net > 0
 							? 'var(--ledger-positive)'
 							: group.net < 0
@@ -1036,10 +1215,11 @@ export function TransactionsLedger({
 						})}`;
 
 						if (viewMode === 'monthly') {
-							const isExpanded = expandedMonthKey === group.key;
+							const isExpanded = isMonthExpanded;
 							return (
 								<div
 									key={group.key}
+									ref={registerGroupNode(sizeKey)}
 									className="ledger-render-section ledger-render-section--month rounded-[14px] overflow-hidden mb-3"
 									style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
 								>
@@ -1075,11 +1255,11 @@ export function TransactionsLedger({
 													isLast={index === group.transactions.length - 1}
 													viewMode="monthly"
 													artworkPhase={artworkPhase}
-													onEditTransaction={onEditTransaction}
-													onReviewTransaction={onReviewTransaction}
+													onEditTransaction={handleEditTransaction}
+													onReviewTransaction={handleReviewTransaction}
 													onRequestDelete={requestDelete}
 													onSetBudgetTreatment={handleBudgetTreatment}
-													openRowId={openRowId}
+													isOpen={openRowId === transaction.id}
 													setOpenRowId={setOpenRowId}
 												/>
 											))}
@@ -1090,7 +1270,11 @@ export function TransactionsLedger({
 						}
 
 						return (
-							<div key={group.key} className="ledger-render-section ledger-render-section--day mb-2">
+							<div
+								key={group.key}
+								ref={registerGroupNode(sizeKey)}
+								className="ledger-render-section ledger-render-section--day mb-2"
+							>
 								<div
 									className="flex items-center justify-between px-1 py-2"
 									style={{ background: 'var(--ledger-bg)' }}
@@ -1113,11 +1297,11 @@ export function TransactionsLedger({
 											isLast={index === group.transactions.length - 1}
 											viewMode="daily"
 											artworkPhase={artworkPhase}
-											onEditTransaction={onEditTransaction}
-											onReviewTransaction={onReviewTransaction}
+											onEditTransaction={handleEditTransaction}
+											onReviewTransaction={handleReviewTransaction}
 											onRequestDelete={requestDelete}
 											onSetBudgetTreatment={handleBudgetTreatment}
-											openRowId={openRowId}
+											isOpen={openRowId === transaction.id}
 											setOpenRowId={setOpenRowId}
 										/>
 									))}
