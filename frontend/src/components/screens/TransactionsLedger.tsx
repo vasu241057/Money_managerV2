@@ -140,10 +140,15 @@ function LedgerTransactionRow({
 	const primaryLabel = transactionPrimaryLabel(transaction);
 	const budgetIncluded = transaction.effectiveBudgetTreatment === 'INCLUDE';
 	const isAdjustment = transaction.budgetEffect === 'ADJUSTMENT';
+	// The marker answers "did the monthly plan count this?", so it uses the
+	// same test the in-budget chip does. The treatment flag is a setting and can
+	// read INCLUDE for a row the plan never counted — colouring by it would put
+	// the row and the chip back into disagreement.
+	const countsTowardBudget = transaction.budgetEffect !== 'NONE';
 	const nextTreatment: BudgetTreatment = budgetIncluded ? 'EXCLUDE' : 'INCLUDE';
 	const budgetMeta = isAdjustment
 		? 'Budget adjustment'
-		: budgetIncluded ? null : 'Outside budget';
+		: countsTowardBudget ? null : 'Outside budget';
 	const relationshipMeta = transaction.budgetRelationship
 		? transaction.budgetRelationship.role === 'SOURCE'
 			? `${transaction.budgetRelationship.kind === 'REFUND' ? 'Refund' : 'Reimbursement'} for ${transaction.budgetRelationship.related_label}`
@@ -341,15 +346,17 @@ function LedgerTransactionRow({
 				}}
 				className="ledger-swipe-foreground relative w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-black/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 				style={{
-					background: !isReview && !budgetIncluded && !isAdjustment
-						? 'color-mix(in srgb, var(--ledger-card) 72%, var(--ledger-bg))'
-						: 'var(--ledger-card)',
+					background: countsTowardBudget
+						? 'var(--ledger-card)'
+						: 'color-mix(in srgb, var(--ledger-card) 72%, var(--ledger-bg))',
 					transform: displayedOffset === 0 ? undefined : `translate3d(${displayedOffset}px, 0, 0)`,
 					transition: 'transform 240ms cubic-bezier(0.2, 0.82, 0.2, 1)',
-					touchAction: 'pan-y',
-					boxShadow: isAdjustment
+					// Green means "this is in the budget" — for ordinary spend as much
+					// as for a refund. Grey means the plan ignored it.
+					boxShadow: countsTowardBudget
 						? 'inset 3px 0 var(--ledger-positive)'
-						: !isReview && !budgetIncluded ? 'inset 3px 0 var(--ledger-rule)' : undefined,
+						: 'inset 3px 0 var(--ledger-rule)',
+					touchAction: 'pan-y',
 				}}
 			>
 			<div className="flex items-center gap-3 min-w-0 flex-1">

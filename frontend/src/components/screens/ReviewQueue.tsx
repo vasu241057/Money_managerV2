@@ -547,19 +547,22 @@ export function ReviewQueue({ transaction, position, totalCount, onReviewed, onC
 							className="rounded-[10px] overflow-hidden"
 							style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
 						>
-							<div className="px-4 py-3.5 flex justify-between items-center">
-								<div className="flex gap-3 items-start">
+							<div className="px-4 py-3.5 flex justify-between items-center gap-3">
+								{/* min-w-0 on both levels: a flex item defaults to min-width:auto,
+								    so an unbreakable search key (KANAKKHANDELWALVPA…) widens the
+								    column past the card and overflow-hidden then clips the text. */}
+								<div className="flex gap-3 items-start min-w-0 flex-1">
 									<div
 										className="mt-0.5 w-8 h-8 rounded-[6px] flex items-center justify-center shrink-0"
 										style={{ background: 'rgba(13, 92, 75, 0.1)' }}
 									>
 										<Repeat size={16} style={{ color: 'var(--ledger-accent)' }} />
 									</div>
-									<div className="pr-4">
-										<p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--ledger-fg)' }}>
+									<div className="min-w-0 pr-1">
+										<p className="text-sm font-semibold mb-0.5 break-words" style={{ color: 'var(--ledger-fg)' }}>
 											Use this category whenever “{ruleScopeLabel}” shows up?
 										</p>
-										<p className="text-[11px] leading-tight" style={{ color: 'var(--ledger-muted)' }}>
+										<p className="text-[11px] leading-tight break-words" style={{ color: 'var(--ledger-muted)' }}>
 											This only covers payments that arrive with that exact wording — not everything from
 											{' '}{selectedMerchant?.name ?? 'this merchant'}. Your past {selectedType} ones with the same
 											wording get updated too, except any you set yourself. To change the whole merchant at once,
