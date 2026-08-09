@@ -51,7 +51,8 @@ function merchantTypeBadge(type: MerchantType): string {
 		case 'MERCHANT': return 'MERCHANT';
 		case 'TRANSFER_INSTITUTION': return 'TRANSFER_INST.';
 		case 'AGGREGATOR': return 'AGGREGATOR';
-		case 'P2P': return 'P2P';
+		// "P2P" is jargon most people do not read as "a person".
+		case 'P2P': return 'PERSON';
 	}
 }
 
