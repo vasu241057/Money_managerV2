@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-07-24T09:22:20.013Z",
+  "generated_at": "2026-08-09T05:58:35.218Z",
   "simple_icons_version": "16.27.0",
   "existing_priority_count": 61,
-  "additional_count": 300,
+  "additional_count": 400,
   "rows": [
     {
       "canonical_name": "Airbnb",
@@ -356,7 +356,8 @@
       "normalized_name": "AMAZONPAY",
       "coverage": "EXISTING",
       "aliases": [
-        "Amazon Pay"
+        "Amazon Pay",
+        "Amazon Pay on Delivery"
       ],
       "website_url": "https://www.amazon.in/amazonpay/home",
       "source_url": "https://www.amazon.in/favicon.ico",
@@ -6028,6 +6029,2472 @@
       "object_path": "official-brand-assets/understand-upsc-dfb7e3443fba.jpg",
       "content_type": "image/jpeg",
       "content_sha256": "dfb7e3443fba8f9fc7c6b8179ad0753f95fe3e0525776e9fb8bd6a6fe168658c"
+    },
+    {
+      "canonical_name": "Shopsy",
+      "normalized_name": "SHOPSY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 1,
+      "selection_reason": "Similarweb India Ecommerce & Shopping ranking, June 2026",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Shopsy"
+      ],
+      "website_url": "https://www.shopsy.in/",
+      "source_page_url": "https://www.shopsy.in/",
+      "source_url": "https://static-assets-web.flixcart.com/batman-returns/batman-returns/p/images/logo_lite-7c8246.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/shopsy-7d494353e97b.png",
+      "content_type": "image/png",
+      "content_sha256": "7d494353e97bc91045a68831c2f802d5e6f3f64402927e00a764fe17f3410a74"
+    },
+    {
+      "canonical_name": "Meesho",
+      "normalized_name": "MEESHO",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 2,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Meesho"
+      ],
+      "website_url": "https://www.meesho.com/",
+      "source_page_url": "https://apps.apple.com/in/app/meesho-online-shopping/id1457958492?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/4e/5f/d1/4e5fd1ee-6ad8-6e4d-eacf-3751bf89334e/AppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/meesho-e0641720a378.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "e0641720a378d25558f93410631ef2f14d72dac138e3091cd3863164421ab528"
+    },
+    {
+      "canonical_name": "OLX India",
+      "normalized_name": "OLXINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 3,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "OLX India",
+        "OLX"
+      ],
+      "website_url": "https://www.olx.in/",
+      "source_page_url": "https://www.olx.in/",
+      "source_url": "https://www.olx.in/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/olx-india-fd690e84a7fc.png",
+      "content_type": "image/png",
+      "content_sha256": "fd690e84a7fc23b992df7ab58ff803e6e17e19fbcd30fb83f54803fe1112f02a"
+    },
+    {
+      "canonical_name": "Savana",
+      "normalized_name": "SAVANA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 4,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Savana"
+      ],
+      "website_url": "https://www.savana.com/",
+      "source_page_url": "https://www.savana.com/",
+      "source_url": "https://static.mfrcdn.com/images/logo/savana/favicon-192x192.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/savana-f25a86be5994.png",
+      "content_type": "image/png",
+      "content_sha256": "f25a86be59941e1c159ae888275c9295a460f8b477132a96cd9ea09c6ace33e3"
+    },
+    {
+      "canonical_name": "Cashify",
+      "normalized_name": "CASHIFY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 5,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Cashify"
+      ],
+      "website_url": "https://www.cashify.in/",
+      "source_page_url": "https://www.cashify.in/",
+      "source_url": "https://www.cashify.in/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/cashify-ee0e74a790b1.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "ee0e74a790b1c00a46330f37f48c3fd3d33cf7c01bcec8478efe3371367a3cbb"
+    },
+    {
+      "canonical_name": "SHEIN India",
+      "normalized_name": "SHEININDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 6,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "SHEIN India",
+        "SHEIN"
+      ],
+      "website_url": "https://www.sheinindia.in/",
+      "source_page_url": "https://apps.apple.com/in/app/shein-india-fast-fashion/id6504862567?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/32/03/aa/3203aa22-fdb3-dc27-cc22-260c02a8c859/AppIcon-0-0-1x_U007emarketing-0-6-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/shein-india-e3c88ed12eb3.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "e3c88ed12eb3a14122876e766305ac2a2454ea3b1edc04be4b1c7f40dc7c6df8"
+    },
+    {
+      "canonical_name": "FirstClub",
+      "normalized_name": "FIRSTCLUB",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 7,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "FirstClub",
+        "First Club"
+      ],
+      "website_url": "https://firstclub.in/",
+      "source_page_url": "https://apps.apple.com/in/app/firstclub-quality-in-minutes/id6744534743?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/bb/1a/1a/bb1a1ad1-252d-df2d-ee10-fa743a2a1fe8/AppIcon-0-0-1x_U007ephone-0-1-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/firstclub-1f4c8c58925c.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "1f4c8c58925cfdb35ef0e21acf82c7073686a6f468b34588ce2204ceb917b6f7"
+    },
+    {
+      "canonical_name": "Tata Neu",
+      "normalized_name": "TATANEU",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 8,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Tata Neu",
+        "TataNeu"
+      ],
+      "website_url": "https://www.tataneu.com/",
+      "source_page_url": "https://www.tataneu.com/",
+      "source_url": "https://www.tataneu.com/react-static-assets/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/tata-neu-7e0652a6692a.avif",
+      "content_type": "image/avif",
+      "content_sha256": "7e0652a6692aefbe6b8415ba76cfa83ec593b829c50d01bc9b419e4aa936269a"
+    },
+    {
+      "canonical_name": "Zudio",
+      "normalized_name": "ZUDIO",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 9,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Zudio"
+      ],
+      "website_url": "https://www.zudio.com/",
+      "source_page_url": "https://apps.apple.com/in/app/zudio-fanz/id6748597935?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a1/96/91/a1969179-ca50-923a-6d09-097950ea85ea/AppIcon-0-0-1x_U007epad-0-1-P3-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/zudio-a654b376013c.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "a654b376013cd0ac9e2a011352ff55a7eac95e9efa2e11959e94cc0f4f7d8cd4"
+    },
+    {
+      "canonical_name": "Vishal Mega Mart",
+      "normalized_name": "VISHALMEGAMART",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 10,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Vishal Mega Mart"
+      ],
+      "website_url": "https://www.vishalmegamart.com/",
+      "source_page_url": "https://www.vishalmegamart.com/",
+      "source_url": "https://www.vishalmegamart.com/on/demandware.static/Sites-vishalmegamart-Site/-/default/dw6e704df8/images/favicons/apple-icon-180x180.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/vishal-mega-mart-585cb1f997e5.webp",
+      "content_type": "image/webp",
+      "content_sha256": "585cb1f997e592b5c17a035cdc2df168b54ef485f6b81945114d7eb594aa8ee9"
+    },
+    {
+      "canonical_name": "Max Fashion",
+      "normalized_name": "MAXFASHION",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 11,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Max Fashion"
+      ],
+      "website_url": "https://www.maxfashion.in/",
+      "source_page_url": "https://apps.apple.com/in/app/max-fashion/id1180884624?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/60/e4/0a/60e40ac7-0817-50dc-bd8c-6714fc408e2f/MaxAppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/max-fashion-b878750cd0ab.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "b878750cd0ab391a1df0cceb3df868ba16116aa0e45c8eece31ab825710d9eae"
+    },
+    {
+      "canonical_name": "Wakefit",
+      "normalized_name": "WAKEFIT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 12,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Wakefit"
+      ],
+      "website_url": "https://www.wakefit.co/",
+      "source_page_url": "https://apps.apple.com/in/app/wakefit-zense/id6502042730?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/d0/c4/0c/d0c40c05-adca-1751-5f5e-144cb69db408/AppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/wakefit-9dbdf55f9a63.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "9dbdf55f9a63a7fed7644421ae3da5eea61611c8cc5e6d1e3b69d25a780e4bff"
+    },
+    {
+      "canonical_name": "Health & Glow",
+      "normalized_name": "HEALTHGLOW",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 14,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Health & Glow",
+        "Health and Glow"
+      ],
+      "website_url": "https://www.healthandglow.com/",
+      "source_page_url": "https://apps.apple.com/in/app/health-glow/id6762515008?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/8f/fe/0c/8ffe0c78-c33b-cf4c-a024-eafd67c76326/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/health-glow-3c5b88140909.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "3c5b88140909bbd635937875415e14c6b6b86f7ca602104fb56c2e9fd31e8f57"
+    },
+    {
+      "canonical_name": "CaratLane",
+      "normalized_name": "CARATLANE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 15,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "CaratLane",
+        "Carat Lane"
+      ],
+      "website_url": "https://www.caratlane.com/",
+      "source_page_url": "https://apps.apple.com/in/app/caratlane-a-tata-product/id990574630?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/67/10/cf/6710cf68-cfb6-31c2-1b69-f52f6c9ff517/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/caratlane-a2c6bedc6d67.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "a2c6bedc6d6736fe8a65228320649bf6635e3aab60dee1bd9fa97aa8c3c69f4f"
+    },
+    {
+      "canonical_name": "Tanishq",
+      "normalized_name": "TANISHQ",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 16,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Tanishq"
+      ],
+      "website_url": "https://www.tanishq.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/tanishq-a-tata-product/id1494086207?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/00/9f/72/009f7287-e895-0be0-6e5e-db1590ac63b2/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/tanishq-2d3c6261a2ea.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "2d3c6261a2eae949cd948aea6118a6c6d5e9043af06e18afb5bf45b243e4e0c6"
+    },
+    {
+      "canonical_name": "Kalyan Jewellers",
+      "normalized_name": "KALYANJEWELLERS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 17,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Kalyan Jewellers"
+      ],
+      "website_url": "https://www.kalyanjewellers.net/",
+      "source_page_url": "https://www.kalyanjewellers.net/",
+      "source_url": "https://www.kalyanjewellers.net/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/kalyan-jewellers-cc33f4864a7a.webp",
+      "content_type": "image/webp",
+      "content_sha256": "cc33f4864a7ab979f9866bc65eebdee64b4528d8f9a413b2bfa89549c3c81ce1"
+    },
+    {
+      "canonical_name": "Decathlon India",
+      "normalized_name": "DECATHLONINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 18,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Decathlon India",
+        "Decathlon"
+      ],
+      "website_url": "https://www.decathlon.in/",
+      "source_page_url": "https://www.decathlon.in/",
+      "source_url": "https://contents.mediadecathlon.com/b101210/k$2fe5a9f1a1816117f14cc34207093e86/defaut.jpg?format=auto",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/decathlon-india-179862cd7825.avif",
+      "content_type": "image/avif",
+      "content_sha256": "179862cd7825e8344c4ac201b64cba679a56dfc3236943cbd6a2718ef14ecb2e"
+    },
+    {
+      "canonical_name": "Skechers India",
+      "normalized_name": "SKECHERSINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 19,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Skechers India",
+        "Skechers"
+      ],
+      "website_url": "https://www.skechers.in/",
+      "source_page_url": "https://www.skechers.in/",
+      "source_url": "https://www.skechers.in/on/demandware.static/Sites-skechersin-Site/-/default/dw3dad2cbc/images/favicons/favicon-196x196.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/skechers-india-f60092a01e4a.webp",
+      "content_type": "image/webp",
+      "content_sha256": "f60092a01e4a1b6314e38045eb309d615d71b0704f2628bcbb6bec180213f475"
+    },
+    {
+      "canonical_name": "Crocs India",
+      "normalized_name": "CROCSINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 20,
+      "selection_reason": "Apple App Store India Shopping chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6024"
+      ],
+      "aliases": [
+        "Crocs India",
+        "Crocs"
+      ],
+      "website_url": "https://www.crocs.in/",
+      "source_page_url": "https://www.crocs.in/",
+      "source_url": "https://www.crocs.in/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/crocs-india-659a47677349.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "659a4767734992adaedcf7311da0a476a2c895728d7797ec0362f571253fd04a"
+    },
+    {
+      "canonical_name": "Toing",
+      "normalized_name": "TOING",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 21,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Toing"
+      ],
+      "website_url": "https://www.toing.com/",
+      "source_page_url": "https://apps.apple.com/in/app/toing-food-delivery/id6748918399?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/3c/7f/07/3c7f074c-1552-50a5-1a40-c144685f7fb6/toingAppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/toing-9ff26350f6d8.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "9ff26350f6d850218aa1f51efdb2744f73030a07feeb4d6a929176157eaf3414"
+    },
+    {
+      "canonical_name": "Swish",
+      "normalized_name": "SWISH",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 22,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Swish"
+      ],
+      "website_url": "https://swish.in/",
+      "source_page_url": "https://apps.apple.com/in/app/swish-10-min-food-delivery/id6504881715?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/d6/05/9e/d6059eca-5014-5ce6-7730-0aeb5b346af8/AppIcon-0-0-1x_U007ephone-0-1-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/swish-7508396e5fd9.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "7508396e5fd93e45b5fff8ceb8fee3405ad3353037852a1053aafc42750aa1e9"
+    },
+    {
+      "canonical_name": "EazyDiner",
+      "normalized_name": "EAZYDINER",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 23,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "EazyDiner",
+        "Eazy Diner"
+      ],
+      "website_url": "https://www.eazydiner.com/",
+      "source_page_url": "https://apps.apple.com/in/app/eazydiner-eat-out-save/id1018594093?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/88/13/94/881394bf-f126-88fe-6e1e-562908cf857d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/eazydiner-00ed0a4696fe.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "00ed0a4696fe22060a7f34eb50acf32b7081fc7ae830d25ba179b7fe67244f94"
+    },
+    {
+      "canonical_name": "EatClub",
+      "normalized_name": "EATCLUB",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 24,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "EatClub",
+        "Eat Club"
+      ],
+      "website_url": "https://eatclub.in/",
+      "source_page_url": "https://apps.apple.com/in/app/eatclub-food-delivery-app/id1535583068?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/ef/47/10/ef4710ce-6f92-f880-89df-cdd234da27f8/AppIcon-1x_U007ephone-0-1-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/eatclub-cef2d29ebf15.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "cef2d29ebf1572944748da86adfc22721bf3b8224ed3f1740f34afacabc87244"
+    },
+    {
+      "canonical_name": "Licious",
+      "normalized_name": "LICIOUS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 25,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Licious"
+      ],
+      "website_url": "https://www.licious.in/",
+      "source_page_url": "https://apps.apple.com/in/app/licious-chicken-fish-meat/id1052440342?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/ba/fe/f8/bafef832-7489-317d-82b7-681c28699db0/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/licious-b3e0e3c827d5.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "b3e0e3c827d52694548a5c2c9bf407a29d44800827bff392135dec1ae5d193a8"
+    },
+    {
+      "canonical_name": "magicpin",
+      "normalized_name": "MAGICPIN",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 26,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "magicpin",
+        "Magicpin"
+      ],
+      "website_url": "https://magicpin.in/",
+      "source_page_url": "https://apps.apple.com/in/app/magicpin-food-fashion-delivery/id1171775851?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/9d/a7/d1/9da7d1cf-174e-ccf8-f6a5-a3e3bc2a2c11/AppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/magicpin-cab9afb42831.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "cab9afb4283145caa0ce32f9a6a9349eaeaa322a29aebb7ff5bb7fbda235c8ed"
+    },
+    {
+      "canonical_name": "Dineout",
+      "normalized_name": "DINEOUT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 27,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Dineout"
+      ],
+      "website_url": "https://www.dineout.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/dineout-restaurant-offers/id779442711?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/f0/03/59/f003598c-eb11-edd4-6396-e0108a6c0f8a/AppIcon_Dineout-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/dineout-ad250185d15a.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "ad250185d15a9e38b25a26178f63964eb9878d31e79ee0560aafa7f3abebf12c"
+    },
+    {
+      "canonical_name": "Cafe Coffee Day",
+      "normalized_name": "CAFECOFFEEDAY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 28,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Cafe Coffee Day",
+        "CCD"
+      ],
+      "website_url": "https://www.cafecoffeeday.com/",
+      "source_page_url": "https://apps.apple.com/in/app/ccd-caf%C3%A9-coffee-day/id6504285777?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/01/ae/e5/01aee5d3-1c62-be25-1cf8-a5a11c8eedf1/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/cafe-coffee-day-7ba2a06a5e19.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "7ba2a06a5e19729f881e0d80224c438df4e96e0cdbf72b282494efc1637f5c37"
+    },
+    {
+      "canonical_name": "Behrouz Biryani",
+      "normalized_name": "BEHROUZBIRYANI",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 30,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Behrouz Biryani",
+        "Behrouz"
+      ],
+      "website_url": "https://www.behrouzbiryani.com/",
+      "source_page_url": "https://www.behrouzbiryani.com/",
+      "source_url": "https://www.behrouzbiryani.com/behrouz-biryani-favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/behrouz-biryani-4c20694a2828.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "4c20694a2828c8fe504fca2a9ec681a6e6b8bd1875f906293bafc656dc6db693"
+    },
+    {
+      "canonical_name": "Oven Story Pizza",
+      "normalized_name": "OVENSTORYPIZZA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 31,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Oven Story Pizza",
+        "Oven Story"
+      ],
+      "website_url": "https://www.ovenstory.in/",
+      "source_page_url": "https://www.ovenstory.in/",
+      "source_url": "https://www.ovenstory.in/ovenstory-favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/oven-story-pizza-470e2d7d14f6.png",
+      "content_type": "image/png",
+      "content_sha256": "470e2d7d14f60990635e0d7b6490e0a82ed112a8060858613779e6fd5702936c"
+    },
+    {
+      "canonical_name": "The Good Bowl",
+      "normalized_name": "THEGOODBOWL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 32,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "The Good Bowl",
+        "Good Bowl"
+      ],
+      "website_url": "https://www.thegoodbowl.in/",
+      "source_page_url": "https://apps.apple.com/in/app/goodbowl/id1501755870?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/9f/29/2d/9f292dfb-8104-7109-565b-d17144a3aceb/AppIcon-0-0-1x_U007emarketing-0-5-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/the-good-bowl-b3b5d0f13186.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "b3b5d0f13186f614234c3410b79b58bbc9b1008b6ac64219d549c01f1afbdab0"
+    },
+    {
+      "canonical_name": "MOJO Pizza",
+      "normalized_name": "MOJOPIZZA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 33,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "MOJO Pizza",
+        "MojoPizza"
+      ],
+      "website_url": "https://mojopizza.in/",
+      "source_page_url": "https://mojopizza.in/",
+      "source_url": "https://assets.box8.co.in/mailers/mojo/mojo_logo.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/mojo-pizza-b7b7054a1017.png",
+      "content_type": "image/png",
+      "content_sha256": "b7b7054a10171bf42ec666363104b860a65afca37e1cdf2ea9cb4fabf6a05265"
+    },
+    {
+      "canonical_name": "Absolute Barbecues",
+      "normalized_name": "ABSOLUTEBARBECUES",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 35,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Absolute Barbecues",
+        "ABs Absolute Barbecues"
+      ],
+      "website_url": "https://www.absolutebarbecues.com/",
+      "source_page_url": "https://www.absolutebarbecues.com/",
+      "source_url": "https://www.absolutebarbecues.com/images/logo.webp",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/absolute-barbecues-97c7a5f44bd4.webp",
+      "content_type": "image/webp",
+      "content_sha256": "97c7a5f44bd49e97ded4537b1fc0851455683c91bb15f233515466b63ebc844c"
+    },
+    {
+      "canonical_name": "Dindigul Thalappakatti",
+      "normalized_name": "DINDIGULTHALAPPAKATTI",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 36,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Dindigul Thalappakatti",
+        "Thalappakatti"
+      ],
+      "website_url": "https://thalappakatti.com/",
+      "source_page_url": "https://thalappakatti.com/",
+      "source_url": "https://cdn.uengage.io/brand_logo/logo-64316-1747916944.jpeg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/dindigul-thalappakatti-d1ebf1783df0.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "d1ebf1783df06668df9f61785df28203dfb809d7cac572f724148090cd19f3c2"
+    },
+    {
+      "canonical_name": "Saravana Bhavan",
+      "normalized_name": "SARAVANABHAVAN",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 37,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Saravana Bhavan"
+      ],
+      "website_url": "https://saravanabhavan.com/",
+      "source_page_url": "https://saravanabhavan.com/",
+      "source_url": "https://saravanabhavan.com/assets/images/favicon/favicon-32x32.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/saravana-bhavan-7f2af2207d89.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "7f2af2207d8997a5bafc91ca1f72a32f62a254e6f822d1e601c0bf81155afcd7"
+    },
+    {
+      "canonical_name": "Sagar Ratna",
+      "normalized_name": "SAGARRATNA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 38,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Sagar Ratna"
+      ],
+      "website_url": "https://www.sagarratna.com/",
+      "source_page_url": "https://www.sagarratna.com/",
+      "source_url": "https://www.sagarratna.com/wp-content/uploads/2025/05/cropped-sagarrtnaleafimg-180x180.webp",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/sagar-ratna-191a328fe741.webp",
+      "content_type": "image/webp",
+      "content_sha256": "191a328fe741fe431630a40dd64aa0f7d76fbb17097bd115eeeba7fa87037475"
+    },
+    {
+      "canonical_name": "Social",
+      "normalized_name": "SOCIAL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 40,
+      "selection_reason": "Apple App Store India Food & Drink chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6023"
+      ],
+      "aliases": [
+        "Social",
+        "Social Offline"
+      ],
+      "website_url": "https://socialoffline.in/",
+      "source_page_url": "https://socialoffline.in/",
+      "source_url": "https://socialoffline.in/cdn/uploads/cropped-Anime_active-180x180.jpg",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/social-2aaf52fb8159.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "2aaf52fb81595440b78c380421c1918329bd60d680a4e9228b6cd86dfe9b2226"
+    },
+    {
+      "canonical_name": "IRCTC",
+      "normalized_name": "IRCTC",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 41,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "IRCTC",
+        "IRCTC Rail Connect"
+      ],
+      "website_url": "https://www.irctc.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/irctc-rail-connect/id1386197253?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/77/f2/98/77f298a7-563c-febd-e5ef-7ee2f02699cd/AppIcon-0-0-1x_U007emarketing-0-7-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/irctc-cc9c28760efd.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "cc9c28760efdbfd2b65bcfa6a4a20cc4fc658801aec0ab2a54e3f1a7806b52a4"
+    },
+    {
+      "canonical_name": "RailOne",
+      "normalized_name": "RAILONE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 42,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "RailOne",
+        "Rail One"
+      ],
+      "website_url": "https://railone.indianrail.gov.in/",
+      "source_page_url": "https://apps.apple.com/in/app/railone/id6473384334?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/96/7a/18/967a189c-6bb1-f403-4983-57f3a306f56e/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/railone-4be3ede6982e.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "4be3ede6982ee936090fcd997c75518a83f692933e691c6bc450559792b0b7cc"
+    },
+    {
+      "canonical_name": "Agoda",
+      "normalized_name": "AGODA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 43,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "Agoda"
+      ],
+      "website_url": "https://www.agoda.com/",
+      "source_page_url": "https://www.agoda.com/",
+      "source_url": "https://www.agoda.com/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/agoda-512e8c3a4922.png",
+      "content_type": "image/png",
+      "content_sha256": "512e8c3a492200bf51ec013f94e11fea3eac9f691124543bd3dd57e4bb6f868b"
+    },
+    {
+      "canonical_name": "ConfirmTkt",
+      "normalized_name": "CONFIRMTKT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 44,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "ConfirmTkt",
+        "Confirm Tkt"
+      ],
+      "website_url": "https://www.confirmtkt.com/",
+      "source_page_url": "https://www.confirmtkt.com/",
+      "source_url": "https://www.confirmtkt.com/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/confirmtkt-7456149d4caf.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "7456149d4cafeacd751cdd2aa22ad4546758ac9d64e7d3cb5d531e9dc114a22e"
+    },
+    {
+      "canonical_name": "BlaBlaCar",
+      "normalized_name": "BLABLACAR",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 45,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "BlaBlaCar",
+        "Bla Bla Car"
+      ],
+      "website_url": "https://www.blablacar.in/",
+      "source_page_url": "https://apps.apple.com/in/app/blablacar-carpooling-and-bus/id341329033?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/d9/8f/fa/d98ffa9b-ff27-8b14-ab5f-8c67b89f47d8/AppIcon-0-0-1x_U007ephone-0-1-sRGB-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/blablacar-0d39f7770cab.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "0d39f7770cab84f66f63f778d2cfc36ab54114a85ab12f719a0714d011092869"
+    },
+    {
+      "canonical_name": "Adani One",
+      "normalized_name": "ADANIONE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 46,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "Adani One",
+        "Adani OneApp"
+      ],
+      "website_url": "https://www.adanione.com/",
+      "source_page_url": "https://www.adanione.com/",
+      "source_url": "https://www.adanione.com/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/adani-one-3198d6603a83.png",
+      "content_type": "image/png",
+      "content_sha256": "3198d6603a8382833b194f9088b85a1de89cc9281fd9d97015e84228009b2573"
+    },
+    {
+      "canonical_name": "AbhiBus",
+      "normalized_name": "ABHIBUS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 47,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "AbhiBus",
+        "Abhi Bus"
+      ],
+      "website_url": "https://www.abhibus.com/",
+      "source_page_url": "https://apps.apple.com/in/app/abhibus-bus-ticket-booking-app/id778605614?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/da/e8/c2/dae8c26f-d627-7490-bc81-c55c9bdcc7fc/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/abhibus-211ef57d1377.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "211ef57d137735817e3b0238bb26c42e4b187c513a883129bc4bab45d78670d9"
+    },
+    {
+      "canonical_name": "SpiceJet",
+      "normalized_name": "SPICEJET",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 48,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "SpiceJet"
+      ],
+      "website_url": "https://www.spicejet.com/",
+      "source_page_url": "https://www.spicejet.com/",
+      "source_url": "https://lh3.googleusercontent.com/PWpbwPJz-QB_d9BSFFXFwIFlPYbLTzbBue5tcQlW9-MImQjy22zamSGejBbvRsfNVQ=w100",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/spicejet-0fb2528f2095.png",
+      "content_type": "image/png",
+      "content_sha256": "0fb2528f20958792ab547b8080948b4a74c2cfde404c43a3f30eb4a1c7a4cc01"
+    },
+    {
+      "canonical_name": "Air India Express",
+      "normalized_name": "AIRINDIAEXPRESS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 49,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "Air India Express"
+      ],
+      "website_url": "https://www.airindiaexpress.com/home",
+      "source_page_url": "https://www.airindiaexpress.com/home",
+      "source_url": "https://www.airindiaexpress.com/etc.clientlibs/air-asia/clientlibs/clientlib-react/resources/AirAsia_apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/air-india-express-378ee7e743bc.png",
+      "content_type": "image/png",
+      "content_sha256": "378ee7e743bcf0dc93ac8c04b116c8b15166c80b576fa30949bf8316395875e1"
+    },
+    {
+      "canonical_name": "Club Mahindra",
+      "normalized_name": "CLUBMAHINDRA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 50,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "Club Mahindra"
+      ],
+      "website_url": "https://www.clubmahindra.com/",
+      "source_page_url": "https://www.clubmahindra.com/",
+      "source_url": "https://www.clubmahindra.com/themes/prospect/assets/images/logo-new-black.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/club-mahindra-cfacdfafc4ba.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "cfacdfafc4baedf175917890d16fd504717e8353f11843006c1ab6b2e2f6a5d9"
+    },
+    {
+      "canonical_name": "Thomas Cook India",
+      "normalized_name": "THOMASCOOKINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 51,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "Thomas Cook India",
+        "Thomas Cook"
+      ],
+      "website_url": "https://www.thomascook.in/",
+      "source_page_url": "https://www.thomascook.in/",
+      "source_url": "https://www.thomascook.in/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/thomas-cook-india-8b881b838df8.png",
+      "content_type": "image/png",
+      "content_sha256": "8b881b838df89493c40deec629397647255dbf38e5b866920cac9e4386322d3d"
+    },
+    {
+      "canonical_name": "SOTC Travel",
+      "normalized_name": "SOTCTRAVEL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 52,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "SOTC Travel",
+        "SOTC"
+      ],
+      "website_url": "https://www.sotc.in/",
+      "source_page_url": "https://www.sotc.in/",
+      "source_url": "https://www.sotc.in/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/sotc-travel-f0a7d331b4b1.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "f0a7d331b4b100d76fb5790e25a215a20fbaf03f059e1cf66d6a5534d4edcdb7"
+    },
+    {
+      "canonical_name": "RailYatri",
+      "normalized_name": "RAILYATRI",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 53,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "RailYatri",
+        "Rail Yatri"
+      ],
+      "website_url": "https://www.railyatri.in/",
+      "source_page_url": "https://www.railyatri.in/",
+      "source_url": "https://images.railyatri.in/ry_images_prod/mainFest196x196-1764157331.svg",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/railyatri-5b1e10a3627e.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "5b1e10a3627ed11ab692b73337856ab3dcd6f82dc6bdde46a114233ae8f505bd"
+    },
+    {
+      "canonical_name": "Sterling Holidays",
+      "normalized_name": "STERLINGHOLIDAYS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 54,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "Sterling Holidays",
+        "Sterling Resorts"
+      ],
+      "website_url": "https://www.sterlingholidays.com/",
+      "source_page_url": "https://www.sterlingholidays.com/",
+      "source_url": "https://www.sterlingholidays.com/logos/sterling-logo.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/sterling-holidays-8ea0756d6c7b.png",
+      "content_type": "image/png",
+      "content_sha256": "8ea0756d6c7babd7e27e1383c3cdacb55466f042c1eb27a5a323c870d7ed0922"
+    },
+    {
+      "canonical_name": "Skyscanner",
+      "normalized_name": "SKYSCANNER",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 55,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "Skyscanner"
+      ],
+      "website_url": "https://www.skyscanner.co.in/sttc/px/captcha-v2/index.html?url=Lz8=&uuid=903cab1c-9376-11f1-b338-8149e7b40ab4&vid=",
+      "source_page_url": "https://www.skyscanner.co.in/sttc/px/captcha-v2/index.html?url=Lz8=&uuid=903cab1c-9376-11f1-b338-8149e7b40ab4&vid=",
+      "source_url": "https://www.skyscanner.co.in/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/skyscanner-690d4b12a36a.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "690d4b12a36a0bef6a09f0a419cccab9ae0fe3cc21c1e534dcf2d4a82c2d2e4e"
+    },
+    {
+      "canonical_name": "Hostelworld",
+      "normalized_name": "HOSTELWORLD",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 56,
+      "selection_reason": "Apple App Store India Travel chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6003"
+      ],
+      "aliases": [
+        "Hostelworld"
+      ],
+      "website_url": "https://www.hostelworld.com/",
+      "source_page_url": "https://www.hostelworld.com/",
+      "source_url": "https://www.hostelworld.com/apple-touch-icon-180x180.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/hostelworld-0b51989faf49.png",
+      "content_type": "image/png",
+      "content_sha256": "0b51989faf49c98c9fff3ba593d2a3c05bffa0f98c0a2c594aca725b420a5b32"
+    },
+    {
+      "canonical_name": "POP",
+      "normalized_name": "POP",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 57,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "POP",
+        "POP UPI"
+      ],
+      "website_url": "https://popclub.co/",
+      "source_page_url": "https://popclub.co/",
+      "source_url": "https://popclub.co/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/pop-910eff36c4ff.png",
+      "content_type": "image/png",
+      "content_sha256": "910eff36c4ff7cbfa5c7e3c0fd2730baef785d335c921b1f6e331c131199824c"
+    },
+    {
+      "canonical_name": "mPokket",
+      "normalized_name": "MPOKKET",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 58,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "mPokket"
+      ],
+      "website_url": "https://www.mpokket.in/",
+      "source_page_url": "https://www.mpokket.in/",
+      "source_url": "https://www.mpokket.in/logo.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/mpokket-58b5b14431ed.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "58b5b14431edd169ae3d3ac8a70de601eb18a74dc14408ef5dd5f02de7729cf2"
+    },
+    {
+      "canonical_name": "Bajaj Finserv",
+      "normalized_name": "BAJAJFINSERV",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 59,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Bajaj Finserv",
+        "Bajaj Finance"
+      ],
+      "website_url": "https://www.bajajfinserv.in/",
+      "source_page_url": "https://www.bajajfinserv.in/",
+      "source_url": "https://cms-assets.bajajfinserv.in/is/image/bajajfinance/bfl-logo-desktop-v6?scl=1&fmt=png-alpha",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/bajaj-finserv-2a2d031bf2f2.avif",
+      "content_type": "image/avif",
+      "content_sha256": "2a2d031bf2f20196192dc56beb549fd157404fe93379acb34323f10c71c0dd2f"
+    },
+    {
+      "canonical_name": "LIC",
+      "normalized_name": "LIC",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 60,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "LIC",
+        "Life Insurance Corporation of India",
+        "My LIC"
+      ],
+      "website_url": "https://licindia.in/",
+      "source_page_url": "https://licindia.in/",
+      "source_url": "https://licindia.in/o/lic-theme/images/lic_logo.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/lic-53609db2de6c.png",
+      "content_type": "image/png",
+      "content_sha256": "53609db2de6cb0b7247ef2eb879aa06abb7f588ee4673025e7c54e60da74e5ea"
+    },
+    {
+      "canonical_name": "Moneyview",
+      "normalized_name": "MONEYVIEW",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 61,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Moneyview",
+        "Money View"
+      ],
+      "website_url": "https://moneyview.in/",
+      "source_page_url": "https://moneyview.in/",
+      "source_url": "https://moneyview.in/images/mv-green-logo-v3Compressed.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/moneyview-937e4d3a9541.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "937e4d3a954163defc0f2da1e4e6f77b8c5abb885a15c881a7bece41d248cd9a"
+    },
+    {
+      "canonical_name": "Bachatt",
+      "normalized_name": "BACHATT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 62,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Bachatt"
+      ],
+      "website_url": "https://www.bachatt.app/",
+      "source_page_url": "https://www.bachatt.app/",
+      "source_url": "https://www.bachatt.app/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/bachatt-5c99a4ec20af.png",
+      "content_type": "image/png",
+      "content_sha256": "5c99a4ec20af68ca940c0472acac3863f13d57fd8166ea0437f4fc10fefdf4ec"
+    },
+    {
+      "canonical_name": "True Balance",
+      "normalized_name": "TRUEBALANCE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 63,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "True Balance"
+      ],
+      "website_url": "https://www.truebalance.io/",
+      "source_page_url": "https://www.truebalance.io/",
+      "source_url": "https://www.truebalance.io/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/true-balance-c28e7b34e745.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "c28e7b34e74527cbe30124e3d729f2396e1c49d94e84fc49d3a744224a89d451"
+    },
+    {
+      "canonical_name": "KreditBee",
+      "normalized_name": "KREDITBEE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 64,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "KreditBee",
+        "Kredit Bee"
+      ],
+      "website_url": "https://www.kreditbee.in/",
+      "source_page_url": "https://www.kreditbee.in/",
+      "source_url": "https://www.kreditbee.in/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/kreditbee-d5d04b9a0a1e.png",
+      "content_type": "image/png",
+      "content_sha256": "d5d04b9a0a1e962d82df3374746cecfff589807ace5fc7f85b72a2152e48f91e"
+    },
+    {
+      "canonical_name": "GoodScore",
+      "normalized_name": "GOODSCORE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 65,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "GoodScore",
+        "Good Score"
+      ],
+      "website_url": "https://goodscore.app/",
+      "source_page_url": "https://goodscore.app/",
+      "source_url": "https://goodscore.app/assets/good-score-logo.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/goodscore-9d16acab2c40.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "9d16acab2c4081390764fef0a6f2a919a00f086d823876364dc61ad984d9c6b5"
+    },
+    {
+      "canonical_name": "Kissht",
+      "normalized_name": "KISSHT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 66,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Kissht"
+      ],
+      "website_url": "https://www.kissht.com/",
+      "source_page_url": "https://www.kissht.com/",
+      "source_url": "https://www.kissht.com/_next/static/media/logo-blue.a53a9345.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/kissht-4e693b0bc1c0.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "4e693b0bc1c0735d452220f7b4d4abfa4b30842851bc793d944e11dc5941b3d9"
+    },
+    {
+      "canonical_name": "super.money",
+      "normalized_name": "SUPERMONEY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 67,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "super.money",
+        "Super Money"
+      ],
+      "website_url": "https://www.super.money/",
+      "source_page_url": "https://apps.apple.com/in/app/super-money/id6502597504?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/65/a0/03/65a003eb-372d-75c0-b2e1-939d5522df0e/AppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/super-money-3afcc9b88b90.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "3afcc9b88b905139ba50acdf28c0987f2a78212a863873515d73b0dd2062869e"
+    },
+    {
+      "canonical_name": "PayZapp",
+      "normalized_name": "PAYZAPP",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 68,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "PayZapp",
+        "Pay Zapp"
+      ],
+      "website_url": "https://v1.hdfcbank.com/payzapp/",
+      "source_page_url": "https://apps.apple.com/in/app/payzapp-upi-pixel-credit-card/id6443480917?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/c9/68/9f/c9689f73-b188-efdb-a071-ce8223dafe42/AppIcon-prod-0-0-1x_U007emarketing-0-6-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/payzapp-de1fd660b62a.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "de1fd660b62a8395eb5a4fc3d1787d7b5b6371e8962135580ab0adee435b5bc2"
+    },
+    {
+      "canonical_name": "FamApp",
+      "normalized_name": "FAMAPP",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 69,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "FamApp",
+        "FamPay",
+        "Fam App"
+      ],
+      "website_url": "https://www.famapp.in/",
+      "source_page_url": "https://www.famapp.in/",
+      "source_url": "https://www.famapp.in/assets/images/icons/common/headerWhiteLogoIcon.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/famapp-8540de0986ec.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "8540de0986ec5a4089cd690693b8a3833f6c7517f010743cbbc8c43ad41361eb"
+    },
+    {
+      "canonical_name": "Bank of Baroda",
+      "normalized_name": "BANKOFBARODA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 70,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Bank of Baroda",
+        "BOB",
+        "bob World"
+      ],
+      "website_url": "https://bankofbaroda.bank.in/",
+      "source_page_url": "https://bankofbaroda.bank.in/",
+      "source_url": "https://bankofbaroda.bank.in/-/media/project/bob/shared/favicon/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/bank-of-baroda-2a7e9439fbab.webp",
+      "content_type": "image/webp",
+      "content_sha256": "2a7e9439fbab1db8e211dd7f98f8b5e174a89e5a240b7d86b44de20a167d2675"
+    },
+    {
+      "canonical_name": "Indian Overseas Bank",
+      "normalized_name": "INDIANOVERSEASBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 71,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Indian Overseas Bank",
+        "IOB"
+      ],
+      "website_url": "https://www.iob.bank.in/en/",
+      "source_page_url": "https://www.iob.bank.in/en/",
+      "source_url": "https://www.iob.bank.in/documents/20117/34247/iob-favicon/6fbbedc9-a8f7-9403-4738-e3ea62b6865d",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/indian-overseas-bank-32341af84488.png",
+      "content_type": "image/png",
+      "content_sha256": "32341af84488f4595b33bafd02961636031771e46b698eed363a89f920232d6c"
+    },
+    {
+      "canonical_name": "IDBI Bank",
+      "normalized_name": "IDBIBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 72,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "IDBI Bank",
+        "IDBI"
+      ],
+      "website_url": "https://www.idbibank.in/",
+      "source_page_url": "https://apps.apple.com/in/app/idbi-bank-go-mobile/id1318206368?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/60/a8/6d/60a86dce-5957-b78d-4095-ecb00120851f/AppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/idbi-bank-b2ac88201e59.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "b2ac88201e59129671e752c9c74769e71b491471e6b70350dd501df78ebff40c"
+    },
+    {
+      "canonical_name": "Bank of India",
+      "normalized_name": "BANKOFINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 73,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Bank of India",
+        "BOI"
+      ],
+      "website_url": "https://bankofindia.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/boiug/id6738122059?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/55/c2/24/55c22453-c6a3-d3e1-851e-4eb316a74b8e/AppIcon-0-1x_U007epad-0-1-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/bank-of-india-959e48c918d7.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "959e48c918d7f65e5bd950e6848b7a8af8ba9df0580a56b2ed3ecc64a61c4401"
+    },
+    {
+      "canonical_name": "Indian Bank",
+      "normalized_name": "INDIANBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 74,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Indian Bank"
+      ],
+      "website_url": "https://indianbank.bank.in/en/",
+      "source_page_url": "https://indianbank.bank.in/en/",
+      "source_url": "https://indianbank.bank.in/documents/d/guest/logo",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/indian-bank-4674af061002.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "4674af061002eecf7d9a6064a7467a116ee8c6d66b86f395903a96a730ae3e5b"
+    },
+    {
+      "canonical_name": "AU Small Finance Bank",
+      "normalized_name": "AUSMALLFINANCEBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 75,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "AU Small Finance Bank",
+        "AU Bank"
+      ],
+      "website_url": "https://www.au.bank.in/",
+      "source_page_url": "https://apps.apple.com/in/app/au-bank-corporate/id1479957747?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/e5/f5/8f/e5f58f95-efb3-ced1-e897-0c79aaa5feca/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/au-small-finance-bank-72788108e574.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "72788108e574b2d7e7dc2c45ffc147f37114cbe479f91d47bf03ccb807b090d7"
+    },
+    {
+      "canonical_name": "RBL Bank",
+      "normalized_name": "RBLBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 76,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "RBL Bank",
+        "RBL"
+      ],
+      "website_url": "https://www.rbl.bank.in/",
+      "source_page_url": "https://www.rbl.bank.in/",
+      "source_url": "https://www.rbl.bank.in/themes/custom/rbl_bank/images/rbl.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/rbl-bank-a37579dbfa6c.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "a37579dbfa6cb3f80ce9b4d3a8b8860d5d30cff5c15fc344909883282fc1b886"
+    },
+    {
+      "canonical_name": "Bandhan Bank",
+      "normalized_name": "BANDHANBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 77,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Bandhan Bank"
+      ],
+      "website_url": "https://bandhan.bank.in/",
+      "source_page_url": "https://bandhan.bank.in/",
+      "source_url": "https://bandhan.bank.in/sites/default/files/2025-08/Bandhan-Bank-Logo-500X170px.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/bandhan-bank-4cd632c7ce8f.png",
+      "content_type": "image/png",
+      "content_sha256": "4cd632c7ce8f7ac948c6b3a2bd6704fd4ac1c59586bdb6fa5bab064845ba8972"
+    },
+    {
+      "canonical_name": "South Indian Bank",
+      "normalized_name": "SOUTHINDIANBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 78,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "South Indian Bank",
+        "SIB"
+      ],
+      "website_url": "https://www.southindianbank.com/",
+      "source_page_url": "https://apps.apple.com/in/app/sib-mirror-mobile-banking/id1184796899?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/46/7b/97/467b9788-ebfd-4cc6-d868-48fbab8541f8/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/south-indian-bank-da573d957d13.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "da573d957d13d5c3e06c60693d3d00e3fd9e71862d94a7e728fe625a4af93761"
+    },
+    {
+      "canonical_name": "Karnataka Bank",
+      "normalized_name": "KARNATAKABANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 79,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Karnataka Bank",
+        "KBL"
+      ],
+      "website_url": "https://www.karnatakabank.bank.in/",
+      "source_page_url": "https://www.karnatakabank.bank.in/",
+      "source_url": "https://d3sdkw7nvdnqts.cloudfront.net/s3fs-public/KBL-star-favicon.svg",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/karnataka-bank-ea9f5d993e86.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "ea9f5d993e865cb1738f1f71466509964f743cdb899407599df49178b585c3fe"
+    },
+    {
+      "canonical_name": "Karur Vysya Bank",
+      "normalized_name": "KARURVYSYABANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 80,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Karur Vysya Bank",
+        "KVB"
+      ],
+      "website_url": "https://www.kvb.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/kvb-dlite-mobile-banking/id1428536937?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/24/10/2c/24102c3f-de87-3933-eb1f-3b6517e443ee/AppIcon-1x_U007emarketing-0-8-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/karur-vysya-bank-fe5f82cee502.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "fe5f82cee502b2edc6a0634ed831efc3a147a5cc9c114b80bd6ae95d613ab41f"
+    },
+    {
+      "canonical_name": "City Union Bank",
+      "normalized_name": "CITYUNIONBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 81,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "City Union Bank",
+        "CUB"
+      ],
+      "website_url": "https://www.cityunionbank.com/",
+      "source_page_url": "https://www.cityunionbank.com/",
+      "source_url": "https://www.cityunionbank.com/assets/frontend/images/favicon.jpg",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/city-union-bank-b12c3e711f12.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "b12c3e711f129fb520d674ac37eab85dfc9146bbeae18cbbedaff3f3d07319b9"
+    },
+    {
+      "canonical_name": "HSBC India",
+      "normalized_name": "HSBCINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 82,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "HSBC India",
+        "HSBC"
+      ],
+      "website_url": "https://www.hsbc.bank.in/",
+      "source_page_url": "https://www.hsbc.bank.in/",
+      "source_url": "https://www.hsbc.bank.in/etc.clientlibs/dpws/clientlibs-public/clientlib-site/resources/favicons/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/hsbc-india-d258f7e2ad66.png",
+      "content_type": "image/png",
+      "content_sha256": "d258f7e2ad662d73ec5c4a2c9e0b7d514b353df351bb8880b9b4731682788766"
+    },
+    {
+      "canonical_name": "Standard Chartered India",
+      "normalized_name": "STANDARDCHARTEREDINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 83,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Standard Chartered India",
+        "Standard Chartered"
+      ],
+      "website_url": "https://www.sc.bank.in/",
+      "source_page_url": "https://www.sc.bank.in/",
+      "source_url": "https://av.sc.com/in/content/images/cropped-512x512-1-200x200-1-200x200.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/standard-chartered-india-780fe359d3db.png",
+      "content_type": "image/png",
+      "content_sha256": "780fe359d3db9722d120f1973ab444ac6d80f9203f7d906b9c7e5dd2cb73e8ef"
+    },
+    {
+      "canonical_name": "DBS Bank India",
+      "normalized_name": "DBSBANKINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 84,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "DBS Bank India",
+        "DBS",
+        "digibank"
+      ],
+      "website_url": "https://www.dbs.bank.in/in/index/default.page",
+      "source_page_url": "https://www.dbs.bank.in/in/index/default.page",
+      "source_url": "https://www.dbs.bank.in/in/_next/public/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/dbs-bank-india-69fc0efbe700.png",
+      "content_type": "image/png",
+      "content_sha256": "69fc0efbe700f9e3b3908d2811a45c787c212b5bc5abaf38151a9d6ace5937f8"
+    },
+    {
+      "canonical_name": "Jupiter Money",
+      "normalized_name": "JUPITERMONEY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 85,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Jupiter Money",
+        "Jupiter"
+      ],
+      "website_url": "https://jupiter.money/",
+      "source_page_url": "https://jupiter.money/",
+      "source_url": "https://jupiter.money/content/images/size/w256h256/2021/07/Frame-10.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/jupiter-money-5e96b6ae60a2.png",
+      "content_type": "image/png",
+      "content_sha256": "5e96b6ae60a2b645234a2b91a2fab2476bc811669f7bf5e9f924fd438c6df40b"
+    },
+    {
+      "canonical_name": "Fi Money",
+      "normalized_name": "FIMONEY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 86,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Fi Money",
+        "Fi"
+      ],
+      "website_url": "https://fi.money/",
+      "source_page_url": "https://fi.money/",
+      "source_url": "https://fi.money/favicon.ico?1b6c98f8c747778d",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/fi-money-6e0d22ceab92.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "6e0d22ceab9228acc9ad5615eee9935bab6201cb7d4a2fa3ae8c51c13508a699"
+    },
+    {
+      "canonical_name": "Tide India",
+      "normalized_name": "TIDEINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 87,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Tide India",
+        "Tide"
+      ],
+      "website_url": "https://www.tide.co/en-IN/",
+      "source_page_url": "https://www.tide.co/en-IN/",
+      "source_url": "https://www.tide.co/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/tide-india-6f91008f41e0.png",
+      "content_type": "image/png",
+      "content_sha256": "6f91008f41e00eedf4c00a44820f9f79087f5131d62b71c08647d38c10320af9"
+    },
+    {
+      "canonical_name": "Muthoot Finance",
+      "normalized_name": "MUTHOOTFINANCE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 88,
+      "selection_reason": "Apple App Store India Finance chart, 9 August 2026",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Muthoot Finance",
+        "Muthoot"
+      ],
+      "website_url": "https://www.muthootfinance.com/",
+      "source_page_url": "https://www.muthootfinance.com/",
+      "source_url": "https://cdn.muthootfinance.com/sites/default/files/files/logo_0.webp",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/muthoot-finance-80c7d1faf7aa.webp",
+      "content_type": "image/webp",
+      "content_sha256": "80c7d1faf7aa4c7d8f2c7022e8956d4da58ed0d30afe454b64e30f5da184c55f"
+    },
+    {
+      "canonical_name": "SBI Life",
+      "normalized_name": "SBILIFE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 89,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "SBI Life",
+        "SBI Life Insurance"
+      ],
+      "website_url": "https://www.sbilife.co.in/",
+      "source_page_url": "https://www.sbilife.co.in/",
+      "source_url": "https://www.sbilife.co.in/documents/20118/271399/favicon.ico/de184b7b-6743-a62f-ffac-ce2e714d36b5",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/sbi-life-9838ad30f25a.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "9838ad30f25aeaedfbd9c637abaf70cafb11c8c5f8ade9f50c95c5633607224a"
+    },
+    {
+      "canonical_name": "HDFC Life",
+      "normalized_name": "HDFCLIFE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 90,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "HDFC Life",
+        "HDFC Life Insurance"
+      ],
+      "website_url": "https://www.hdfclife.com/",
+      "source_page_url": "https://www.hdfclife.com/",
+      "source_url": "https://www.hdfclife.com/content/dam/hdfclifeinsurancecompany/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/hdfc-life-99577e6bd0b8.png",
+      "content_type": "image/png",
+      "content_sha256": "99577e6bd0b830a3c0ec4b2144a8bf953101d5acf245ce362da5e03fbc460b39"
+    },
+    {
+      "canonical_name": "ICICI Prudential Life",
+      "normalized_name": "ICICIPRUDENTIALLIFE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 91,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "ICICI Prudential Life",
+        "ICICI Prudential"
+      ],
+      "website_url": "https://www.iciciprulife.com/",
+      "source_page_url": "https://www.iciciprulife.com/",
+      "source_url": "https://www.iciciprulife.com/content/dam/icicipru/all/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/icici-prudential-life-8c7d09b7bbfd.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "8c7d09b7bbfddc94eb7a1daa490df30d41f9d0fe95456bae6c40a9d64926d2fd"
+    },
+    {
+      "canonical_name": "Bajaj Allianz",
+      "normalized_name": "BAJAJALLIANZ",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 92,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Bajaj Allianz",
+        "Bajaj Insurance"
+      ],
+      "website_url": "https://www.bajajgeneralinsurance.com/",
+      "source_page_url": "https://www.bajajgeneralinsurance.com/",
+      "source_url": "https://www.bajajgeneralinsurance.com/content/dam/bagic/index/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/bajaj-allianz-e788fcc2b36d.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "e788fcc2b36d71e64d5295915a1c5e0a84f9f2408c5cbe48e0616846833f9155"
+    },
+    {
+      "canonical_name": "Maruti Suzuki",
+      "normalized_name": "MARUTISUZUKI",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 93,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Maruti Suzuki",
+        "Maruti"
+      ],
+      "website_url": "https://www.marutisuzuki.com/",
+      "source_page_url": "https://www.marutisuzuki.com/",
+      "source_url": "https://www.marutisuzuki.com/adobe/assets/urn:aaid:aem:791b5601-4cfa-4b0f-a77b-ec588eba84ad/as/Maruti-suzuki_logo_v1.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/maruti-suzuki-db59c5cc0618.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "db59c5cc061802e1dba3daf597a589ad7554ac7e5cd515ec03426a6f8833ff41"
+    },
+    {
+      "canonical_name": "Bajaj Auto",
+      "normalized_name": "BAJAJAUTO",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 94,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Bajaj Auto"
+      ],
+      "website_url": "https://www.bajajauto.com/",
+      "source_page_url": "https://www.bajajauto.com/",
+      "source_url": "https://cdn.bajajauto.com/-/media/feature/bajajauto/header/header-logo/instagram.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/bajaj-auto-ee8e46c2a067.png",
+      "content_type": "image/png",
+      "content_sha256": "ee8e46c2a067dff704876718e5a5932c94e181fd73c32f0c5833fa93e3f2a7a2"
+    },
+    {
+      "canonical_name": "TVS Motor",
+      "normalized_name": "TVSMOTOR",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 95,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "TVS Motor",
+        "TVS"
+      ],
+      "website_url": "https://www.tvsmotor.com/",
+      "source_page_url": "https://apps.apple.com/in/app/tvs-connect/id1453965748?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/55/32/1e/55321eb8-b145-9c7f-0aa2-0749cb86a02b/AppIcon-0-0-1x_U007emarketing-0-11-0-sRGB-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/tvs-motor-99b1ee7b2a06.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "99b1ee7b2a063d4924cb6baa549504f230a034f839032fbaf9e8368df65ad072"
+    },
+    {
+      "canonical_name": "Hero MotoCorp",
+      "normalized_name": "HEROMOTOCORP",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 96,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Hero MotoCorp",
+        "Hero"
+      ],
+      "website_url": "https://www.heromotocorp.com/en-in.html",
+      "source_page_url": "https://www.heromotocorp.com/en-in.html",
+      "source_url": "https://www.heromotocorp.com/etc.clientlibs/hero-aem-website/clientlibs/clientlib-site/resources/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/hero-motocorp-a61a27908152.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "a61a2790815231692e4f2a34dd65b1470eee0312f5067ca02e145870676f554c"
+    },
+    {
+      "canonical_name": "Royal Enfield",
+      "normalized_name": "ROYALENFIELD",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 97,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Royal Enfield"
+      ],
+      "website_url": "https://www.royalenfield.com/in/en/",
+      "source_page_url": "https://www.royalenfield.com/in/en/",
+      "source_url": "https://www.royalenfield.com/content/dam/re-platform-images/favicon/favicon-128x128.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/royal-enfield-d6a4419f10fc.avif",
+      "content_type": "image/avif",
+      "content_sha256": "d6a4419f10fc2f11a624c757071f0672becf3dec96c37a8320eec800616563fc"
+    },
+    {
+      "canonical_name": "Havells",
+      "normalized_name": "HAVELLS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 98,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Havells"
+      ],
+      "website_url": "https://havells.com/",
+      "source_page_url": "https://havells.com/",
+      "source_url": "https://havells.com/media/favicon/stores/1/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/havells-ad07e1f40bf4.webp",
+      "content_type": "image/webp",
+      "content_sha256": "ad07e1f40bf409cc53270134fa7cd6b5a384e13bf0aad7fd8b40e49e79fea69a"
+    },
+    {
+      "canonical_name": "Dabur",
+      "normalized_name": "DABUR",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 99,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Dabur"
+      ],
+      "website_url": "https://www.dabur.com/",
+      "source_page_url": "https://www.dabur.com/",
+      "source_url": "https://www.dabur.com/favicon.ico",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/dabur-bce66a5d56cb.ico",
+      "content_type": "image/x-icon",
+      "content_sha256": "bce66a5d56cb747742edaed54060fcb419edb590aa283bab59f2701ebcb414f0"
+    },
+    {
+      "canonical_name": "Horlicks",
+      "normalized_name": "HORLICKS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 101,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Horlicks"
+      ],
+      "website_url": "https://www.horlicks.in/",
+      "source_page_url": "https://www.horlicks.in/",
+      "source_url": "https://www.horlicks.in/cdn/shop/files/favicon-icon.jpg?crop=center&height=32&v=1719484941&width=32",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/horlicks-f18a863d39e8.webp",
+      "content_type": "image/webp",
+      "content_sha256": "f18a863d39e87eb26345977e908c227ecb3b14b73b14a7153c600ceb3c6e10c8"
+    },
+    {
+      "canonical_name": "IndianOil",
+      "normalized_name": "INDIANOIL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 102,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "IndianOil",
+        "Indian Oil",
+        "IOCL"
+      ],
+      "website_url": "https://iocl.com/",
+      "source_page_url": "https://apps.apple.com/in/app/indianoil-png/id1607274625?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/90/a5/57/90a557f1-29fb-b161-90c6-71c6db041e1f/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100/indianoil-f8694d639c70.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "f8694d639c70a189aaed961c420c86bb2ab85245d37381bfaa154847552cef44"
+    },
+    {
+      "canonical_name": "Colgate-Palmolive",
+      "normalized_name": "COLGATEPALMOLIVE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 103,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Colgate-Palmolive",
+        "Colgate"
+      ],
+      "website_url": "https://www.colgatepalmolive.co.in/",
+      "source_page_url": "https://www.colgatepalmolive.co.in/",
+      "source_url": "https://www.colgatepalmolive.co.in/content/dam/cp-sites-aem/corporate/corporate/favicon/dark/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/colgate-palmolive-9ab20126900b.png",
+      "content_type": "image/png",
+      "content_sha256": "9ab20126900b27aefb57b1356ace06334d987785852ee7b83d76081d5e0ee07a"
+    },
+    {
+      "canonical_name": "Berger Paints",
+      "normalized_name": "BERGERPAINTS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 104,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Berger Paints",
+        "Berger"
+      ],
+      "website_url": "https://www.bergerpaints.com/",
+      "source_page_url": "https://www.bergerpaints.com/",
+      "source_url": "https://images.bergerpaints.com/2026-07/navbigimg.png?VersionId=jbBE.iAnHKpQw5ypzcktJBl6zRtG8MuY&format=webp&width=640&quality=75",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/berger-paints-d8e7f2e44144.webp",
+      "content_type": "image/webp",
+      "content_sha256": "d8e7f2e44144acf84770d78a974966a9cde623e8d269a9bb346f2cb2ed0bd630"
+    },
+    {
+      "canonical_name": "Hindustan Petroleum",
+      "normalized_name": "HINDUSTANPETROLEUM",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08",
+      "selection_rank": 105,
+      "selection_reason": "Kantar BrandZ India Top 100, 2025",
+      "evidence_urls": [
+        "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+      ],
+      "aliases": [
+        "Hindustan Petroleum",
+        "HPCL",
+        "HP Petrol"
+      ],
+      "website_url": "https://www.hindustanpetroleum.com/",
+      "source_page_url": "https://www.hindustanpetroleum.com/",
+      "source_url": "https://www.hindustanpetroleum.com/images/logo.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100/hindustan-petroleum-63b1974cce44.png",
+      "content_type": "image/png",
+      "content_sha256": "63b1974cce445eeddee0ab3c9c7721d3f4c38aacc3546fc80c2b8f15edb49530"
+    },
+    {
+      "canonical_name": "OpenAI",
+      "normalized_name": "OPENAI",
+      "coverage": "EXISTING",
+      "catalog_batch": "live-unmapped-merchant-logos-2026-08",
+      "selection_rank": 1,
+      "selection_reason": "Live merchant with no logo; identity and official asset verified",
+      "evidence_urls": [
+        "https://apps.apple.com/us/app/chatgpt/id6448311069"
+      ],
+      "aliases": [
+        "OpenAI"
+      ],
+      "website_url": "https://openai.com/",
+      "source_page_url": "https://apps.apple.com/us/app/chatgpt/id6448311069",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/af/5b/dc/af5bdcf7-7eb9-b981-88b3-1014de5b987a/AppIcon-0-0-1x_U007epad-0-0-0-1-0-P3-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": "#000000",
+      "object_path": "official-live-unmapped/openai-be51c03f2f12.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "be51c03f2f120cc213e51a93fb1467b2bcd733ec939bfbfa2949cb20b99833c1"
+    },
+    {
+      "canonical_name": "Jio-bp",
+      "normalized_name": "JIOBP",
+      "coverage": "EXISTING",
+      "catalog_batch": "live-unmapped-merchant-logos-2026-08",
+      "selection_rank": 2,
+      "selection_reason": "Live merchant with no logo; identity and official asset verified",
+      "evidence_urls": [
+        "https://www.jiobp.com/"
+      ],
+      "aliases": [
+        "Jio-bp",
+        "Reliance BP Mobility"
+      ],
+      "website_url": "https://www.jiobp.com/",
+      "source_page_url": "https://www.jiobp.com/",
+      "source_url": "https://www.jiobp.com/sites/default/files/Jio-BP%20logo_3_0.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-live-unmapped/jio-bp-8a56ec91e750.png",
+      "content_type": "image/png",
+      "content_sha256": "8a56ec91e7500c4f1d0d33f56fba918d9c5fd597bbdf3609e3017a1deedb6c9e"
+    },
+    {
+      "canonical_name": "Hotel Highway King",
+      "normalized_name": "HOTELHIGHWAYKING",
+      "coverage": "EXISTING",
+      "catalog_batch": "live-unmapped-merchant-logos-2026-08",
+      "selection_rank": 3,
+      "selection_reason": "Live merchant with no logo; identity and official asset verified",
+      "evidence_urls": [
+        "https://www.hotelhighwayking.com/"
+      ],
+      "aliases": [
+        "Hotel Highway King"
+      ],
+      "website_url": "https://www.hotelhighwayking.com/",
+      "source_page_url": "https://www.hotelhighwayking.com/",
+      "source_url": "https://assets.simplotel.com/simplotel/image/upload/x_216,y_187,w_1404,h_1442,r_0,c_crop,q_80,dpr_1,f_auto,fl_progressive/w_355,h_200,f_auto,c_fit/hotel-highway-king/Frame_8_ae528448",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": "#008135",
+      "object_path": "official-live-unmapped/hotel-highway-king-19b889d4485a.avif",
+      "content_type": "image/avif",
+      "content_sha256": "19b889d4485a04ec0e2354cbef49fdb8f75f23bdfdf7241dea62e2612769c104"
+    },
+    {
+      "canonical_name": "OpenRouter",
+      "normalized_name": "OPENROUTER",
+      "coverage": "EXISTING",
+      "catalog_batch": "live-unmapped-merchant-logos-2026-08",
+      "selection_rank": 4,
+      "selection_reason": "Live merchant with no logo; identity and official asset verified",
+      "evidence_urls": [
+        "https://openrouter.ai/blog/announcements/brand-refresh/"
+      ],
+      "aliases": [
+        "OpenRouter"
+      ],
+      "website_url": "https://openrouter.ai/",
+      "source_page_url": "https://openrouter.ai/blog/announcements/brand-refresh/",
+      "source_url": "https://openrouter.ai",
+      "source_kind": "SIMPLE_ICONS",
+      "source_license": null,
+      "brand_color": "#94A3B8",
+      "object_path": "simple-icons-16.27.0/openrouter-af4eeebab1b0.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "af4eeebab1b08965ec784f134c721bb366a80f26409990443b17cb0d10e777c6"
     }
   ],
   "official_site_failures": [
@@ -6147,5 +8614,52 @@
       "required": false,
       "reason": "403 Forbidden"
     }
-  ]
+  ],
+  "catalog_batches": {
+    "india-next-100-2026-08": {
+      "generated_at": "2026-08-08T22:28:08.492Z",
+      "target": 100,
+      "selected": 100,
+      "candidate_pool": 164,
+      "evidence": {
+        "shopping": {
+          "label": "Apple App Store India Shopping chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6024"
+        },
+        "food": {
+          "label": "Apple App Store India Food & Drink chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6023"
+        },
+        "travel": {
+          "label": "Apple App Store India Travel chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6003"
+        },
+        "finance": {
+          "label": "Apple App Store India Finance chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6015"
+        },
+        "entertainment": {
+          "label": "Apple App Store India Entertainment chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6016"
+        },
+        "ecommerce": {
+          "label": "Similarweb India Ecommerce & Shopping ranking, June 2026",
+          "url": "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+        },
+        "brandz": {
+          "label": "Kantar BrandZ India Top 100, 2025",
+          "url": "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+        },
+        "coverage": {
+          "label": "High-frequency India transaction category coverage",
+          "url": "https://www.kantar.com/campaigns/brandz/india"
+        }
+      }
+    },
+    "live-unmapped-merchant-logos-2026-08": {
+      "generated_at": "2026-08-09T05:58:35.218Z",
+      "selected": 4,
+      "evidence": "Live database audit; official asset or verified Simple Icons source only"
+    }
+  }
 }
