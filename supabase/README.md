@@ -56,11 +56,12 @@ Merchant artwork is stored separately from `global_merchants`:
 - Files live in the public `merchant-logos` Supabase Storage bucket; PostgreSQL
   stores only paths, URLs, source provenance, hashes, and brand colors.
 
-The checked-in catalogue contains 400 additional India-focused merchants and
-services plus verified mappings for current branded merchants. The latest 100
-rows are tagged as batch `india-next-100-2026-08` and include selection rank,
-evidence URLs, and acquisition provenance. Private P2P names and local
-businesses without a trustworthy official source are omitted.
+The checked-in catalogue contains 600 additional India-focused merchants and
+services plus verified mappings for current branded merchants. The newest 100
+rows are tagged as batch `india-next-100-2026-08-batch-3` and include selection
+rank, evidence URLs, transaction relevance, actual-byte dimensions and hashes,
+and identity-verification provenance. Private P2P names and local businesses
+without a trustworthy official source are omitted.
 
 To rebuild the catalogue and temporary upload assets:
 
@@ -72,6 +73,10 @@ node scripts/build-merchant-logo-catalog.mjs
 node scripts/fetch-official-merchant-logos.mjs
 npm run logos:expand-next-100
 npm run logos:validate-next-100
+npm run logos:expand-next-100-batch-2
+npm run logos:validate-next-100-batch-2
+npm run logos:expand-next-100-batch-3
+npm run logos:validate-next-100-batch-3
 ```
 
 The expansion report at `merchant-logo-next-100-report.json` records selected,
@@ -80,6 +85,19 @@ and asset hashes.
 The expansion script checks the full existing catalogue before selecting a
 candidate, verifies downloaded image bytes, rejects weak identity matches and
 duplicate assets, and requires exactly 100 valid rows before writing output.
+
+The second expansion uses a 164-candidate ranked pool. Its report is
+`merchant-logo-next-100-batch-2-report.json`, and its complete visual review
+sheet is `merchant-logo-next-100-batch-2-contact-sheet.png`. Re-running the
+batch preserves hash-verified cached assets and only reacquires missing or
+explicitly corrected artwork.
+
+The third expansion re-audits the 565-row catalogue and uses a conflict-free
+153-candidate pool. Its report and corrected visual review sheet are
+`merchant-logo-next-100-batch-3-report.json` and
+`merchant-logo-next-100-batch-3-contact-sheet.png`. Verified reserves from the
+second report are hash-checked and reused; pinned identity or visual-review
+corrections explicitly invalidate weaker cached choices.
 
 Storage writes require an elevated server-side API key. Prefer a current
 Supabase secret key and keep it local in `backend/.dev.vars` as
@@ -99,6 +117,24 @@ To upload only the latest verified batch after applying
 
 ```bash
 npm run logos:upload-next-100
+```
+
+For the second forward-only batch, apply
+`20260809120000_seed_next_100_merchant_logo_catalog_batch_2.sql`, validate, and
+then upload only its assets:
+
+```bash
+npm run logos:validate-next-100-batch-2
+npm run logos:upload-next-100-batch-2
+```
+
+For the third forward-only batch, apply
+`20260809130000_seed_next_100_merchant_logo_catalog_batch_3.sql`, validate, and
+then upload only its assets:
+
+```bash
+npm run logos:validate-next-100-batch-3
+npm run logos:upload-next-100-batch-3
 ```
 
 The uploader verifies each local file against its checked-in SHA-256 hash
