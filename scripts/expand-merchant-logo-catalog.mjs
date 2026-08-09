@@ -6,8 +6,26 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import sharp from 'sharp';
+import {
+  SECOND_BATCH_CANDIDATES,
+  SECOND_BATCH_EVIDENCE,
+} from './merchant-logo-batch-2-candidates.mjs';
+import {
+  THIRD_BATCH_CANDIDATES,
+  THIRD_BATCH_EVIDENCE,
+} from './merchant-logo-batch-3-candidates.mjs';
 
-const BATCH_ID = 'india-next-100-2026-08';
+const useSecondBatch = process.argv.includes('--batch-2');
+const useThirdBatch = process.argv.includes('--batch-3');
+if (useSecondBatch && useThirdBatch) {
+  throw new Error('Choose only one batch flag');
+}
+const BATCH_ID = useThirdBatch
+  ? 'india-next-100-2026-08-batch-3'
+  : useSecondBatch
+    ? 'india-next-100-2026-08-batch-2'
+    : 'india-next-100-2026-08';
 const BATCH_TARGET = 100;
 const SIMPLE_ICONS_VERSION = '16.27.0';
 const DEFAULT_ASSET_DIRECTORY = '/tmp/money-manager-merchant-logo-assets';
@@ -46,6 +64,8 @@ const EVIDENCE = {
     label: 'High-frequency India transaction category coverage',
     url: 'https://www.kantar.com/campaigns/brandz/india',
   },
+  ...SECOND_BATCH_EVIDENCE,
+  ...THIRD_BATCH_EVIDENCE,
 };
 
 function candidate(canonicalName, websiteUrl, aliases, evidenceKey, options = {}) {
@@ -57,6 +77,9 @@ function candidate(canonicalName, websiteUrl, aliases, evidenceKey, options = {}
     simpleIconSlug: options.simpleIconSlug ?? null,
     appStoreTerm: options.appStoreTerm ?? canonicalName,
     appStoreId: options.appStoreId ?? null,
+    expectedSellerTokens: options.expectedSellerTokens ?? [],
+    evidenceRank: options.evidenceRank ?? null,
+    transactionRelevance: options.transactionRelevance ?? 'MEDIUM',
     preferAppStore: options.preferAppStore === true,
     disableAppStore: options.disableAppStore === true,
   };
@@ -66,7 +89,7 @@ function candidate(canonicalName, websiteUrl, aliases, evidenceKey, options = {}
 // inaccessible, duplicate, misleading, or invalid assets are rejected and the
 // next verified candidate takes their place. Current India charts lead, then
 // Kantar's consumer-facing Top 100 gaps, followed by broad transaction coverage.
-const CANDIDATES = [
+const FIRST_BATCH_CANDIDATES = [
   candidate('Shopsy', 'https://www.shopsy.in/', [], 'ecommerce'),
   candidate('Meesho', 'https://www.meesho.com/', [], 'shopping'),
   candidate('OLX India', 'https://www.olx.in/', ['OLX'], 'shopping'),
@@ -242,6 +265,12 @@ const CANDIDATES = [
   candidate('Lionsgate Play', 'https://www.lionsgateplay.com/', [], 'entertainment'),
 ];
 
+const CANDIDATES = useThirdBatch
+  ? THIRD_BATCH_CANDIDATES
+  : useSecondBatch
+    ? SECOND_BATCH_CANDIDATES
+    : FIRST_BATCH_CANDIDATES;
+
 const BLOCKED_SOURCE_HOSTS = [
   'wikipedia.org',
   'wikimedia.org',
@@ -253,9 +282,40 @@ const BLOCKED_SOURCE_HOSTS = [
 ];
 
 const manifestPath = resolve('supabase/merchant-logo-catalog.json');
-const reportPath = resolve('supabase/merchant-logo-next-100-report.json');
+const reportPath = resolve(
+  useThirdBatch
+    ? 'supabase/merchant-logo-next-100-batch-3-report.json'
+    : useSecondBatch
+      ? 'supabase/merchant-logo-next-100-batch-2-report.json'
+      : 'supabase/merchant-logo-next-100-report.json',
+);
 const seedMigrationPath = resolve(
-  'supabase/migrations/20260809100000_seed_next_100_merchant_logo_catalog.sql',
+  useThirdBatch
+    ? 'supabase/migrations/20260809130000_seed_next_100_merchant_logo_catalog_batch_3.sql'
+    : useSecondBatch
+      ? 'supabase/migrations/20260809120000_seed_next_100_merchant_logo_catalog_batch_2.sql'
+      : 'supabase/migrations/20260809100000_seed_next_100_merchant_logo_catalog.sql',
+);
+const contactSheetPath = resolve(
+  useThirdBatch
+    ? 'supabase/merchant-logo-next-100-batch-3-contact-sheet.png'
+    : useSecondBatch
+      ? 'supabase/merchant-logo-next-100-batch-2-contact-sheet.png'
+      : 'supabase/merchant-logo-next-100-contact-sheet.png',
+);
+const contactSheetReportPath = useThirdBatch
+  ? 'supabase/merchant-logo-next-100-batch-3-contact-sheet.png'
+  : useSecondBatch
+    ? 'supabase/merchant-logo-next-100-batch-2-contact-sheet.png'
+    : 'supabase/merchant-logo-next-100-contact-sheet.png';
+const assetBatchFolder = useThirdBatch
+  ? 'next-100-batch-3'
+  : useSecondBatch
+    ? 'next-100-batch-2'
+    : 'next-100';
+const validateBatchOutputs = useSecondBatch || useThirdBatch;
+const priorVerifiedReserveReportPath = resolve(
+  'supabase/merchant-logo-next-100-batch-2-report.json',
 );
 const assetDirectory = resolve(process.env.MERCHANT_LOGO_ASSET_DIR ?? DEFAULT_ASSET_DIRECTORY);
 const simpleIconsRoot = resolve(process.env.SIMPLE_ICONS_ROOT ?? DEFAULT_SIMPLE_ICONS_ROOT);
@@ -383,27 +443,19 @@ function extensionFor(contentType) {
   return 'ico';
 }
 
-function iconDimensions(bytes, contentType) {
-  if (contentType === 'image/x-icon') {
-    if (bytes.length < 8) return null;
-    return {
-      width: bytes[6] === 0 ? 256 : bytes[6],
-      height: bytes[7] === 0 ? 256 : bytes[7],
-    };
+async function validateAssetQuality(bytes, contentType, sourceUrl) {
+  let metadata;
+  try {
+    metadata = await sharp(bytes, { failOn: 'error' }).metadata();
+  } catch (error) {
+    throw new Error(`image decoder rejected bytes: ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (contentType === 'image/png' && bytes.length >= 24) {
-    return {
-      width: bytes.readUInt32BE(16),
-      height: bytes.readUInt32BE(20),
-    };
-  }
-  return null;
-}
-
-function validateAssetQuality(bytes, contentType, sourceUrl) {
-  const dimensions = iconDimensions(bytes, contentType);
-  if (dimensions && (dimensions.width < 32 || dimensions.height < 32)) {
-    throw new Error(`asset is only ${dimensions.width}x${dimensions.height}`);
+  if (!metadata.width || !metadata.height) throw new Error('image dimensions are unavailable');
+  if (
+    contentType !== 'image/svg+xml'
+    && (metadata.width < 48 || metadata.height < 48)
+  ) {
+    throw new Error(`asset is only ${metadata.width}x${metadata.height}`);
   }
   const sourceHost = new URL(sourceUrl).hostname.toLowerCase();
   if (
@@ -416,6 +468,11 @@ function validateAssetQuality(bytes, contentType, sourceUrl) {
   ) {
     throw new Error(`asset is a generic social-site icon from ${sourceHost}`);
   }
+  return {
+    width: metadata.width,
+    height: metadata.height,
+    scalable: contentType === 'image/svg+xml',
+  };
 }
 
 function licenseLabel(icon) {
@@ -436,7 +493,11 @@ function buildSimpleIconRow(target, icon, rank) {
   }
   const sourcePath = join(simpleIconsRoot, 'icons', `${icon.slug}.svg`);
   if (!existsSync(sourcePath)) throw new Error(`Simple Icons asset is missing: ${icon.slug}`);
-  const svg = decorateSvg(readFileSync(sourcePath, 'utf8'), icon);
+  const selectedColor = target.simpleIconColor ?? `#${icon.hex}`;
+  const svg = decorateSvg(readFileSync(sourcePath, 'utf8'), {
+    ...icon,
+    hex: selectedColor.replace(/^#/, ''),
+  });
   const bytes = Buffer.from(svg);
   const hash = createHash('sha256').update(bytes).digest('hex');
   const objectPath = `simple-icons-${SIMPLE_ICONS_VERSION}/${icon.slug}-${hash.slice(0, 12)}.svg`;
@@ -447,8 +508,16 @@ function buildSimpleIconRow(target, icon, rank) {
     sourceKind: 'SIMPLE_ICONS',
     sourceLicense: licenseLabel(icon),
     websiteUrl: target.websiteUrl,
-    brandColor: `#${icon.hex.toUpperCase()}`,
+    brandColor: selectedColor.toUpperCase(),
     objectPath,
+    dimensions: { width: 24, height: 24, scalable: true },
+    identityVerification: {
+      method: 'SIMPLE_ICONS_WITH_OFFICIAL_SOURCE',
+      simple_icons_slug: icon.slug,
+      simple_icons_version: SIMPLE_ICONS_VERSION,
+      official_source_url: icon.source,
+      color_override: target.simpleIconColor,
+    },
   });
 }
 
@@ -460,7 +529,13 @@ function buildRow(target, rank, asset) {
     coverage: 'ADDITIONAL',
     catalog_batch: BATCH_ID,
     selection_rank: rank,
-    selection_reason: evidence.label,
+    selection_reason: [
+      evidence.label,
+      target.evidenceRank ? `source rank #${target.evidenceRank}` : null,
+      `${target.transactionRelevance.toLowerCase()} transaction relevance`,
+    ].filter(Boolean).join('; '),
+    evidence_rank: target.evidenceRank,
+    transaction_relevance: target.transactionRelevance,
     evidence_urls: [evidence.url],
     aliases: [...new Set([target.canonicalName, ...target.aliases])],
     website_url: asset.websiteUrl,
@@ -472,6 +547,8 @@ function buildRow(target, rank, asset) {
     object_path: asset.objectPath,
     content_type: asset.contentType,
     content_sha256: createHash('sha256').update(asset.bytes).digest('hex'),
+    asset_dimensions: asset.dimensions,
+    identity_verification: asset.identityVerification,
     _bytes: asset.bytes,
   };
 }
@@ -505,9 +582,9 @@ async function fetchOfficialRow(target, rank) {
       if (bytes.length > 1_048_576) throw new Error('asset exceeds 1 MiB');
       const detectedType = detectContentType(bytes);
       if (!detectedType) throw new Error('asset bytes are not a supported image');
-      validateAssetQuality(bytes, detectedType, response.url);
+      const dimensions = await validateAssetQuality(bytes, detectedType, response.url);
       const hash = createHash('sha256').update(bytes).digest('hex');
-      const objectPath = `official-sites-next-100/${slugify(target.canonicalName)}-${hash.slice(0, 12)}.${extensionFor(detectedType)}`;
+      const objectPath = `official-sites-${assetBatchFolder}/${slugify(target.canonicalName)}-${hash.slice(0, 12)}.${extensionFor(detectedType)}`;
       return buildRow(target, rank, {
         bytes,
         contentType: detectedType,
@@ -520,6 +597,13 @@ async function fetchOfficialRow(target, rank) {
         sourcePageUrl: page.url,
         brandColor: null,
         objectPath,
+        dimensions,
+        identityVerification: {
+          method: 'OFFICIAL_DOMAIN',
+          requested_domain: new URL(target.websiteUrl).hostname,
+          resolved_page_domain: new URL(page.url).hostname,
+          asset_domain: new URL(response.url).hostname,
+        },
       });
     } catch (error) {
       failures.push(`${candidateAsset.kind}: ${error instanceof Error ? error.message : String(error)}`);
@@ -549,7 +633,12 @@ function appMatchScore(target, result) {
 function hasStrongAppIdentity(target, result) {
   if (target.appStoreId) return String(result.trackId) === target.appStoreId;
   const sellerText = normalize(`${result.sellerName ?? ''} ${result.artistName ?? ''} ${result.bundleId ?? ''}`);
-  const meaningfulNames = [target.canonicalName, target.appStoreTerm, ...target.aliases]
+  const meaningfulNames = [
+    target.canonicalName,
+    target.appStoreTerm,
+    ...target.aliases,
+    ...(target.expectedSellerTokens ?? []),
+  ]
     .flatMap((name) => name.split(/[^A-Za-z0-9]+/))
     .map(normalize)
     .filter((name) => name.length >= 5 && !['INDIA', 'MONEY', 'FINANCE', 'MOTOR'].includes(name));
@@ -621,9 +710,9 @@ async function fetchAppStoreRow(target, rank) {
   if (bytes.length > 1_048_576) throw new Error('App Store artwork exceeds 1 MiB');
   const contentType = detectContentType(bytes);
   if (!contentType) throw new Error('App Store artwork is not a supported image');
-  validateAssetQuality(bytes, contentType, response.url);
+  const dimensions = await validateAssetQuality(bytes, contentType, response.url);
   const hash = createHash('sha256').update(bytes).digest('hex');
-  const objectPath = `official-app-store-next-100/${slugify(target.canonicalName)}-${hash.slice(0, 12)}.${extensionFor(contentType)}`;
+  const objectPath = `official-app-store-${assetBatchFolder}/${slugify(target.canonicalName)}-${hash.slice(0, 12)}.${extensionFor(contentType)}`;
   return buildRow(target, rank, {
     bytes,
     contentType,
@@ -634,6 +723,19 @@ async function fetchAppStoreRow(target, rank) {
     sourcePageUrl: match.trackViewUrl,
     brandColor: null,
     objectPath,
+    dimensions,
+    identityVerification: {
+      method: 'APPLE_APP_STORE_IDENTITY',
+      country: 'IN',
+      track_id: match.trackId,
+      track_name: match.trackName,
+      seller_name: match.sellerName ?? null,
+      artist_name: match.artistName ?? null,
+      bundle_id: match.bundleId ?? null,
+      seller_url: match.sellerUrl ?? null,
+      official_domain: new URL(target.websiteUrl).hostname,
+      expected_seller_tokens: target.expectedSellerTokens ?? [],
+    },
   });
 }
 
@@ -679,6 +781,127 @@ function writeSeedMigration(rows) {
     seedMigrationPath,
     `${statements.join('\n')}\n`,
   );
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
+}
+
+async function writeContactSheet(rows) {
+  const columns = 10;
+  const tileWidth = 220;
+  const tileHeight = 180;
+  const rowsCount = Math.ceil(rows.length / columns);
+  const width = columns * tileWidth;
+  const height = rowsCount * tileHeight;
+  const composites = [];
+
+  for (const [index, row] of rows.entries()) {
+    const left = (index % columns) * tileWidth;
+    const top = Math.floor(index / columns) * tileHeight;
+    const bytes = readFileSync(join(assetDirectory, row.object_path));
+    const logo = await sharp(bytes, { failOn: 'error' })
+      .resize(112, 112, {
+        fit: 'contain',
+        withoutEnlargement: false,
+        background: '#ffffff',
+      })
+      .flatten({ background: '#ffffff' })
+      .png()
+      .toBuffer();
+    const displayName = row.canonical_name.length > 24
+      ? `${row.canonical_name.slice(0, 23)}…`
+      : row.canonical_name;
+    const label = Buffer.from(`
+      <svg width="${tileWidth}" height="${tileHeight}">
+        <rect x="0.5" y="0.5" width="${tileWidth - 1}" height="${tileHeight - 1}" rx="10" fill="#ffffff" stroke="#dbe2ea"/>
+        <text x="12" y="22" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#52606d">#${row.selection_rank}</text>
+        <text x="110" y="166" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" fill="#172b4d">${escapeXml(displayName)}</text>
+      </svg>
+    `);
+    composites.push({ input: label, left, top });
+    composites.push({ input: logo, left: left + 54, top: top + 32 });
+  }
+
+  await sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: '#f3f6f9',
+    },
+  }).composite(composites).png({ compressionLevel: 9 }).toFile(contactSheetPath);
+}
+
+async function validateBatchArtifacts(manifest) {
+  const batchRows = manifest.rows.filter((row) => row.catalog_batch === BATCH_ID);
+  const localHashes = new Set();
+  for (const row of batchRows) {
+    const assetPath = join(assetDirectory, row.object_path);
+    if (!existsSync(assetPath)) throw new Error(`Missing local asset for ${row.canonical_name}`);
+    const bytes = readFileSync(assetPath);
+    const actualHash = createHash('sha256').update(bytes).digest('hex');
+    if (actualHash !== row.content_sha256) {
+      throw new Error(`Local hash mismatch for ${row.canonical_name}`);
+    }
+    if (detectContentType(bytes) !== row.content_type) {
+      throw new Error(`Actual bytes/content type mismatch for ${row.canonical_name}`);
+    }
+    const dimensions = await validateAssetQuality(bytes, row.content_type, row.source_url);
+    if (
+      row.asset_dimensions?.width !== dimensions.width
+      || row.asset_dimensions?.height !== dimensions.height
+      || row.asset_dimensions?.scalable !== dimensions.scalable
+    ) {
+      throw new Error(`Recorded dimensions are stale for ${row.canonical_name}`);
+    }
+    if (localHashes.has(actualHash)) throw new Error(`Duplicate local asset hash ${actualHash}`);
+    localHashes.add(actualHash);
+    if (!row.aliases.some((alias) => normalize(alias) === row.normalized_name)) {
+      throw new Error(`Canonical alias missing for ${row.canonical_name}`);
+    }
+  }
+
+  if (!existsSync(seedMigrationPath)) throw new Error(`Batch migration is missing: ${seedMigrationPath}`);
+  const migrationSql = readFileSync(seedMigrationPath, 'utf8');
+  const migrationRows = migrationSql.match(/insert into public\.merchant_logos \(/g)?.length ?? 0;
+  if (migrationRows !== BATCH_TARGET) {
+    throw new Error(`Expected ${BATCH_TARGET} migration rows, found ${migrationRows}`);
+  }
+  for (const row of batchRows) {
+    if (!migrationSql.includes(`where normalized_name = ${sql(row.normalized_name)}`)) {
+      throw new Error(`Migration is missing aliases for ${row.canonical_name}`);
+    }
+    for (const alias of row.aliases) {
+      if (!migrationSql.includes(`select ${sql(normalize(alias))}, id`)) {
+        throw new Error(`Migration is missing alias ${alias} for ${row.canonical_name}`);
+      }
+    }
+  }
+
+  if (!existsSync(reportPath)) throw new Error(`Batch report is missing: ${reportPath}`);
+  const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+  if (report.batch_id !== BATCH_ID || report.selected_count !== BATCH_TARGET) {
+    throw new Error('Batch report identity/count is stale');
+  }
+  if (report.candidate_pool < 150 || report.ranked_pool?.length !== report.candidate_pool) {
+    throw new Error('Batch report does not contain the complete oversized ranked pool');
+  }
+  if (!existsSync(contactSheetPath)) throw new Error(`Contact sheet is missing: ${contactSheetPath}`);
+
+  return {
+    local_assets: batchRows.length,
+    unique_local_hashes: localHashes.size,
+    migration_rows: migrationRows,
+    report_selected: report.selected_count,
+    ranked_pool: report.ranked_pool.length,
+    contact_sheet: contactSheetPath,
+  };
 }
 
 function validateCatalog(manifest) {
@@ -742,7 +965,11 @@ if (!existsSync(manifestPath)) throw new Error(`Manifest not found: ${manifestPa
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
 if (validateOnly) {
-  console.log(JSON.stringify(validateCatalog(manifest), null, 2));
+  const catalogValidation = validateCatalog(manifest);
+  const artifactValidation = validateBatchOutputs
+    ? await validateBatchArtifacts(manifest)
+    : null;
+  console.log(JSON.stringify({ ...catalogValidation, artifacts: artifactValidation }, null, 2));
   process.exit(0);
 }
 
@@ -760,6 +987,13 @@ const priorBatchRows = new Map(
     .filter((row) => row.catalog_batch === BATCH_ID)
     .map((row) => [row.normalized_name, row]),
 );
+const priorVerifiedReserveRows = new Map();
+if (useThirdBatch && existsSync(priorVerifiedReserveReportPath)) {
+  const priorReport = JSON.parse(readFileSync(priorVerifiedReserveReportPath, 'utf8'));
+  for (const row of priorReport.verified_not_selected ?? []) {
+    priorVerifiedReserveRows.set(row.normalized_name, row);
+  }
+}
 const baseRows = manifest.rows.filter((row) => row.catalog_batch !== BATCH_ID);
 const usedNames = new Set(baseRows.map((row) => row.normalized_name));
 const usedAliases = new Map();
@@ -772,6 +1006,10 @@ const rejected = [];
 const candidateNames = new Set();
 for (const [index, target] of CANDIDATES.entries()) {
   const normalizedName = normalize(target.canonicalName);
+  if (target.rejectReason) {
+    rejected.push({ rank: index + 1, canonical_name: target.canonicalName, reason: target.rejectReason });
+    continue;
+  }
   if (!normalizedName) {
     rejected.push({ rank: index + 1, canonical_name: target.canonicalName, reason: 'blank normalized name' });
     continue;
@@ -812,13 +1050,22 @@ async function worker() {
     const cachedUsesDisabledAppStore = cached?.source_page_url?.includes('apps.apple.com')
       && entry.target.disableAppStore;
     const cachedMissesPinnedAppStore = entry.target.appStoreId
+      && String(cached?.identity_verification?.track_id ?? '') !== entry.target.appStoreId;
+    const cachedMissesPreferredAppStore = entry.target.preferAppStore
       && !cached?.source_page_url?.includes('apps.apple.com');
+    const cachedMissesForcedSimpleIcon = entry.target.forceSimpleIcon
+      && cached?.source_kind !== 'SIMPLE_ICONS';
+    const cachedMissesSimpleColor = entry.target.simpleIconColor
+      && cached?.brand_color !== entry.target.simpleIconColor.toUpperCase();
     if (
       cached
       && cachedPath
       && existsSync(cachedPath)
       && !cachedUsesDisabledAppStore
       && !cachedMissesPinnedAppStore
+      && !cachedMissesPreferredAppStore
+      && !cachedMissesForcedSimpleIcon
+      && !cachedMissesSimpleColor
     ) {
       const bytes = readFileSync(cachedPath);
       const hash = createHash('sha256').update(bytes).digest('hex');
@@ -830,6 +1077,67 @@ async function worker() {
         });
         continue;
       }
+    }
+    const verifiedReserve = priorVerifiedReserveRows.get(
+      normalize(entry.target.canonicalName),
+    );
+    const verifiedReservePath = verifiedReserve
+      ? join(assetDirectory, verifiedReserve.object_path)
+      : null;
+    const verifiedReserveUsesDisabledAppStore = verifiedReserve?.source_page_url?.includes('apps.apple.com')
+      && entry.target.disableAppStore;
+    const verifiedReserveMissesPinnedAppStore = entry.target.appStoreId
+      && String(verifiedReserve?.identity_verification?.track_id ?? '') !== entry.target.appStoreId;
+    const verifiedReserveMissesPreferredAppStore = entry.target.preferAppStore
+      && !verifiedReserve?.source_page_url?.includes('apps.apple.com');
+    const verifiedReserveMissesForcedSimpleIcon = entry.target.forceSimpleIcon
+      && verifiedReserve?.source_kind !== 'SIMPLE_ICONS';
+    if (
+      verifiedReserve
+      && verifiedReservePath
+      && existsSync(verifiedReservePath)
+      && !verifiedReserveUsesDisabledAppStore
+      && !verifiedReserveMissesPinnedAppStore
+      && !verifiedReserveMissesPreferredAppStore
+      && !verifiedReserveMissesForcedSimpleIcon
+    ) {
+      const bytes = readFileSync(verifiedReservePath);
+      const hash = createHash('sha256').update(bytes).digest('hex');
+      if (hash === verifiedReserve.content_sha256) {
+        attempts.push({
+          ...entry,
+          row: buildRow(entry.target, entry.rank, {
+            bytes,
+            contentType: verifiedReserve.content_type,
+            sourceUrl: verifiedReserve.source_url,
+            sourceKind: verifiedReserve.source_kind,
+            sourceLicense: null,
+            websiteUrl: entry.target.websiteUrl,
+            sourcePageUrl: verifiedReserve.source_page_url,
+            brandColor: null,
+            objectPath: verifiedReserve.object_path,
+            dimensions: verifiedReserve.asset_dimensions,
+            identityVerification: verifiedReserve.identity_verification,
+          }),
+          method: 'PRIOR_VERIFIED_RESERVE_CACHE',
+        });
+        continue;
+      }
+    }
+    if (entry.target.forceSimpleIcon) {
+      try {
+        const icon = simpleIconsBySlug.get(entry.target.simpleIconSlug);
+        if (!icon) throw new Error(`slug ${entry.target.simpleIconSlug} is unavailable`);
+        const row = buildSimpleIconRow(entry.target, icon, entry.rank);
+        attempts.push({ ...entry, row, method: 'SIMPLE_ICONS' });
+      } catch (error) {
+        rejected.push({
+          rank: entry.rank,
+          canonical_name: entry.target.canonicalName,
+          reason: `forced Simple Icons asset failed: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+      continue;
     }
     const preferAppStore = entry.target.preferAppStore || Boolean(entry.target.appStoreId);
     try {
@@ -939,6 +1247,7 @@ const selectedRows = selected.map(({ row }) => {
   const { _bytes, ...manifestRow } = row;
   return manifestRow;
 });
+await writeContactSheet(selectedRows);
 
 manifest.generated_at = new Date().toISOString();
 manifest.rows = [...baseRows, ...selectedRows];
@@ -970,7 +1279,11 @@ const selectedReport = selected.map((attempt) => ({
   source_url: attempt.row.source_url,
   source_kind: attempt.row.source_kind,
   object_path: attempt.row.object_path,
+  content_type: attempt.row.content_type,
   content_sha256: attempt.row.content_sha256,
+  asset_dimensions: attempt.row.asset_dimensions,
+  identity_verification: attempt.row.identity_verification,
+  acquisition_method: attempt.method,
   primary_failure: attempt.primary_failure ?? null,
   secondary_failure: attempt.secondary_failure ?? null,
 }));
@@ -984,6 +1297,12 @@ const verifiedNotSelected = attempts
     source_page_url: attempt.row.source_page_url,
     source_url: attempt.row.source_url,
     source_kind: attempt.row.source_kind,
+    object_path: attempt.row.object_path,
+    content_type: attempt.row.content_type,
+    content_sha256: attempt.row.content_sha256,
+    asset_dimensions: attempt.row.asset_dimensions,
+    identity_verification: attempt.row.identity_verification,
+    acquisition_method: attempt.method,
     reason: 'verified fallback candidate beyond the first 100 selected rows',
     primary_failure: attempt.primary_failure ?? null,
     secondary_failure: attempt.secondary_failure ?? null,
@@ -994,17 +1313,52 @@ const report = {
   candidate_pool: CANDIDATES.length,
   eligible_candidates: eligible.length,
   acquired_candidates: attempts.length,
+  ranked_pool: CANDIDATES.map((target, index) => {
+    const rank = index + 1;
+    const normalizedName = normalize(target.canonicalName);
+    const selectedAttempt = selected.find((attempt) => attempt.rank === rank);
+    const acquiredAttempt = attempts.find((attempt) => attempt.rank === rank);
+    const rejection = rejected.find((item) => item.rank === rank);
+    return {
+      rank,
+      canonical_name: target.canonicalName,
+      normalized_name: normalizedName,
+      aliases: [target.canonicalName, ...target.aliases],
+      website_url: target.websiteUrl,
+      evidence_key: target.evidenceKey,
+      evidence_rank: target.evidenceRank,
+      evidence_url: EVIDENCE[target.evidenceKey].url,
+      transaction_relevance: target.transactionRelevance,
+      acquisition_preference: target.preferAppStore ? 'APPLE_APP_STORE' : 'OFFICIAL_SITE',
+      outcome: selectedAttempt
+        ? 'SELECTED'
+        : acquiredAttempt
+          ? 'VERIFIED_NOT_SELECTED'
+          : 'REJECTED_OR_ALREADY_PRESENT',
+      failure: rejection?.reason ?? null,
+    };
+  }),
   selected_count: selectedReport.length,
   selected: selectedReport,
   verified_not_selected_count: verifiedNotSelected.length,
   verified_not_selected: verifiedNotSelected,
   rejected,
+  contact_sheet: contactSheetReportPath,
+  visual_review: {
+    status: 'GENERATED_FOR_REVIEW',
+    reviewed_at: null,
+    notes: null,
+  },
 };
 writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
 const validation = validateCatalog(manifest);
+const artifactValidation = validateBatchOutputs
+  ? await validateBatchArtifacts(manifest)
+  : null;
 console.log(JSON.stringify({
   ...validation,
+  artifacts: artifactValidation,
   candidatePool: CANDIDATES.length,
   eligible: eligible.length,
   acquired: attempts.length,
