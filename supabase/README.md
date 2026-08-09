@@ -56,9 +56,11 @@ Merchant artwork is stored separately from `global_merchants`:
 - Files live in the public `merchant-logos` Supabase Storage bucket; PostgreSQL
   stores only paths, URLs, source provenance, hashes, and brand colors.
 
-The checked-in catalogue contains 300 additional India-focused merchants and
-services plus verified mappings for current branded merchants. Private P2P
-names and local businesses without a trustworthy official source are omitted.
+The checked-in catalogue contains 400 additional India-focused merchants and
+services plus verified mappings for current branded merchants. The latest 100
+rows are tagged as batch `india-next-100-2026-08` and include selection rank,
+evidence URLs, and acquisition provenance. Private P2P names and local
+businesses without a trustworthy official source are omitted.
 
 To rebuild the catalogue and temporary upload assets:
 
@@ -68,7 +70,16 @@ tar -xzf /tmp/money-manager-simple-icons/simple-icons-16.27.0.tgz \
   -C /tmp/money-manager-simple-icons
 node scripts/build-merchant-logo-catalog.mjs
 node scripts/fetch-official-merchant-logos.mjs
+npm run logos:expand-next-100
+npm run logos:validate-next-100
 ```
+
+The expansion report at `merchant-logo-next-100-report.json` records selected,
+verified backup, and rejected candidates, supporting evidence, source pages,
+and asset hashes.
+The expansion script checks the full existing catalogue before selecting a
+candidate, verifies downloaded image bytes, rejects weak identity matches and
+duplicate assets, and requires exactly 100 valid rows before writing output.
 
 Storage writes require an elevated server-side API key. Prefer a current
 Supabase secret key and keep it local in `backend/.dev.vars` as
@@ -82,6 +93,16 @@ source backend/.dev.vars
 set +a
 node scripts/upload-merchant-logos.mjs
 ```
+
+To upload only the latest verified batch after applying
+`20260809100000_seed_next_100_merchant_logo_catalog.sql`, run:
+
+```bash
+npm run logos:upload-next-100
+```
+
+The uploader verifies each local file against its checked-in SHA-256 hash
+before any storage or database write.
 
 To fetch and upload verified artwork for branded merchants observed in the
 current global/user-rule data (including Blinkit, Instamart, Nykaa, Zepto,
@@ -99,3 +120,33 @@ The targeted sync validates the actual image bytes instead of trusting file
 extensions or HTTP content types, rejects HTML/anti-bot responses, uploads only
 successful assets, upserts aliases, and prints the current global merchants
 that matched. It never inserts rows into `global_merchants`.
+
+### Live unmapped-merchant logo queue
+
+The manual research queue contains only global merchants of type `MERCHANT`
+that have no active public logo. It intentionally excludes people, banks, and
+transfer labels. A merchant with no trustworthy logo is counted at most twice,
+so repeated manual runs do not keep spending effort on the same small business.
+
+After applying `20260809110000_cap_unmapped_merchant_logo_lookups.sql`, inspect
+the eligible queue without consuming an attempt:
+
+```bash
+npm run logos:list-unmapped
+```
+
+Use the scan command only when you are actually going to research the listed
+businesses. It records one attempt per returned merchant, and rows disappear
+after their second unresolved attempt:
+
+```bash
+npm run logos:scan-unmapped
+```
+
+Four high-confidence matches from the current live audit are in
+`20260809111000_seed_live_unmapped_merchant_logos.sql`. Apply that migration,
+then upload just that batch with `npm run logos:upload-live-unmapped`. The
+Amazon Pay on Delivery descriptor is an alias of the existing Amazon Pay logo;
+it does not create a duplicate asset. Resetting a capped merchant is deliberate
+and must be done directly in `merchant_logo_lookup_attempts` after new evidence
+appears.
