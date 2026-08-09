@@ -1,6 +1,25 @@
+/*
+ * Off-screen rows skip layout, paint and compositing entirely.
+ *
+ * Each row's artwork is a 3D flip card — perspective + preserve-3d +
+ * backface-visibility + translateZ — which pins two GPU compositing layers per
+ * row, and rows never unmount as the feed pages in. Several hundred rows deep
+ * that exhausts iOS Safari's compositor memory (a far lower ceiling than the JS
+ * heap) and the tab reloads mid-scroll. Skipping the rows nobody is looking at
+ * keeps the live layer count proportional to the viewport, not to how far the
+ * ledger has been scrolled.
+ *
+ * `auto` on contain-intrinsic-size makes the browser remember each row's real
+ * measured height after its first render, so the scroll position stays stable
+ * even though rows vary — a Review chip or an "Outside budget" label makes a
+ * row taller than the 68px baseline. Browsers without support ignore both
+ * declarations and simply behave as before.
+ */
 .ledger-swipe-row {
 	--swipe-progress: 0;
 	isolation: isolate;
+	content-visibility: auto;
+	contain-intrinsic-size: auto 68px;
 }
 
 .ledger-swipe-action {
