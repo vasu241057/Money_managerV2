@@ -15,13 +15,20 @@ import {
   THIRD_BATCH_CANDIDATES,
   THIRD_BATCH_EVIDENCE,
 } from './merchant-logo-batch-3-candidates.mjs';
+import {
+  FOURTH_BATCH_CANDIDATES,
+  FOURTH_BATCH_EVIDENCE,
+} from './merchant-logo-batch-4-candidates.mjs';
 
 const useSecondBatch = process.argv.includes('--batch-2');
 const useThirdBatch = process.argv.includes('--batch-3');
-if (useSecondBatch && useThirdBatch) {
+const useFourthBatch = process.argv.includes('--batch-4');
+if ([useSecondBatch, useThirdBatch, useFourthBatch].filter(Boolean).length > 1) {
   throw new Error('Choose only one batch flag');
 }
-const BATCH_ID = useThirdBatch
+const BATCH_ID = useFourthBatch
+  ? 'india-next-100-2026-08-batch-4'
+  : useThirdBatch
   ? 'india-next-100-2026-08-batch-3'
   : useSecondBatch
     ? 'india-next-100-2026-08-batch-2'
@@ -66,6 +73,7 @@ const EVIDENCE = {
   },
   ...SECOND_BATCH_EVIDENCE,
   ...THIRD_BATCH_EVIDENCE,
+  ...FOURTH_BATCH_EVIDENCE,
 };
 
 function candidate(canonicalName, websiteUrl, aliases, evidenceKey, options = {}) {
@@ -265,7 +273,9 @@ const FIRST_BATCH_CANDIDATES = [
   candidate('Lionsgate Play', 'https://www.lionsgateplay.com/', [], 'entertainment'),
 ];
 
-const CANDIDATES = useThirdBatch
+const CANDIDATES = useFourthBatch
+  ? FOURTH_BATCH_CANDIDATES
+  : useThirdBatch
   ? THIRD_BATCH_CANDIDATES
   : useSecondBatch
     ? SECOND_BATCH_CANDIDATES
@@ -283,21 +293,27 @@ const BLOCKED_SOURCE_HOSTS = [
 
 const manifestPath = resolve('supabase/merchant-logo-catalog.json');
 const reportPath = resolve(
-  useThirdBatch
+  useFourthBatch
+    ? 'supabase/merchant-logo-next-100-batch-4-report.json'
+    : useThirdBatch
     ? 'supabase/merchant-logo-next-100-batch-3-report.json'
     : useSecondBatch
       ? 'supabase/merchant-logo-next-100-batch-2-report.json'
       : 'supabase/merchant-logo-next-100-report.json',
 );
 const seedMigrationPath = resolve(
-  useThirdBatch
+  useFourthBatch
+    ? 'supabase/migrations/20260809140000_seed_next_100_merchant_logo_catalog_batch_4.sql'
+    : useThirdBatch
     ? 'supabase/migrations/20260809130000_seed_next_100_merchant_logo_catalog_batch_3.sql'
     : useSecondBatch
       ? 'supabase/migrations/20260809120000_seed_next_100_merchant_logo_catalog_batch_2.sql'
       : 'supabase/migrations/20260809100000_seed_next_100_merchant_logo_catalog.sql',
 );
 const contactSheetPath = resolve(
-  useThirdBatch
+  useFourthBatch
+    ? 'supabase/merchant-logo-next-100-batch-4-contact-sheet.png'
+    : useThirdBatch
     ? 'supabase/merchant-logo-next-100-batch-3-contact-sheet.png'
     : useSecondBatch
       ? 'supabase/merchant-logo-next-100-batch-2-contact-sheet.png'
@@ -305,17 +321,23 @@ const contactSheetPath = resolve(
 );
 const contactSheetReportPath = useThirdBatch
   ? 'supabase/merchant-logo-next-100-batch-3-contact-sheet.png'
+  : useFourthBatch
+    ? 'supabase/merchant-logo-next-100-batch-4-contact-sheet.png'
   : useSecondBatch
     ? 'supabase/merchant-logo-next-100-batch-2-contact-sheet.png'
     : 'supabase/merchant-logo-next-100-contact-sheet.png';
-const assetBatchFolder = useThirdBatch
+const assetBatchFolder = useFourthBatch
+  ? 'next-100-batch-4'
+  : useThirdBatch
   ? 'next-100-batch-3'
   : useSecondBatch
     ? 'next-100-batch-2'
     : 'next-100';
-const validateBatchOutputs = useSecondBatch || useThirdBatch;
+const validateBatchOutputs = useSecondBatch || useThirdBatch || useFourthBatch;
 const priorVerifiedReserveReportPath = resolve(
-  'supabase/merchant-logo-next-100-batch-2-report.json',
+  useFourthBatch
+    ? 'supabase/merchant-logo-next-100-batch-3-report.json'
+    : 'supabase/merchant-logo-next-100-batch-2-report.json',
 );
 const assetDirectory = resolve(process.env.MERCHANT_LOGO_ASSET_DIR ?? DEFAULT_ASSET_DIRECTORY);
 const simpleIconsRoot = resolve(process.env.SIMPLE_ICONS_ROOT ?? DEFAULT_SIMPLE_ICONS_ROOT);
@@ -359,6 +381,25 @@ function safeHttpUrl(value, pageUrl) {
     return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
   } catch {
     return null;
+  }
+}
+
+function isSameOfficialDomain(requestedUrl, resolvedUrl) {
+  try {
+    const requested = new URL(requestedUrl).hostname.toLowerCase().replace(/^www\./, '');
+    const resolved = new URL(resolvedUrl).hostname.toLowerCase().replace(/^www\./, '');
+    return requested === resolved || resolved.endsWith(`.${requested}`) || requested.endsWith(`.${resolved}`);
+  } catch {
+    return false;
+  }
+}
+
+function isLikelyNonLogoAsset(assetUrl) {
+  try {
+    const path = decodeURIComponent(new URL(assetUrl).pathname).toLowerCase();
+    return /(?:social[-_]?media|download[-_]?app|(?:google|facebook|instagram|twitter|linkedin)[-_ ]?logo|(?:^|[-_/])banner(?:[-_./]|$)|(?:^|[-_/])hero(?:[-_./]|$)|(?:^|[-_/])carousel(?:[-_./]|$))/.test(path);
+  } catch {
+    return true;
   }
 }
 
@@ -453,9 +494,23 @@ async function validateAssetQuality(bytes, contentType, sourceUrl) {
   if (!metadata.width || !metadata.height) throw new Error('image dimensions are unavailable');
   if (
     contentType !== 'image/svg+xml'
-    && (metadata.width < 48 || metadata.height < 48)
+    && Math.max(metadata.width, metadata.height) < 60
   ) {
     throw new Error(`asset is only ${metadata.width}x${metadata.height}`);
+  }
+  // Metadata alone is not enough for formats such as AVIF/HEIF: some files
+  // advertise dimensions but cannot actually be decoded by the image pipeline
+  // used for contact sheets and downstream logo rendering. Prove that every
+  // raster asset can render a tiny PNG before accepting it.
+  if (contentType !== 'image/svg+xml') {
+    try {
+      await sharp(bytes, { failOn: 'error' })
+        .resize(1, 1, { fit: 'inside', withoutEnlargement: true })
+        .png()
+        .toBuffer();
+    } catch (error) {
+      throw new Error(`image pixels cannot be rendered: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   const sourceHost = new URL(sourceUrl).hostname.toLowerCase();
   if (
@@ -565,12 +620,18 @@ async function fetchOfficialRow(target, rank) {
     signal: AbortSignal.timeout(12_000),
   });
   if (!page.ok) throw new Error(`official page returned ${page.status}`);
+  if (!isSameOfficialDomain(target.websiteUrl, page.url)) {
+    throw new Error(`official page redirected outside the verified domain to ${new URL(page.url).hostname}`);
+  }
   const contentType = page.headers.get('content-type') ?? '';
   if (!contentType.includes('text/html')) throw new Error('official page did not return HTML');
   const html = await page.text();
   const failures = [];
   for (const candidateAsset of extractAssetCandidates(html, page.url)) {
     try {
+      if (isLikelyNonLogoAsset(candidateAsset.url)) {
+        throw new Error('asset path indicates promotional or social-media artwork');
+      }
       const response = await fetch(candidateAsset.url, {
         headers,
         redirect: 'follow',
@@ -633,24 +694,16 @@ function appMatchScore(target, result) {
 function hasStrongAppIdentity(target, result) {
   if (target.appStoreId) return String(result.trackId) === target.appStoreId;
   const sellerText = normalize(`${result.sellerName ?? ''} ${result.artistName ?? ''} ${result.bundleId ?? ''}`);
-  const meaningfulNames = [
-    target.canonicalName,
-    target.appStoreTerm,
-    ...target.aliases,
-    ...(target.expectedSellerTokens ?? []),
-  ]
-    .flatMap((name) => name.split(/[^A-Za-z0-9]+/))
+  const expectedPublisherTokens = (target.expectedSellerTokens ?? [])
     .map(normalize)
-    .filter((name) => name.length >= 5 && !['INDIA', 'MONEY', 'FINANCE', 'MOTOR'].includes(name));
-  if (meaningfulNames.some((name) => sellerText.includes(name))) return true;
-  if (!result.sellerUrl) return false;
-  try {
-    const appHost = new URL(result.sellerUrl).hostname.replace(/^www\./, '');
-    const officialHost = new URL(target.websiteUrl).hostname.replace(/^www\./, '');
-    return appHost === officialHost || appHost.endsWith(`.${officialHost}`) || officialHost.endsWith(`.${appHost}`);
-  } catch {
-    return false;
-  }
+    .filter((token) => token.length >= 4);
+  if (expectedPublisherTokens.some((token) => sellerText.includes(token))) return true;
+
+  // App name alone is not proof of publisher identity: a different app called
+  // "Aurelia" was found while researching the Indian apparel merchant. Accept
+  // a non-pinned result only when its publisher site is the verified official
+  // domain (or when the candidate supplies an expected publisher token above).
+  return Boolean(result.sellerUrl) && isSameOfficialDomain(target.websiteUrl, result.sellerUrl);
 }
 
 async function fetchAppStoreRow(target, rank) {
@@ -988,7 +1041,7 @@ const priorBatchRows = new Map(
     .map((row) => [row.normalized_name, row]),
 );
 const priorVerifiedReserveRows = new Map();
-if (useThirdBatch && existsSync(priorVerifiedReserveReportPath)) {
+if ((useThirdBatch || useFourthBatch) && existsSync(priorVerifiedReserveReportPath)) {
   const priorReport = JSON.parse(readFileSync(priorVerifiedReserveReportPath, 'utf8'));
   for (const row of priorReport.verified_not_selected ?? []) {
     priorVerifiedReserveRows.set(row.normalized_name, row);
