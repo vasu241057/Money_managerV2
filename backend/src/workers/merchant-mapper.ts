@@ -27,6 +27,13 @@ const MAX_WEB_SNIPPET_LENGTH = 240;
 const WEB_SEARCH_MAX_RESULTS = 5;
 // Unsure keys rest this long before the mapper asks the model again.
 const MAPPING_RETRY_COOLDOWN_DAYS = 10;
+// A person transfer is the one candidate class a web search can never help
+// with: nobody publishes a page about a private individual, so every credit
+// spent on one is wasted. Triage sorts the backlog before Tavily sees it.
+// The bar is deliberately high and the error costs are asymmetric — a person
+// mistaken for a business costs one credit, a business mistaken for a person
+// is never identified at all — so anything short of near-certainty is searched.
+const PERSON_TRIAGE_MIN_CONFIDENCE = 0.9;
 
 const VALID_MERCHANT_TYPES = new Set<MerchantType>([
 	'MERCHANT',
@@ -62,6 +69,9 @@ export interface MerchantMappingResult {
 	candidate_count: number;
 	mapped_count: number;
 	unsure_skipped_count: number;
+	/** Candidates triage kept away from Tavily as private individuals. */
+	person_skipped_count: number;
+	person_triage_call_count: number;
 	web_search_count: number;
 	alias_created_count: number;
 	category_backfill_candidate_count: number;
@@ -75,6 +85,8 @@ function createEmptyResult(): MerchantMappingResult {
 		candidate_count: 0,
 		mapped_count: 0,
 		unsure_skipped_count: 0,
+		person_skipped_count: 0,
+		person_triage_call_count: 0,
 		web_search_count: 0,
 		alias_created_count: 0,
 		category_backfill_candidate_count: 0,
@@ -210,6 +222,78 @@ function creditCounters(creditsByKey: number[]): Record<string, number> {
 	return counters;
 }
 
+/**
+ * Trading and legal markers that make a payee a business however much the words
+ * around them read as somebody's name: "Ajay Singham Private Limited" and
+ * "Verma Traders" are firms, not people. The model is told this too, but a
+ * private individual is the one call we refuse to leave to model confidence
+ * alone — this list can only ever push a candidate back towards being searched.
+ */
+const BUSINESS_NAME_MARKERS = new Set([
+	'PVT', 'PRIVATE', 'LTD', 'LIMITED', 'LLP', 'LLC', 'INC', 'CORP', 'CORPORATION',
+	'COMPANY', 'CO', 'FIRM', 'GROUP', 'HOLDINGS', 'VENTURES', 'ENTERPRISE',
+	'ENTERPRISES', 'INDUSTRIES', 'TRADERS', 'TRADING', 'AGENCY', 'AGENCIES',
+	'ASSOCIATES', 'SONS', 'BROTHERS', 'BROS', 'TECHNOLOGIES', 'TECHNOLOGY',
+	'SYSTEMS', 'SOLUTIONS', 'SERVICES', 'RETAIL', 'MART', 'SUPERMARKET', 'STORE',
+	'STORES', 'SHOP', 'SHOPPE', 'BAZAAR', 'COLLECTION', 'COLLECTIONS', 'GARMENTS',
+	'JEWELLERS', 'JEWELLERY', 'ELECTRONICS', 'AUTOMOBILES', 'MOTORS', 'FURNITURE',
+	'FOODS', 'RESTAURANT', 'HOTEL', 'CAFE', 'BAKERY', 'SWEETS', 'DHABA', 'CATERERS',
+	'MEDICAL', 'MEDICALS', 'PHARMACY', 'CHEMIST', 'CLINIC', 'HOSPITAL', 'DIAGNOSTICS',
+	'SALON', 'STUDIO', 'FITNESS', 'ACADEMY', 'INSTITUTE', 'SCHOOL', 'COLLEGE',
+	'CENTRE', 'CENTER', 'LOGISTICS', 'TRANSPORT', 'TRAVELS', 'BUILDERS',
+	'DEVELOPERS', 'CONSTRUCTION', 'HARDWARE', 'TEXTILES', 'TRADERSHOP',
+]);
+
+/**
+ * True when a raw payee string carries a business marker as a whole word.
+ * Deliberately token-based: a substring test would read "Cooperative" as "CO".
+ */
+export function hasBusinessNameMarker(rawName: string): boolean {
+	return rawName
+		.toUpperCase()
+		.split(/[^A-Z0-9]+/)
+		.some(token => token.length > 0 && BUSINESS_NAME_MARKERS.has(token));
+}
+
+function buildPersonTriagePrompt(
+	candidates: Array<{ key: string; name: string }>,
+): Array<{ role: string; content: string }> {
+	return [
+		{
+			role: 'system',
+			content: [
+				'You sort raw payee strings from Indian bank and UPI alerts into two kinds.',
+				'Each input has a stable "key" and the raw payee "name" as it appeared in the alert.',
+				'',
+				'"PERSON" — a private individual. A UPI transfer between two human beings.',
+				'  Signals: the string is a personal name ("Ajay Kumar", "PRIYA S", "Rohit Verma"),',
+				'  a UPI handle built from a personal name, or a name beside a UPI/VPA marker.',
+				'"MERCHANT" — any business at all: brand, company, shop, firm, institution,',
+				'  however small or local, and any payment gateway, bank or aggregator.',
+				'',
+				'CRITICAL: a trading or legal marker makes it a MERCHANT even when the words',
+				'before it are somebody\'s name. "Ajay Singham Private Limited", "R K Sharma & Sons",',
+				'"Verma Traders", "Patel Enterprises" and "Singh Medical Store" are all MERCHANT.',
+				'A bare personal name with no such marker is PERSON.',
+				'The word "UPI" alone means only that UPI moved the money — it says nothing',
+				'about whether the counterparty is a person or a shop. Never decide on it alone.',
+				'',
+				'"confidence" is your honest probability from 0 to 1 that the payee is a private',
+				`individual. Anything below ${PERSON_TRIAGE_MIN_CONFIDENCE} is treated as a business and researched anyway,`,
+				'so there is no cost to admitting doubt — only say you are certain when you are.',
+				'',
+				'Return strict JSON only, no markdown, exactly:',
+				'{ "assessments": [ { "key": "<input key>", "kind": "PERSON"|"MERCHANT", "confidence": 0.0 } ] }',
+				'Include every input key exactly once, unchanged.',
+			].join('\n'),
+		},
+		{
+			role: 'user',
+			content: JSON.stringify({ payees: candidates }),
+		},
+	];
+}
+
 function buildMappingPrompt(
 	candidates: Array<{ key: string; name: string; web_context?: string }>,
 	categoryNames: string[],
@@ -265,6 +349,146 @@ function resolveCategoryName(
 	const trimmed = raw.trim();
 	if (trimmed.length === 0) return null;
 	return categoriesByName.get(trimmed) ?? categoriesByLowerName.get(trimmed.toLowerCase()) ?? null;
+}
+
+export interface PersonTriageOutcome {
+	/** Keys confidently identified as private individuals — never searched. */
+	person_keys: Set<string>;
+	call_count: number;
+	/** Keys the model called a person that a business marker sent back. */
+	guard_override_count: number;
+	failed: boolean;
+}
+
+/**
+ * Sorts candidates into people and businesses before a single Tavily credit is
+ * spent. Every failure path — no answer, malformed JSON, HTTP error, timeout —
+ * returns an empty person set, which searches everything exactly as before.
+ * Triage is an optimisation, so it must never be able to cost the run a
+ * merchant, and never throws the way the mapping call deliberately does.
+ */
+export async function triagePersonTransfers(
+	sql: SqlClient,
+	env: Env,
+	apiKey: string,
+	candidates: Array<{ key: string; name: string }>,
+): Promise<PersonTriageOutcome> {
+	const outcome: PersonTriageOutcome = {
+		person_keys: new Set<string>(),
+		call_count: 0,
+		guard_override_count: 0,
+		failed: false,
+	};
+	if (candidates.length === 0) return outcome;
+
+	const providerConfig = resolveAiProviderConfig(env);
+	const candidatesByKey = new Map(candidates.map(candidate => [candidate.key, candidate.name]));
+
+	for (let i = 0; i < candidates.length; i += MAPPING_AI_CHUNK_SIZE) {
+		const chunk = candidates.slice(i, i + MAPPING_AI_CHUNK_SIZE);
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_TIMEOUT_MS);
+		const startedAtMs = Date.now();
+		outcome.call_count += 1;
+
+		try {
+			const response = await fetch(providerConfig.chatUrl, {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: providerConfig.dailyModel,
+					temperature: 0,
+					messages: buildPersonTriagePrompt(chunk),
+					response_format: { type: 'json_object' },
+				}),
+				signal: controller.signal,
+			});
+			const generationId = response.headers.get('X-Generation-Id');
+			// Triage rides under MERCHANT_MAPPING: it is part of that job's cost,
+			// and ai_usage_events constrains the operation column to known names.
+			const capture = (
+				status: 'SUCCESS' | 'ERROR',
+				payload?: unknown,
+				errorCode?: string,
+			) =>
+				captureAiUsageAttempt({
+					sql,
+					provider: providerConfig.provider,
+					model: providerConfig.dailyModel,
+					operation: 'MERCHANT_MAPPING',
+					itemCount: chunk.length,
+					startedAtMs,
+					status,
+					httpStatus: response.status,
+					payload,
+					errorCode,
+					generationId,
+				});
+
+			if (!response.ok) {
+				await capture('ERROR', undefined, `HTTP_${response.status}`);
+				outcome.failed = true;
+				console.warn('MERCHANT_TRIAGE_HTTP_ERROR', { status: response.status });
+				continue;
+			}
+
+			const payload = (await response.json()) as MerchantModelPayload;
+			const content = payload.choices?.[0]?.message?.content;
+			if (!content) {
+				await capture('ERROR', payload, 'EMPTY_RESPONSE');
+				outcome.failed = true;
+				continue;
+			}
+			const cleaned = content
+				.replace(/^```(?:json)?\s*/i, '')
+				.replace(/\s*```\s*$/, '')
+				.trim();
+			const parsed = JSON.parse(cleaned) as { assessments?: unknown };
+			if (!Array.isArray(parsed.assessments)) {
+				await capture('ERROR', payload, 'MISSING_ASSESSMENTS');
+				outcome.failed = true;
+				continue;
+			}
+			await capture('SUCCESS', payload);
+
+			for (const entry of parsed.assessments) {
+				if (typeof entry !== 'object' || entry === null) continue;
+				const record = entry as Record<string, unknown>;
+				const key = typeof record.key === 'string' ? record.key.trim() : '';
+				// The model cannot invent a key into the skip list: only strings
+				// from this run's own candidate set are allowed to dodge a search.
+				const rawName = candidatesByKey.get(key);
+				if (rawName === undefined) continue;
+				if (typeof record.kind !== 'string' || record.kind.toUpperCase() !== 'PERSON') continue;
+				const confidence = typeof record.confidence === 'number' ? record.confidence : 0;
+				if (!Number.isFinite(confidence) || confidence < PERSON_TRIAGE_MIN_CONFIDENCE) continue;
+				if (hasBusinessNameMarker(rawName)) {
+					outcome.guard_override_count += 1;
+					continue;
+				}
+				outcome.person_keys.add(key);
+			}
+		} catch (error) {
+			outcome.failed = true;
+			console.warn('MERCHANT_TRIAGE_FAILED', {
+				message: error instanceof Error ? error.message : 'unknown',
+			});
+		} finally {
+			clearTimeout(timeoutId);
+		}
+	}
+
+	console.info('MERCHANT_TRIAGE', {
+		candidates: candidates.length,
+		persons: outcome.person_keys.size,
+		guardOverrides: outcome.guard_override_count,
+		calls: outcome.call_count,
+		failed: outcome.failed,
+	});
+	return outcome;
 }
 
 interface MappingCallOutcome {
@@ -733,6 +957,11 @@ export interface MerchantMappingPreviewResult {
 	ai_call_count: number;
 	proposal_count: number;
 	unsure_skipped_count: number;
+	/** Candidates triage kept away from Tavily as private individuals. */
+	person_skipped_count: number;
+	person_triage_call_count: number;
+	/** The raw names triage judged to be people, for eyeballing the calls. */
+	person_skipped_names: string[];
 	/** Candidates the model answered on but returned no usable mapping for. */
 	unanswered_keys: string[];
 	/**
@@ -876,6 +1105,9 @@ export async function previewMerchantMappings(
 		ai_call_count: 0,
 		proposal_count: 0,
 		unsure_skipped_count: 0,
+		person_skipped_count: 0,
+		person_triage_call_count: 0,
+		person_skipped_names: [],
 		unanswered_keys: [],
 		searched: [],
 		proposals: [],
@@ -912,9 +1144,17 @@ export async function previewMerchantMappings(
 		return result;
 	}
 
-	const webSearch = await searchMerchantWebContext(env, candidates);
+	const triage = await triagePersonTransfers(sql, env, apiKey, candidates);
+	result.person_skipped_count = triage.person_keys.size;
+	result.person_triage_call_count = triage.call_count;
+	result.person_skipped_names = candidates
+		.filter(candidate => triage.person_keys.has(candidate.key))
+		.map(candidate => candidate.name);
+	const searchTargets = candidates.filter(candidate => !triage.person_keys.has(candidate.key));
+
+	const webSearch = await searchMerchantWebContext(env, searchTargets);
 	result.web_search_count = webSearch.searches_performed;
-	result.searched = candidates.map(candidate => ({
+	result.searched = searchTargets.map(candidate => ({
 		search_key: candidate.key,
 		raw_name: candidate.name,
 		web_context: webSearch.context.get(candidate.key) ?? null,
@@ -962,7 +1202,9 @@ export async function previewMerchantMappings(
 
 	await incrementUsageCounters(sql, {
 		tavily_searches: result.web_search_count,
-		merchant_ai_calls: result.ai_call_count,
+		merchant_ai_calls: result.ai_call_count + result.person_triage_call_count,
+		person_searches_skipped: result.person_skipped_count,
+		person_triage_calls: result.person_triage_call_count,
 		...creditCounters(webSearch.credits_by_key),
 	});
 
@@ -1001,7 +1243,14 @@ export async function runMerchantMappingJob(
 			return result;
 		}
 
-		const webSearch = await searchMerchantWebContext(env, candidates);
+		// Sort people out of the backlog first — they are mapped like everyone
+		// else, they just never reach Tavily.
+		const triage = await triagePersonTransfers(sql, env, apiKey, candidates);
+		result.person_skipped_count = triage.person_keys.size;
+		result.person_triage_call_count = triage.call_count;
+		const searchTargets = candidates.filter(candidate => !triage.person_keys.has(candidate.key));
+
+		const webSearch = await searchMerchantWebContext(env, searchTargets);
 		result.web_search_count = webSearch.searches_performed;
 		creditsByKey = webSearch.credits_by_key;
 		const enriched = candidates.map(candidate => {
@@ -1050,9 +1299,12 @@ export async function runMerchantMappingJob(
 		tavily_searches: result.web_search_count,
 		merchant_ai_calls:
 			Math.ceil(result.candidate_count / MAPPING_AI_CHUNK_SIZE) +
+			result.person_triage_call_count +
 			(backfill.candidateCount > 0 ? 1 : 0),
 		merchants_mapped: result.alias_created_count,
 		merchants_skipped_unsure: result.unsure_skipped_count,
+		person_searches_skipped: result.person_skipped_count,
+		person_triage_calls: result.person_triage_call_count,
 		...creditCounters(creditsByKey),
 	});
 

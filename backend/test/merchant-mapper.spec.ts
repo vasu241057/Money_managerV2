@@ -53,6 +53,53 @@ function modelResponse(merchants: unknown): Response {
 	);
 }
 
+function triageResponse(personKeys: string[], confidence = 0.95): Response {
+	return new Response(
+		JSON.stringify({
+			choices: [{
+				message: {
+					content: JSON.stringify({
+						assessments: personKeys.map(key => ({ key, kind: 'PERSON', confidence })),
+					}),
+				},
+			}],
+		}),
+		{ status: 200, headers: { 'content-type': 'application/json' } },
+	);
+}
+
+function emptyTavilyResponse(): Response {
+	return new Response(JSON.stringify({ results: [] }), {
+		status: 200,
+		headers: { 'content-type': 'application/json' },
+	});
+}
+
+/**
+ * The provider probe, the person triage call and the mapping call all POST to
+ * the same URL, so the stub tells them apart by what the request body asks for.
+ * Every call gets its OWN Response: a body can only be read once, so sharing a
+ * single instance silently starves whichever reader comes second.
+ */
+function stubModelFetch(options: {
+	merchants?: unknown;
+	mappingResponse?: () => Response;
+	/** Candidate keys triage should report as private individuals. */
+	persons?: string[];
+	tavily?: () => Response;
+} = {}) {
+	const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+		if (String(url).includes('tavily')) return (options.tavily ?? emptyTavilyResponse)();
+		const body = typeof init?.body === 'string' ? init.body : '';
+		if (body.includes('assessments')) return triageResponse(options.persons ?? []);
+		return options.mappingResponse
+			? options.mappingResponse()
+			: modelResponse(options.merchants ?? []);
+	});
+	vi.stubGlobal('fetch', fetchMock);
+	return fetchMock;
+}
+
 const JOB = {
 	job_type: 'MERCHANT_MAPPING',
 	triggered_at: '2026-07-07T21:30:00.000Z',
@@ -137,21 +184,18 @@ describe('merchant-mapper worker', () => {
 		});
 		getSqlClientMock.mockReturnValue(sql);
 
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				modelResponse([
-					{
-						key: 'FSNECOMMERCEVENTURES',
-						canonical_name: 'Nykaa',
-						type: 'MERCHANT',
-						category: 'Shopping',
-					},
-					// Injection attempt: unknown key, must be dropped.
-					{ key: 'EVILKEY', canonical_name: 'Evil Corp', type: 'MERCHANT', category: 'Shopping' },
-				]),
-			),
-		);
+		stubModelFetch({
+			merchants: [
+				{
+					key: 'FSNECOMMERCEVENTURES',
+					canonical_name: 'Nykaa',
+					type: 'MERCHANT',
+					category: 'Shopping',
+				},
+				// Injection attempt: unknown key, must be dropped.
+				{ key: 'EVILKEY', canonical_name: 'Evil Corp', type: 'MERCHANT', category: 'Shopping' },
+			],
+		});
 
 		const result = await runMerchantMappingJob(JOB, createEnv());
 
@@ -212,17 +256,14 @@ describe('merchant-mapper worker', () => {
 		});
 		getSqlClientMock.mockReturnValue(sql);
 
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				modelResponse([
-					// Category not in the offered enum → dropped to null.
-					{ key: 'SOMESHOP', canonical_name: 'Some Shop', type: 'MERCHANT', category: 'Crypto' },
-					// Aggregators never get a default category, even if the model sends one.
-					{ key: 'RAZORPAYSOMETHING', canonical_name: 'Razorpay', type: 'AGGREGATOR', category: 'Shopping' },
-				]),
-			),
-		);
+		stubModelFetch({
+			merchants: [
+				// Category not in the offered enum → dropped to null.
+				{ key: 'SOMESHOP', canonical_name: 'Some Shop', type: 'MERCHANT', category: 'Crypto' },
+				// Aggregators never get a default category, even if the model sends one.
+				{ key: 'RAZORPAYSOMETHING', canonical_name: 'Razorpay', type: 'AGGREGATOR', category: 'Shopping' },
+			],
+		});
 
 		const result = await runMerchantMappingJob(JOB, createEnv());
 
@@ -255,14 +296,11 @@ describe('merchant-mapper worker', () => {
 		});
 		getSqlClientMock.mockReturnValue(sql);
 
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				modelResponse([
-					{ key: OLD_MERCHANT_ID, canonical_name: 'Zepto', type: 'MERCHANT', category: 'Groceries' },
-				]),
-			),
-		);
+		stubModelFetch({
+			merchants: [
+				{ key: OLD_MERCHANT_ID, canonical_name: 'Zepto', type: 'MERCHANT', category: 'Groceries' },
+			],
+		});
 
 		const result = await runMerchantMappingJob(JOB, createEnv());
 
@@ -289,15 +327,12 @@ describe('merchant-mapper worker', () => {
 		});
 		getSqlClientMock.mockReturnValue(sql);
 
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				new Response(
-					JSON.stringify({ choices: [{ message: { content: 'not json at all {' } }] }),
-					{ status: 200, headers: { 'content-type': 'application/json' } },
-				),
+		stubModelFetch({
+			mappingResponse: () => new Response(
+				JSON.stringify({ choices: [{ message: { content: 'not json at all {' } }] }),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
 			),
-		);
+		});
 
 		const result = await runMerchantMappingJob(JOB, createEnv());
 
@@ -349,15 +384,12 @@ describe('sure-gate and web context', () => {
 		});
 		getSqlClientMock.mockReturnValue(sql);
 
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				modelResponse([
-					{ key: 'SURESHOP', canonical_name: 'Nykaa', type: 'MERCHANT', category: 'Shopping', sure: true },
-					{ key: 'MYSTERYCO', canonical_name: 'Mystery Brand Guess', type: 'MERCHANT', category: 'Shopping', sure: false },
-				]),
-			),
-		);
+		stubModelFetch({
+			merchants: [
+				{ key: 'SURESHOP', canonical_name: 'Nykaa', type: 'MERCHANT', category: 'Shopping', sure: true },
+				{ key: 'MYSTERYCO', canonical_name: 'Mystery Brand Guess', type: 'MERCHANT', category: 'Shopping', sure: false },
+			],
+		});
 
 		const result = await runMerchantMappingJob(JOB, createEnv());
 
@@ -607,6 +639,127 @@ describe('merchant mapping preview (dry run)', () => {
 		expect(candidateQuery).toContain('from public.financial_events as fe');
 		expect(candidateValues[0]).toBe(false);
 		expect(candidateValues[4]).toBe(false);
+	});
+
+	it('keeps confident person transfers away from Tavily but still maps them', async () => {
+		const sql = createSqlMock((query) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('from public.financial_events as fe')) {
+				return [
+					{ search_key: 'AJAYKUMAR', counterparty_raw: 'AJAY KUMAR' },
+					{ search_key: 'BUNDLTECHNOLOGIES', counterparty_raw: 'BUNDL TECHNOLOGIES' },
+				];
+			}
+			return [];
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const fetchMock = stubModelFetch({
+			persons: ['AJAYKUMAR'],
+			merchants: [
+				{ key: 'AJAYKUMAR', canonical_name: 'Ajay Kumar', type: 'P2P', category: null },
+				{ key: 'BUNDLTECHNOLOGIES', canonical_name: 'Swiggy', type: 'MERCHANT', category: 'Shopping' },
+			],
+			tavily: () => new Response(
+				JSON.stringify({ results: [{ content: 'Bundl Technologies operates Swiggy.' }] }),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		});
+
+		const result = await previewMerchantMappings(createEnv({ TAVILY_API_KEY: 'tvly-key' }));
+
+		expect(result.person_skipped_count).toBe(1);
+		expect(result.person_skipped_names).toEqual(['AJAY KUMAR']);
+		// One credit spent, on the business — not two.
+		expect(result.web_search_count).toBe(1);
+		const searchedNames = fetchMock.mock.calls
+			.filter(([url]) => String(url).includes('tavily'))
+			.map(([, init]) => String((init as RequestInit).body));
+		expect(searchedNames).toHaveLength(1);
+		expect(searchedNames[0]).toContain('BUNDL TECHNOLOGIES');
+		expect(searchedNames[0]).not.toContain('AJAY KUMAR');
+		// The person is still mapped: skipping the search is not skipping the work.
+		expect(result.proposals.map(p => p.canonical_name).sort()).toEqual(['Ajay Kumar', 'Swiggy']);
+	});
+
+	it('overrides a confident person verdict when the payee carries a business marker', async () => {
+		const sql = createSqlMock((query) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('from public.financial_events as fe')) {
+				return [{ search_key: 'AJAYSINGHAM', counterparty_raw: 'Ajay Singham Private Limited' }];
+			}
+			return [];
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		// The model is fooled by the personal name and says PERSON with high
+		// confidence; the legal suffix must send it back to be researched.
+		stubModelFetch({
+			persons: ['AJAYSINGHAM'],
+			merchants: [
+				{ key: 'AJAYSINGHAM', canonical_name: 'Ajay Singham', type: 'MERCHANT', category: 'Shopping' },
+			],
+		});
+
+		const result = await previewMerchantMappings(createEnv({ TAVILY_API_KEY: 'tvly-key' }));
+
+		expect(result.person_skipped_count).toBe(0);
+		expect(result.web_search_count).toBe(1);
+	});
+
+	it('searches everything when triage is not confident enough', async () => {
+		const sql = createSqlMock((query) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('from public.financial_events as fe')) {
+				return [{ search_key: 'MAYBEPERSON', counterparty_raw: 'S KUMAR' }];
+			}
+			return [];
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+			if (String(url).includes('tavily')) return emptyTavilyResponse();
+			const body = typeof init?.body === 'string' ? init.body : '';
+			// Below the 0.9 bar: a maybe is worth a credit, not a guess.
+			if (body.includes('assessments')) return triageResponse(['MAYBEPERSON'], 0.7);
+			return modelResponse([]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await previewMerchantMappings(createEnv({ TAVILY_API_KEY: 'tvly-key' }));
+
+		expect(result.person_skipped_count).toBe(0);
+		expect(result.web_search_count).toBe(1);
+	});
+
+	it('searches everything when the triage call itself fails', async () => {
+		const sql = createSqlMock((query) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('from public.financial_events as fe')) {
+				return [{ search_key: 'AJAYKUMAR', counterparty_raw: 'AJAY KUMAR' }];
+			}
+			return [];
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+			if (String(url).includes('tavily')) return emptyTavilyResponse();
+			const body = typeof init?.body === 'string' ? init.body : '';
+			if (body.includes('assessments')) return new Response('nope', { status: 500 });
+			return modelResponse([]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await previewMerchantMappings(createEnv({ TAVILY_API_KEY: 'tvly-key' }));
+
+		// Fail open: an optimisation must never cost the run a merchant.
+		expect(result.person_skipped_count).toBe(0);
+		expect(result.web_search_count).toBe(1);
+		expect(result.skipped_reason).not.toBe('invalid model response');
 	});
 
 	it('skips without an AI key and never searches', async () => {
