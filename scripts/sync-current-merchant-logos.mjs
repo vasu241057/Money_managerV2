@@ -382,7 +382,12 @@ function updateManifest(successfulRows, failures) {
   const rowsByName = new Map(
     manifest.rows.map((row) => [row.normalized_name, row]),
   );
-  for (const row of successfulRows) rowsByName.set(row.normalized_name, row);
+  for (const row of successfulRows) {
+    rowsByName.set(row.normalized_name, {
+      ...rowsByName.get(row.normalized_name),
+      ...row,
+    });
+  }
   const rows = [...rowsByName.values()];
   manifest.generated_at = new Date().toISOString();
   manifest.existing_priority_count = rows.filter(

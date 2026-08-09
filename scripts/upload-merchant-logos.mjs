@@ -1,10 +1,24 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import postgres from 'postgres';
 
-const manifestPath = resolve(process.argv[2] ?? 'supabase/merchant-logo-catalog.json');
+const cliArgs = process.argv.slice(2);
+const positionalArgs = [];
+let batchId = null;
+for (let index = 0; index < cliArgs.length; index += 1) {
+  if (cliArgs[index] === '--batch') {
+    batchId = cliArgs[index + 1] ?? null;
+    if (!batchId) throw new Error('--batch requires a batch identifier');
+    index += 1;
+  } else {
+    positionalArgs.push(cliArgs[index]);
+  }
+}
+
+const manifestPath = resolve(positionalArgs[0] ?? 'supabase/merchant-logo-catalog.json');
 const assetDirectory = resolve(
-  process.argv[3] ?? '/tmp/money-manager-merchant-logo-assets',
+  positionalArgs[1] ?? '/tmp/money-manager-merchant-logo-assets',
 );
 const storageAdminKey = process.env.SUPABASE_SECRET_KEY
   ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -30,6 +44,12 @@ if (!projectUrl) {
 }
 
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+const rows = batchId
+  ? manifest.rows.filter((row) => row.catalog_batch === batchId)
+  : manifest.rows;
+if (batchId && rows.length === 0) {
+  throw new Error(`No merchant logo rows found for batch ${batchId}`);
+}
 const sql = postgres(poolerUrl, { max: 1, prepare: false });
 let uploaded = 0;
 const storageHeaders = {
@@ -43,8 +63,14 @@ if (!storageAdminKey.startsWith('sb_secret_')) {
 }
 
 try {
-  for (const row of manifest.rows) {
+  for (const row of rows) {
     const bytes = readFileSync(join(assetDirectory, row.object_path));
+    const contentSha256 = createHash('sha256').update(bytes).digest('hex');
+    if (contentSha256 !== row.content_sha256) {
+      throw new Error(
+        `Asset hash mismatch for ${row.canonical_name}: expected ${row.content_sha256}, got ${contentSha256}`,
+      );
+    }
     const encodedPath = row.object_path.split('/').map(encodeURIComponent).join('/');
     const uploadUrl = `${projectUrl}/storage/v1/object/merchant-logos/${encodedPath}`;
     const response = await fetch(uploadUrl, {
@@ -82,4 +108,9 @@ try {
   await sql.end();
 }
 
-console.log(JSON.stringify({ uploaded, bucket: 'merchant-logos', projectUrl }, null, 2));
+console.log(JSON.stringify({
+  uploaded,
+  batch: batchId,
+  bucket: 'merchant-logos',
+  projectUrl,
+}, null, 2));
