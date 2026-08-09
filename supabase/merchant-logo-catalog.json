@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-08-09T10:30:21.412Z",
+  "generated_at": "2026-08-09T11:50:23.849Z",
   "simple_icons_version": "16.27.0",
   "existing_priority_count": 65,
-  "additional_count": 600,
+  "additional_count": 700,
   "rows": [
     {
       "canonical_name": "Airbnb",
@@ -16707,6 +16707,4084 @@
         "resolved_page_domain": "www.woodlandworldwide.com",
         "asset_domain": "assets.woodland.social"
       }
+    },
+    {
+      "canonical_name": "Central Bank of India",
+      "normalized_name": "CENTRALBANKOFINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 1,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Central Bank of India",
+        "Central Bank",
+        "Cent Mobile"
+      ],
+      "website_url": "https://www.centralbankofindia.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/centmobile/id1053790727?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/16/90/e0/1690e03a-e034-0270-c827-e0bd60946964/AppIcon-1x_U007emarketing-0-6-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/central-bank-of-india-13dd3dda32e5.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "13dd3dda32e5c216114f8298cbd81dc44469462c22e5654d76bd3ded0dc74539",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1053790727,
+        "track_name": "CentMobile",
+        "seller_name": "CENTRAL BANK OF INDIA",
+        "artist_name": "Central Bank of India",
+        "bundle_id": "com.centralbank.centmobile",
+        "seller_url": null,
+        "official_domain": "www.centralbankofindia.co.in",
+        "expected_seller_tokens": [
+          "CENTRAL BANK"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Bank of Maharashtra",
+      "normalized_name": "BANKOFMAHARASHTRA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 2,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Bank of Maharashtra",
+        "BOM",
+        "Maha Mobile"
+      ],
+      "website_url": "https://bankofmaharashtra.in/",
+      "source_page_url": "https://apps.apple.com/in/app/zen-lyfe-bank-of-maharashtra/id6745421027?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/39/7e/30/397e308a-139a-0655-6cc7-ff869e74bc39/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/bank-of-maharashtra-f9eb4b85f314.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "f9eb4b85f3146a6889e04380217f86052ab2f38c8468d2c4bb180cecc220f134",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 6745421027,
+        "track_name": "Zen Lyfe - Bank of Maharashtra",
+        "seller_name": "Bank of Maharashtra",
+        "artist_name": "Bank of Maharashtra",
+        "bundle_id": "com.bom.lifestylebanking",
+        "seller_url": "https://bankofmaharashtra.bank.in/",
+        "official_domain": "bankofmaharashtra.in",
+        "expected_seller_tokens": [
+          "BANK OF MAHARASHTRA"
+        ]
+      }
+    },
+    {
+      "canonical_name": "UCO Bank",
+      "normalized_name": "UCOBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 3,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "UCO Bank",
+        "UCO",
+        "UCO mBanking"
+      ],
+      "website_url": "https://www.ucobank.com/",
+      "source_page_url": "https://apps.apple.com/in/app/uco-mpassbook/id1072308150?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/96/0b/ca/960bca19-5188-8f27-f93c-9e706d5fc87e/AppIcon-0-0-1x_U007emarketing-0-10-0-0-85-220.jpeg/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/uco-bank-c61d5111d321.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "c61d5111d321e026f8e05e55d9c12ff4152765a50dc97541f0d1ebd86eacdc43",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1072308150,
+        "track_name": "UCO mPassbook",
+        "seller_name": "UCO BANK",
+        "artist_name": "UCO BANK",
+        "bundle_id": "com.lcode.ucompbk",
+        "seller_url": "https://www.ucobank.com/",
+        "official_domain": "www.ucobank.com",
+        "expected_seller_tokens": [
+          "UCO BANK"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Punjab & Sind Bank",
+      "normalized_name": "PUNJABSINDBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 4,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Punjab & Sind Bank",
+        "PSB Bank",
+        "PSB UNiC"
+      ],
+      "website_url": "https://punjabandsindbank.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/psb-unic/id1597657276?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/6d/33/73/6d33737d-77b2-ee49-6951-ef08333adc7b/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/punjab-sind-bank-d40eb0733f62.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "d40eb0733f62289ecbe6b1376c840aa6be29161ddc099937d08a5b78655845d7",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1597657276,
+        "track_name": "PSB UnIC",
+        "seller_name": "PUNJAB AND SIND BANK",
+        "artist_name": "PUNJAB AND SIND BANK",
+        "bundle_id": "com.psb.omniretail",
+        "seller_url": "https://psbunic.punjabandsind.bank.in/PSB/#/nliLanding",
+        "official_domain": "punjabandsindbank.co.in",
+        "expected_seller_tokens": [
+          "PUNJAB AND SIND"
+        ]
+      }
+    },
+    {
+      "canonical_name": "India Post Payments Bank",
+      "normalized_name": "INDIAPOSTPAYMENTSBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 5,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "India Post Payments Bank",
+        "IPPB",
+        "Post Office Payments Bank"
+      ],
+      "website_url": "https://www.ippbonline.com/",
+      "source_page_url": "https://apps.apple.com/in/app/ippb-mobile-banking/id1447211192?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/e1/23/0a/e1230ac3-7bd5-4aa5-b200-a08a2ec559d9/AppIcon-0-0-1x_U007emarketing-0-10-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/india-post-payments-bank-ddee2f04f381.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "ddee2f04f381dc911efd8492e75f94afbdd25961d4077ac6b76af0c3f1650636",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1447211192,
+        "track_name": "IPPB Mobile Banking",
+        "seller_name": "India Post Payments Bank Limited",
+        "artist_name": "India post payments bank",
+        "bundle_id": "com.IPPB.MBUAT",
+        "seller_url": null,
+        "official_domain": "www.ippbonline.com",
+        "expected_seller_tokens": [
+          "INDIA POST"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Jana Small Finance Bank",
+      "normalized_name": "JANASMALLFINANCEBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 8,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Jana Small Finance Bank",
+        "Jana SFB",
+        "Jana Bank"
+      ],
+      "website_url": "https://www.janabank.com/",
+      "source_page_url": "https://apps.apple.com/in/app/jana-bank-mobile-banking/id1404229430?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/c9/57/13/c9571306-1294-3871-8f4a-db77c123bc1e/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/jana-small-finance-bank-c39e9a2726ab.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "c39e9a2726ab13b2e3a2cc9da582439959fee3326c04aec59c277a106a384cc0",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1404229430,
+        "track_name": "Jana Bank Mobile Banking",
+        "seller_name": "JANA SMALL FINANCE BANK LIMITED",
+        "artist_name": "JANA SMALL FINANCE BANK LIMITED",
+        "bundle_id": "com.janabank.mtc",
+        "seller_url": "https://www.jana.bank.in",
+        "official_domain": "www.janabank.com",
+        "expected_seller_tokens": [
+          "JANA"
+        ]
+      }
+    },
+    {
+      "canonical_name": "ESAF Small Finance Bank",
+      "normalized_name": "ESAFSMALLFINANCEBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 9,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "ESAF Small Finance Bank",
+        "ESAF SFB",
+        "ESAF Bank"
+      ],
+      "website_url": "https://www.esaf.bank.in/",
+      "source_page_url": "https://apps.apple.com/in/app/esaf-bank/id1223831586?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/09/75/5c/09755c7d-842b-42ee-75ba-c233af9d84fc/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/esaf-small-finance-bank-58d319c0c06b.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "58d319c0c06b5b5b331e6fe05cbc7056c40f82994711511a3686a40c81cd5b20",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1223831586,
+        "track_name": "ESAF Bank",
+        "seller_name": "ESAF SMALL FINANCE BANK LIMITED",
+        "artist_name": "ESAF Small Finance Bank Limited",
+        "bundle_id": "com.esaf.mobile.banking",
+        "seller_url": null,
+        "official_domain": "www.esaf.bank.in",
+        "expected_seller_tokens": [
+          "ESAF"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Unity Small Finance Bank",
+      "normalized_name": "UNITYSMALLFINANCEBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 11,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Unity Small Finance Bank",
+        "Unity SFB",
+        "Unity Bank"
+      ],
+      "website_url": "https://unitybank.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/unity-bank/id1001372304?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/1d/bb/09/1dbb098a-fb18-1549-4223-57204144d963/appicon-1x_U007emarketing-0-8-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/unity-small-finance-bank-780cc4351c0d.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "780cc4351c0de56c470a9b3ef845c424d02263f76c0e84e60c591aa4f4de7651",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1001372304,
+        "track_name": "Unity Bank",
+        "seller_name": "Unity Bank Ltd",
+        "artist_name": "Unity Bank Ltd",
+        "bundle_id": "au.com.cuscal.redi2pay.mmp001",
+        "seller_url": "https://www.unitybank.com.au/help/digital-banking/banking-app/",
+        "official_domain": "unitybank.co.in",
+        "expected_seller_tokens": [
+          "UNITY"
+        ]
+      }
+    },
+    {
+      "canonical_name": "DCB Bank",
+      "normalized_name": "DCBBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 12,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "DCB Bank",
+        "DCB",
+        "DCB Mobile"
+      ],
+      "website_url": "https://www.dcbbank.com/",
+      "source_page_url": "https://apps.apple.com/in/app/dcb-bank-mobile-banking/id853661430?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b9/84/c9/b984c9f1-592d-99d5-615a-025edcef373b/AppIcon-0-0-1x_U007emarketing-0-9-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/dcb-bank-5870ae8b1f7d.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "5870ae8b1f7de77311274a744d9e229f6db8249f167b5a59e1f3450f6ab9967d",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 853661430,
+        "track_name": "DCB Bank Mobile Banking",
+        "seller_name": "DCB Bank Limited",
+        "artist_name": "DCB Bank Limited",
+        "bundle_id": "com.dcbbank.mobileBanking",
+        "seller_url": "https://www.dcb.bank.in",
+        "official_domain": "www.dcbbank.com",
+        "expected_seller_tokens": [
+          "DCB BANK"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Tamilnad Mercantile Bank",
+      "normalized_name": "TAMILNADMERCANTILEBANK",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 14,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Tamilnad Mercantile Bank",
+        "TMB",
+        "TMB mConnect"
+      ],
+      "website_url": "https://www.tmb.in/",
+      "source_page_url": "https://apps.apple.com/in/app/tmb-mbank/id1585648913?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/31/1f/c5/311fc5c3-d813-2bf4-a17c-9e998a023bcc/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.jpeg/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/tamilnad-mercantile-bank-59f6d14aaa81.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "59f6d14aaa81110d9c0bd6cb2c5601868f1107934c02b7a4464e43d898306c81",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1585648913,
+        "track_name": "TMB MBank",
+        "seller_name": "Tamilnad Mercantile Bank Ltd",
+        "artist_name": "Tamilnad Mercantile Bank",
+        "bundle_id": "com.tmb.mbank",
+        "seller_url": "https://www.tmb.in/mobile-banking.aspx",
+        "official_domain": "www.tmb.in",
+        "expected_seller_tokens": [
+          "TAMILNAD MERCANTILE"
+        ]
+      }
+    },
+    {
+      "canonical_name": "OneCard",
+      "normalized_name": "ONECARD",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 15,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "OneCard",
+        "One Card",
+        "FPL Technologies"
+      ],
+      "website_url": "https://www.getonecard.app/",
+      "source_page_url": "https://apps.apple.com/in/app/onecard-india/id1513897615?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/fc/87/99/fc8799a6-5555-f6b9-ce2c-3a7fcbc90485/AppIcon-0-0-1x_U007emarketing-0-6-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/onecard-2aa2b419f918.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "2aa2b419f918d51943e04794406357ed2f918097f0c6dd769b8a1ce0f059b26b",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1513897615,
+        "track_name": "OneCard (India)",
+        "seller_name": "FPL Technologies Private Limited",
+        "artist_name": "Fplabs",
+        "bundle_id": "com.creditcard.onecard",
+        "seller_url": "https://www.fplabs.tech/",
+        "official_domain": "www.getonecard.app",
+        "expected_seller_tokens": [
+          "ONECARD",
+          "FPL"
+        ]
+      }
+    },
+    {
+      "canonical_name": "LazyPay",
+      "normalized_name": "LAZYPAY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 16,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "LazyPay",
+        "Lazy Pay",
+        "PayU LazyPay"
+      ],
+      "website_url": "https://www.lazypay.in/",
+      "source_page_url": "https://apps.apple.com/in/app/lazypay-loan-app-pay-later/id1419990272?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/85/eb/3a/85eb3ac5-cdc6-b9c0-396a-c4a5ab471c17/AppIcon-0-0-1x_U007emarketing-0-7-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/lazypay-c6021260fc0a.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "c6021260fc0a779c0682c75e43a7f48bdae752d3752f9ae0013a3a6393e2c206",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1419990272,
+        "track_name": "LazyPay: Loan App & Pay Later",
+        "seller_name": "PayU Payments Private Limited",
+        "artist_name": "PayU Payments Private Limited",
+        "bundle_id": "com.payu.citrusapp",
+        "seller_url": "https://youtu.be/LpQDbhzAJrI",
+        "official_domain": "www.lazypay.in",
+        "expected_seller_tokens": [
+          "LAZYPAY",
+          "PAYU"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Fibe",
+      "normalized_name": "FIBE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 17,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Fibe",
+        "EarlySalary",
+        "Fibe Loans"
+      ],
+      "website_url": "https://www.fibe.in/",
+      "source_page_url": "https://www.fibe.in/",
+      "source_url": "https://www.fibe.in/favicon/apple-touch-icon.png?v=20260512",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/fibe-e34cd62040f6.png",
+      "content_type": "image/png",
+      "content_sha256": "e34cd62040f600a85442054ab81dd34d4b82d258331928a7d070e125ff18b4f0",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.fibe.in",
+        "resolved_page_domain": "www.fibe.in",
+        "asset_domain": "www.fibe.in"
+      }
+    },
+    {
+      "canonical_name": "CASHe",
+      "normalized_name": "CASHE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 18,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "CASHe",
+        "Cashe Loans"
+      ],
+      "website_url": "https://www.cashe.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/cashe-online-instant-loan-app/id1261854922?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b4/3e/df/b43edfab-d8db-ffec-f670-cf52ab1131ee/AppIcon-0-0-1x_U007emarketing-0-6-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/cashe-cf6e79ce3ad6.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "cf6e79ce3ad63c609974b99e7544fcc2b2232930fb01eced15bca02f96ccba79",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1261854922,
+        "track_name": "CASHe: Online Instant Loan App",
+        "seller_name": "TSLC PTE. LTD.",
+        "artist_name": "TSLC Pvt Ltd",
+        "bundle_id": "co.tslc.casheapp.ios",
+        "seller_url": "http://www.cashe.co.in",
+        "official_domain": "www.cashe.co.in",
+        "expected_seller_tokens": [
+          "CASHE"
+        ]
+      }
+    },
+    {
+      "canonical_name": "MoneyTap",
+      "normalized_name": "MONEYTAP",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 19,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "MoneyTap",
+        "Money Tap",
+        "MoneyTap Credit Line"
+      ],
+      "website_url": "https://www.moneytap.com/",
+      "source_page_url": "https://apps.apple.com/in/app/moneytap-is-now-freo-credit/id1374771286?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/87/40/b8/8740b8a7-15a0-9c6a-c3d9-d3cfde238459/AppIcon-mtProduction-0-0-1x_U007emarketing-0-6-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/moneytap-f5b6a15354e8.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "f5b6a15354e8719006d1dbf46051e9c95c4c47f458a1ae1cd5cf3c291414c2a5",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1374771286,
+        "track_name": "MoneyTap is now Freo Credit",
+        "seller_name": "MWYN TECH PRIVATE LIMITED",
+        "artist_name": "MWYN Tech Pvt Ltd",
+        "bundle_id": "com.mycash.moneytap",
+        "seller_url": "https://freo.money/",
+        "official_domain": "www.moneytap.com",
+        "expected_seller_tokens": [
+          "MONEYTAP"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Lendingkart",
+      "normalized_name": "LENDINGKART",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 20,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Lendingkart",
+        "Lending Kart"
+      ],
+      "website_url": "https://www.lendingkart.com/",
+      "source_page_url": "https://www.lendingkart.com/",
+      "source_url": "https://media.lendingkart.com/wp-content/uploads/2021/03/cropped-Group-13-180x180.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/lendingkart-e9d35f255102.png",
+      "content_type": "image/png",
+      "content_sha256": "e9d35f25510277581e218e9cf611be6a3eec2ed4123275b13207b6a955cc725e",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.lendingkart.com",
+        "resolved_page_domain": "www.lendingkart.com",
+        "asset_domain": "media.lendingkart.com"
+      }
+    },
+    {
+      "canonical_name": "Indifi",
+      "normalized_name": "INDIFI",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 21,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Indifi",
+        "Indifi Technologies"
+      ],
+      "website_url": "https://www.indifi.com/",
+      "source_page_url": "https://www.indifi.com/",
+      "source_url": "https://www.indifi.com/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/indifi-fdeb564a6020.png",
+      "content_type": "image/png",
+      "content_sha256": "fdeb564a6020b633e4c7e83b4d54734a92a696669809b9d43a821db676624cfd",
+      "asset_dimensions": {
+        "width": 72,
+        "height": 72,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.indifi.com",
+        "resolved_page_domain": "www.indifi.com",
+        "asset_domain": "www.indifi.com"
+      }
+    },
+    {
+      "canonical_name": "Paytm Money",
+      "normalized_name": "PAYTMMONEY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 22,
+      "selection_reason": "Apple App Store India Finance chart, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://apps.apple.com/in/iphone/charts/6015"
+      ],
+      "aliases": [
+        "Paytm Money",
+        "PaytmMoney"
+      ],
+      "website_url": "https://www.paytmmoney.com/",
+      "source_page_url": "https://apps.apple.com/in/app/paytm-money-stocks-mf-ipo/id1344431352?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/44/88/06/44880639-7787-3b6f-a7a4-26f799d899e5/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/paytm-money-172d01b0d8d8.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "172d01b0d8d8203f1225479e28a3716e69cb8830a7930d3df77bee57c2c39703",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1344431352,
+        "track_name": "Paytm Money: Stocks, MF, IPO",
+        "seller_name": "PayTM Mobile Solutions Private Limited",
+        "artist_name": "Paytm Mobile Solutions",
+        "bundle_id": "com.one97.paytmmoney",
+        "seller_url": null,
+        "official_domain": "www.paytmmoney.com",
+        "expected_seller_tokens": [
+          "PAYTM"
+        ]
+      }
+    },
+    {
+      "canonical_name": "CAMS",
+      "normalized_name": "CAMS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 23,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "CAMS",
+        "Computer Age Management Services",
+        "myCAMS"
+      ],
+      "website_url": "https://www.camsonline.com/",
+      "source_page_url": "https://apps.apple.com/in/app/mycams-mutual-fund-app/id877565416?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/b3/f0/b1/b3f0b1f0-b18e-38a2-98cd-d921444bb85b/AppIcon-1x_U007ephone-0-1-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/cams-9bc6a0c72e75.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "9bc6a0c72e757818a95d2c713a2a9adc7c4c9eab48ae19fbf39475b51883fe6c",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 877565416,
+        "track_name": "myCAMS Mutual Fund App",
+        "seller_name": "COMPUTER AGE MANAGEMENT SERVICES PRIVATE LIMITED",
+        "artist_name": "Computer Age Management Services Private Limited.",
+        "bundle_id": "mycams",
+        "seller_url": null,
+        "official_domain": "www.camsonline.com",
+        "expected_seller_tokens": [
+          "CAMS",
+          "COMPUTER AGE"
+        ]
+      }
+    },
+    {
+      "canonical_name": "KFintech",
+      "normalized_name": "KFINTECH",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 24,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "KFintech",
+        "KFin Technologies",
+        "KFinKart"
+      ],
+      "website_url": "https://www.kfintech.com/",
+      "source_page_url": "https://apps.apple.com/in/app/kfinkart-investor-mutual-funds/id1421776822?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/04/ec/d3/04ecd35a-7335-4c96-9688-749360a2c009/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/kfintech-050a2493f315.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "050a2493f315908d397f61736ba21bec5e9e6eba235bcdd3a53c228770b22a07",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1421776822,
+        "track_name": "KFinKart-Investor Mutual Funds",
+        "seller_name": "KFIN TECHNOLOGIES LIMITED",
+        "artist_name": "KFIN TECHNOLOGIES LIMITED",
+        "bundle_id": "com.karvymfs.kFinkart",
+        "seller_url": "https://www.kfintech.com",
+        "official_domain": "www.kfintech.com",
+        "expected_seller_tokens": [
+          "KFIN"
+        ]
+      }
+    },
+    {
+      "canonical_name": "CDSL",
+      "normalized_name": "CDSL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 25,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "CDSL",
+        "Central Depository Services",
+        "CDSL Easi"
+      ],
+      "website_url": "https://www.cdslindia.com/",
+      "source_page_url": "https://apps.apple.com/in/app/cdsl-myeasi-app/id6737304195?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ca/4c/16/ca4c16ac-75fa-64a8-7bb3-37c16d34a19b/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/cdsl-3dbb0c1bfe0e.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "3dbb0c1bfe0e60c6af3b98da61afa6d48e6475ac7aff2c0af153eac75127287a",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 6737304195,
+        "track_name": "CDSL MyEasi App",
+        "seller_name": "Central Depository Services india limited",
+        "artist_name": "CDSL",
+        "bundle_id": "com.cdsl.myeasi",
+        "seller_url": "https://www.cdslindia.com/",
+        "official_domain": "www.cdslindia.com",
+        "expected_seller_tokens": [
+          "CDSL"
+        ]
+      }
+    },
+    {
+      "canonical_name": "NSDL",
+      "normalized_name": "NSDL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 26,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "NSDL",
+        "National Securities Depository",
+        "NSDL CAS"
+      ],
+      "website_url": "https://nsdl.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/nsdl-speede-app/id922834763?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/fb/21/76/fb217655-d0bd-833e-2701-48e4504370f8/AppIcon-1x_U007emarketing-0-8-0-0-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/nsdl-d26021250d90.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "d26021250d90d84ab636a8d2f754dd21a29609865624a0ec745919f1c34a3572",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 922834763,
+        "track_name": "NSDL Speede App",
+        "seller_name": "National Securities Depository Limited",
+        "artist_name": "National Securities Depository Limited",
+        "bundle_id": "com.msf.NSDL",
+        "seller_url": "https://nsdl.co.in",
+        "official_domain": "nsdl.co.in",
+        "expected_seller_tokens": [
+          "NSDL"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Sharekhan",
+      "normalized_name": "SHAREKHAN",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 27,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "Sharekhan",
+        "Share Khan"
+      ],
+      "website_url": "https://www.sharekhan.com/",
+      "source_page_url": "https://apps.apple.com/in/app/mirae-asset-sharekhan-app/id1213285821?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/e6/31/b9/e631b986-af5e-0fbe-993e-f8eb1a32cd3f/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/sharekhan-1e11c2079716.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "1e11c2079716a1fa1ad0946787c9705109064e3bb81eb85d213f66be3e056682",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1213285821,
+        "track_name": "Mirae Asset Sharekhan App",
+        "seller_name": "Sharekhan Limited",
+        "artist_name": "Sharekhan Limited",
+        "bundle_id": "com.sharekhan.iossharemobile",
+        "seller_url": "http://www.sharekhan.com/sharemobile/index.aspx",
+        "official_domain": "www.sharekhan.com",
+        "expected_seller_tokens": [
+          "SHAREKHAN"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Motilal Oswal",
+      "normalized_name": "MOTILALOSWAL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 28,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "Motilal Oswal",
+        "Motilal Oswal Securities",
+        "MO Investor"
+      ],
+      "website_url": "https://www.motilaloswal.com/",
+      "source_page_url": "https://apps.apple.com/in/app/motilal-oswal-mf-pms-and-aif/id6463774883?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/c8/a5/2d/c8a52dd9-bcde-e9ea-65fa-46dec95a86a2/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/motilal-oswal-a6dd4703aaab.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "a6dd4703aaab608d5585434715c6cbb344c7aa453af22bbc6c7e7f010b8b6eee",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 6463774883,
+        "track_name": "Motilal Oswal MF, PMS and AIF",
+        "seller_name": "Motilal Oswal Asset Management Company Limited",
+        "artist_name": "Motilal Oswal Asset Management Ltd",
+        "bundle_id": "com.moamc.mfinvestorapp",
+        "seller_url": "https://www.motilaloswalmf.com",
+        "official_domain": "www.motilaloswal.com",
+        "expected_seller_tokens": [
+          "MOTILAL OSWAL"
+        ]
+      }
+    },
+    {
+      "canonical_name": "ICICI Direct",
+      "normalized_name": "ICICIDIRECT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 29,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "ICICI Direct",
+        "ICICI Securities",
+        "ICICIDirect"
+      ],
+      "website_url": "https://www.icicidirect.com/",
+      "source_page_url": "https://apps.apple.com/in/app/icici-direct-stocks-f-o-mf-ipo/id1642076943?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/e1/65/85/e165855e-7321-fb4d-fa79-d8271ca00f0f/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/icici-direct-0a84f251481d.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "0a84f251481d6cb05038c68d3d00039ae60016d5792640c1b3ffa6fca3cab01a",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1642076943,
+        "track_name": "ICICI Direct-Stocks F&O MF IPO",
+        "seller_name": "ICICI SECURITIES LTD",
+        "artist_name": "ICICI Securities Ltd.",
+        "bundle_id": "com.icicidirect.idirectsuper",
+        "seller_url": null,
+        "official_domain": "www.icicidirect.com",
+        "expected_seller_tokens": [
+          "ICICI SECURITIES",
+          "ICICIDIRECT"
+        ]
+      }
+    },
+    {
+      "canonical_name": "HDFC Securities",
+      "normalized_name": "HDFCSECURITIES",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 30,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "HDFC Securities",
+        "HDFC Sec",
+        "HDFC Securities Limited"
+      ],
+      "website_url": "https://www.hdfcsec.com/",
+      "source_page_url": "https://apps.apple.com/in/app/hdfc-securities-investright/id1666228571?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/4e/a7/5c/4ea75cf1-3470-5ceb-b484-74f10b7adb99/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/hdfc-securities-6ffba0ff859f.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "6ffba0ff859f5e6d1d85fdee6397a22bf8716f31db5826ca70b7996a6e08e960",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1666228571,
+        "track_name": "HDFC Securities InvestRight",
+        "seller_name": "HDFC Securities Ltd",
+        "artist_name": "HDFC Securities Ltd",
+        "bundle_id": "com.hsl.investright",
+        "seller_url": null,
+        "official_domain": "www.hdfcsec.com",
+        "expected_seller_tokens": [
+          "HDFC SECURITIES"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Kotak Securities",
+      "normalized_name": "KOTAKSECURITIES",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 31,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "Kotak Securities",
+        "Kotak Sec",
+        "Kotak Neo"
+      ],
+      "website_url": "https://www.kotaksecurities.com/",
+      "source_page_url": "https://apps.apple.com/in/app/kotak-neo-stock-market-trading/id1553056779?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a3/58/c7/a358c742-c0ae-d80f-9c8b-3790ef2cb434/AppIcon-0-1x_U007emarketing-0-8-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/kotak-securities-f56b0d13c0f0.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "f56b0d13c0f07b01b12bbb6ac552bff659baef0cb3876056ff06de2286ea2db3",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1553056779,
+        "track_name": "Kotak Neo Stock Market Trading",
+        "seller_name": "Kotak Securities Limited",
+        "artist_name": "Kotak Securities Limited",
+        "bundle_id": "com.kotak.neo",
+        "seller_url": "https://www.kotakneo.com/",
+        "official_domain": "www.kotaksecurities.com",
+        "expected_seller_tokens": [
+          "KOTAK SECURITIES"
+        ]
+      }
+    },
+    {
+      "canonical_name": "5paisa",
+      "normalized_name": "5PAISA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 32,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "5paisa",
+        "5 Paisa",
+        "Five Paisa"
+      ],
+      "website_url": "https://www.5paisa.com/",
+      "source_page_url": "https://apps.apple.com/in/app/5paisa-share-market-mf-ipo/id1156366609?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/9c/47/72/9c4772b4-4dd1-b285-3559-8acf180c89e2/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/5paisa-764d42da3760.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "764d42da3760271dac4f9e5a18469a57876af94894001d8915ae440fb3862535",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1156366609,
+        "track_name": "5paisa: Share Market, MF, IPO",
+        "seller_name": "5paisa Capital Limited",
+        "artist_name": "5paisa Capital Limited",
+        "bundle_id": "com.5paisa.trade",
+        "seller_url": "https://www.5paisa.com",
+        "official_domain": "www.5paisa.com",
+        "expected_seller_tokens": [
+          "5PAISA"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Edelweiss",
+      "normalized_name": "EDELWEISS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 33,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "Edelweiss",
+        "Edelweiss Broking",
+        "Nuvama Wealth"
+      ],
+      "website_url": "https://www.edelweiss.in/",
+      "source_page_url": "https://apps.apple.com/in/app/edelweiss-retail-finance/id1132502143?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple113/v4/ec/34/88/ec34881a-3730-455f-0847-120f28473023/AppIcon-0-1x_U007emarketing-85-220-3.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/edelweiss-bfa36bf47661.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "bfa36bf47661157fc4b7979884b0f31d6721cd56332d203e5567c2f3e7c983c9",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1132502143,
+        "track_name": "Edelweiss Retail Finance",
+        "seller_name": "Nuvama Wealth and Investment Limited",
+        "artist_name": "Nuvama Wealth and Investment Limited",
+        "bundle_id": "com.edelweiss.RFNew",
+        "seller_url": null,
+        "official_domain": "www.edelweiss.in",
+        "expected_seller_tokens": [
+          "EDELWEISS"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Ventura Securities",
+      "normalized_name": "VENTURASECURITIES",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 35,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "Ventura Securities",
+        "Ventura",
+        "Ventura Prime"
+      ],
+      "website_url": "https://www.venturasecurities.com/",
+      "source_page_url": "https://apps.apple.com/in/app/ventura/id1495203238?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple126/v4/77/cb/28/77cb28ec-e9f6-b75b-1cab-071b5b6fb6f6/AppIcon-0-0-1x_U007emarketing-0-0-0-10-0-0-sRGB-0-0-0-GLES2_U002c0-512MB-85-220-0-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/ventura-securities-25464f07522d.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "25464f07522d2c11d1ca8380bad19136253e44412bfbbb96b662f702179814df",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1495203238,
+        "track_name": "Ventura",
+        "seller_name": "Martin Elicagaray",
+        "artist_name": "Martin Elicagaray",
+        "bundle_id": "com.simplesolutions.ventura",
+        "seller_url": "http://simplesolutions.com.ar",
+        "official_domain": "www.venturasecurities.com",
+        "expected_seller_tokens": [
+          "VENTURA"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Anand Rathi",
+      "normalized_name": "ANANDRATHI",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 36,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "Anand Rathi",
+        "AnandRathi",
+        "Anand Rathi Wealth"
+      ],
+      "website_url": "https://www.anandrathi.com/",
+      "source_page_url": "https://apps.apple.com/in/app/anandrathi-trade-mobi/id1322897028?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/74/da/fa/74dafa6c-bd12-a5f3-1f21-44d4ff187af9/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/anand-rathi-42f24d9d4d2b.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "42f24d9d4d2b08dc525cf5837b9ac39af8caa2d00461c212102e258d90123656",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1322897028,
+        "track_name": "AnandRathi Trade Mobi",
+        "seller_name": "ANAND RATHI SHARE AND STOCK BROKERS LIMITED",
+        "artist_name": "Anand Rathi",
+        "bundle_id": "com.anandrathi.trademobi",
+        "seller_url": "https://www.anandrathi.com/",
+        "official_domain": "www.anandrathi.com",
+        "expected_seller_tokens": [
+          "ANAND RATHI"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Choice Broking",
+      "normalized_name": "CHOICEBROKING",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 37,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "Choice Broking",
+        "Choice India",
+        "Choice FinX"
+      ],
+      "website_url": "https://choiceindia.com/",
+      "source_page_url": "https://apps.apple.com/in/app/choice-finx-demat-account-app/id1327801261?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/cf/d5/c1/cfd5c17d-de1f-4775-b246-d956c343d8f3/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/choice-broking-95b767da80db.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "95b767da80dbb033ce079344eebdfecc6d248a28f729bbd4cecc75907374cb20",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1327801261,
+        "track_name": "Choice FinX: Demat Account App",
+        "seller_name": "Choice International Limited",
+        "artist_name": "Choice International Limited",
+        "bundle_id": "com.choicebroking.jiffy",
+        "seller_url": "https://choiceindia.com/online-trading-app",
+        "official_domain": "choiceindia.com",
+        "expected_seller_tokens": [
+          "CHOICE"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Alice Blue",
+      "normalized_name": "ALICEBLUE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 38,
+      "selection_reason": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.sebi.gov.in/intermediaries.html"
+      ],
+      "aliases": [
+        "Alice Blue",
+        "AliceBlue",
+        "ANT Mobi"
+      ],
+      "website_url": "https://aliceblueonline.com/",
+      "source_page_url": "https://apps.apple.com/in/app/alice-blue-trade-app-ant-mobi/id1627909732?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8f/ed/6c/8fed6c0d-5b14-75f5-f4b0-140813ddf672/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/alice-blue-6961d4c1f32d.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "6961d4c1f32d2f74337b688c35a00fd8524f1a1f4c9a508576722f594d208e56",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1627909732,
+        "track_name": "Alice Blue Trade App: ANT MOBI",
+        "seller_name": "ALICEBLUE COMMODITIES PRIVATE LIMITED",
+        "artist_name": "ALICEBLUE COMMODITIES PRIVATE LIMITED",
+        "bundle_id": "com.ant2o.aliceblue",
+        "seller_url": "https://aliceblueonline.com/",
+        "official_domain": "aliceblueonline.com",
+        "expected_seller_tokens": [
+          "ALICE BLUE"
+        ]
+      }
+    },
+    {
+      "canonical_name": "HDFC ERGO",
+      "normalized_name": "HDFCERGO",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 39,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "HDFC ERGO",
+        "HDFC Ergo General Insurance",
+        "my:health Suraksha"
+      ],
+      "website_url": "https://www.hdfcergo.com/",
+      "source_page_url": "https://apps.apple.com/in/app/here-by-hdfc-ergo/id1670377706?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/e2/d9/08/e2d90863-2c69-6a03-8467-644611477586/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/hdfc-ergo-bd02610442fa.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "bd02610442facd32b4816dd2456323c0b09d3d4c0b939fea4c0d1219301ce981",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1670377706,
+        "track_name": "Here by HDFC ERGO",
+        "seller_name": "HDFC ERGO General Insurance Company Limited",
+        "artist_name": "HDFCErgo",
+        "bundle_id": "com.hdfcergo.here",
+        "seller_url": null,
+        "official_domain": "www.hdfcergo.com",
+        "expected_seller_tokens": [
+          "HDFC ERGO"
+        ]
+      }
+    },
+    {
+      "canonical_name": "SBI General Insurance",
+      "normalized_name": "SBIGENERALINSURANCE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 40,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "SBI General Insurance",
+        "SBI General",
+        "SBIG Insurance"
+      ],
+      "website_url": "https://www.sbigeneral.in/",
+      "source_page_url": "https://apps.apple.com/in/app/sbi-general-insurance/id1495616048?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/9a/79/16/9a7916ba-6238-4dc8-8674-a0abbfee1957/AppIcon-0-0-1x_U007emarketing-0-8-0-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/sbi-general-insurance-2882d7862a7f.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "2882d7862a7fac334c0d4f7548c40e8a3b7e0adaf5b4ad2ed3248322f2fdca2f",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1495616048,
+        "track_name": "SBI General Insurance",
+        "seller_name": "SBI General Insurance Company Limited",
+        "artist_name": "SBI General Insurance",
+        "bundle_id": "com.sbig.insurance",
+        "seller_url": "https://www.sbigeneral.in/",
+        "official_domain": "www.sbigeneral.in",
+        "expected_seller_tokens": [
+          "SBI GENERAL"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Kotak Life",
+      "normalized_name": "KOTAKLIFE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 43,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "Kotak Life",
+        "Kotak Mahindra Life Insurance",
+        "Kotak Life Insurance"
+      ],
+      "website_url": "https://www.kotaklife.com/",
+      "source_page_url": "https://apps.apple.com/in/app/happyyou-by-kotak-life/id6448199779?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/7c/f7/0e/7cf70e67-df25-cda2-186b-fbdff52b729e/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/kotak-life-2163da47203d.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "2163da47203dbbf58f386d053f6a3311acf083134d086e4fdc1989247453ecc1",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 6448199779,
+        "track_name": "HappyYou by Kotak Life",
+        "seller_name": "Kotak Mahindra Life Insurance Limited",
+        "artist_name": "Kotak Mahindra Life Insurance Limited",
+        "bundle_id": "com.kotak.happyyou",
+        "seller_url": null,
+        "official_domain": "www.kotaklife.com",
+        "expected_seller_tokens": [
+          "KOTAK LIFE"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Canara HSBC Life Insurance",
+      "normalized_name": "CANARAHSBCLIFEINSURANCE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 44,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "Canara HSBC Life Insurance",
+        "Canara HSBC Life",
+        "Canara HSBC Oorja"
+      ],
+      "website_url": "https://www.canarahsbclife.com/",
+      "source_page_url": "https://apps.apple.com/in/app/canara-hsbc-life/id1637840399?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/10/b1/f3/10b1f313-6cdf-8ec4-305b-dd5f9f3eaa17/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/canara-hsbc-life-insurance-ec712e62f27f.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "ec712e62f27fd04df77451dfd1faf0b077476c8ed43c196115b56ed38b5e770b",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1637840399,
+        "track_name": "Canara HSBC Life",
+        "seller_name": "Canara Hsbc Oriental Bank Of Commerce Life Insurance Company Limited",
+        "artist_name": "Canara HSBC Oriental Bank of Commerce Life Insurance Co. Ltd.",
+        "bundle_id": "com.choice.customer",
+        "seller_url": "https://www.canarahsbclife.com/index.html",
+        "official_domain": "www.canarahsbclife.com",
+        "expected_seller_tokens": [
+          "CANARA HSBC"
+        ]
+      }
+    },
+    {
+      "canonical_name": "IndiaFirst Life",
+      "normalized_name": "INDIAFIRSTLIFE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 45,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "IndiaFirst Life",
+        "India First Life Insurance"
+      ],
+      "website_url": "https://www.indiafirstlife.com/",
+      "source_page_url": "https://apps.apple.com/in/app/indiafirst-life-bob/id6503947273?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/3c/c9/1d/3cc91d27-dbd3-e14b-5fdd-ca6044c1f436/AppIcon-bob-1x_U007emarketing-0-11-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/indiafirst-life-f4dfc12abbd3.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "f4dfc12abbd3d0d00d47cae5e885bda544fa6d3c435fc63998503177f18f23c6",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 6503947273,
+        "track_name": "IndiaFirst Life - BOB",
+        "seller_name": "indiafirst life insurance company limited",
+        "artist_name": "IndiaFirst Life Insurance Company",
+        "bundle_id": "com.ifl.gclpbob",
+        "seller_url": null,
+        "official_domain": "www.indiafirstlife.com",
+        "expected_seller_tokens": [
+          "INDIAFIRST"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Bandhan Life",
+      "normalized_name": "BANDHANLIFE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 48,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "Bandhan Life",
+        "Bandhan Life Insurance"
+      ],
+      "website_url": "https://www.bandhanlife.com/",
+      "source_page_url": "https://www.bandhanlife.com/",
+      "source_url": "https://www.bandhanlife.com/themes/custom/bandhan_life/logo.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/bandhan-life-7098aaf7c94d.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "7098aaf7c94d3387700cb702c3ecd7e98a62134d1c4dc124954d06b75669c0ed",
+      "asset_dimensions": {
+        "width": 327,
+        "height": 100,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.bandhanlife.com",
+        "resolved_page_domain": "www.bandhanlife.com",
+        "asset_domain": "www.bandhanlife.com"
+      }
+    },
+    {
+      "canonical_name": "PNB MetLife",
+      "normalized_name": "PNBMETLIFE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 49,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "PNB MetLife",
+        "PNB Metlife India Insurance"
+      ],
+      "website_url": "https://www.pnbmetlife.com/",
+      "source_page_url": "https://apps.apple.com/in/app/pnb-metlife-mera-term-plan/id1504882881?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple113/v4/2b/f4/6a/2bf46a2a-a6c3-762f-028e-cf653a6a8dd2/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-sRGB-0-0-0-GLES2_U002c0-512MB-85-220-0-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/pnb-metlife-d02cae638919.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "d02cae63891912b7dbed2c7e2c7fd7ad3d29117df6f649ab65e5e275364e88fc",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1504882881,
+        "track_name": "PNB MetLife Mera Term Plan",
+        "seller_name": "PNB MetLife India Insurance Company Limited",
+        "artist_name": "PNB MetLife India Insurance Company Limited",
+        "bundle_id": "com.pmli.nvest",
+        "seller_url": "https://online.pnbmetlife.com/meratermplan/",
+        "official_domain": "www.pnbmetlife.com",
+        "expected_seller_tokens": [
+          "PNB METLIFE"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Future Generali India Insurance",
+      "normalized_name": "FUTUREGENERALIINDIAINSURANCE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 50,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "Future Generali India Insurance",
+        "Future Generali",
+        "FGII"
+      ],
+      "website_url": "https://general.futuregenerali.in/",
+      "source_page_url": "https://apps.apple.com/in/app/future-generali-health/id1357894487?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/e7/b5/39/e7b5394b-ddc2-b782-0686-78984739a9b5/AppIcon-1x_U007emarketing-0-7-0-85-220-0.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/future-generali-india-insurance-175355e7299f.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "175355e7299f64fc8afb9d4c8714ed0a933a4cce15a194e3d7fa6a3eb35e940b",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1357894487,
+        "track_name": "Future Generali Health",
+        "seller_name": "Generali Central Insurance Company Limited",
+        "artist_name": "Generali Central Insurance Company Limited",
+        "bundle_id": "com.futuregenerali.fgapp",
+        "seller_url": null,
+        "official_domain": "general.futuregenerali.in",
+        "expected_seller_tokens": [
+          "FUTURE GENERALI"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Liberty General Insurance",
+      "normalized_name": "LIBERTYGENERALINSURANCE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 51,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "Liberty General Insurance",
+        "Liberty Insurance"
+      ],
+      "website_url": "https://www.libertyinsurance.in/",
+      "source_page_url": "https://www.libertyinsurance.in/",
+      "source_url": "https://www.libertyinsurance.in/images/logo1.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/liberty-general-insurance-7ec9f2b33084.avif",
+      "content_type": "image/avif",
+      "content_sha256": "7ec9f2b33084118926acc7e48f3d3fe4cac6d89b7cac0e943d0bbb0ad927e86a",
+      "asset_dimensions": {
+        "width": 225,
+        "height": 60,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.libertyinsurance.in",
+        "resolved_page_domain": "www.libertyinsurance.in",
+        "asset_domain": "www.libertyinsurance.in"
+      }
+    },
+    {
+      "canonical_name": "IFFCO Tokio",
+      "normalized_name": "IFFCOTOKIO",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 52,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "IFFCO Tokio",
+        "IFFCO Tokio General Insurance"
+      ],
+      "website_url": "https://www.iffcotokio.co.in/",
+      "source_page_url": "https://apps.apple.com/in/app/iffco-tokio-customer/id1346469176?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8e/62/22/8e6222c2-e5c5-88ab-b820-446418fbb7db/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/iffco-tokio-fccb3d7fe659.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "fccb3d7fe6599c3541e78cf57e3e48cb2d9a408d9687b2f46ff0366f67debd96",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1346469176,
+        "track_name": "IFFCO Tokio - Customer",
+        "seller_name": "IFFCO-TOKIO GENERAL INSURANCE COMPANY LIMITED",
+        "artist_name": "IFFCO-TOKIO General insurance",
+        "bundle_id": "com.iffcotokio.CustomerApp",
+        "seller_url": "https://www.iffcotokio.co.in",
+        "official_domain": "www.iffcotokio.co.in",
+        "expected_seller_tokens": [
+          "IFFCO TOKIO"
+        ]
+      }
+    },
+    {
+      "canonical_name": "Universal Sompo",
+      "normalized_name": "UNIVERSALSOMPO",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 53,
+      "selection_reason": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+      ],
+      "aliases": [
+        "Universal Sompo",
+        "Universal Sompo General Insurance"
+      ],
+      "website_url": "https://www.universalsompo.com/",
+      "source_page_url": "https://www.universalsompo.com/",
+      "source_url": "https://www.universalsompo.com/assets/images/pmfby-lg-logo.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/universal-sompo-58fb798f9811.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "58fb798f981133f89951d51ba3840e0682770632c6751ce38fff74a17ec6d75c",
+      "asset_dimensions": {
+        "width": 334,
+        "height": 334,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.universalsompo.com",
+        "resolved_page_domain": "www.universalsompo.com",
+        "asset_domain": "www.universalsompo.com"
+      }
+    },
+    {
+      "canonical_name": "TSSPDCL",
+      "normalized_name": "TSSPDCL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 56,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "TSSPDCL",
+        "Telangana State Southern Power Distribution Company",
+        "TSSPDCL Bill"
+      ],
+      "website_url": "https://www.tssouthernpower.com/",
+      "source_page_url": "https://www.tssouthernpower.com/",
+      "source_url": "https://www.tssouthernpower.com/resources/images/tgspdcl.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/tsspdcl-a0bd2250c4bb.png",
+      "content_type": "image/png",
+      "content_sha256": "a0bd2250c4bb8ba5a7d76bb0d1f61e69caf7eb3ed0a30b746b3f3e2e3266f61c",
+      "asset_dimensions": {
+        "width": 450,
+        "height": 81,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.tssouthernpower.com",
+        "resolved_page_domain": "www.tssouthernpower.com",
+        "asset_domain": "www.tssouthernpower.com"
+      }
+    },
+    {
+      "canonical_name": "APEPDCL",
+      "normalized_name": "APEPDCL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 58,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "APEPDCL",
+        "Andhra Pradesh Eastern Power Distribution Company",
+        "APEPDCL Bill"
+      ],
+      "website_url": "https://www.apeasternpower.com/",
+      "source_page_url": "https://www.apeasternpower.com/",
+      "source_url": "https://www.apeasternpower.com/resources/images/E_logo.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/apepdcl-467130d10974.png",
+      "content_type": "image/png",
+      "content_sha256": "467130d10974746a76bec34ea495c4b4e82740b980fbffe981e55cce6b74368d",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.apeasternpower.com",
+        "resolved_page_domain": "www.apeasternpower.com",
+        "asset_domain": "www.apeasternpower.com"
+      }
+    },
+    {
+      "canonical_name": "APSPDCL",
+      "normalized_name": "APSPDCL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 59,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "APSPDCL",
+        "Andhra Pradesh Southern Power Distribution Company",
+        "APSPDCL Bill"
+      ],
+      "website_url": "https://www.apspdcl.in/",
+      "source_page_url": "https://www.apspdcl.in/",
+      "source_url": "https://www.apspdcl.in/assets/img/logo2.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/apspdcl-70c53722cabc.png",
+      "content_type": "image/png",
+      "content_sha256": "70c53722cabc6b86667078aa918927546b7d0ff8b7a9b5d665a6157da4052041",
+      "asset_dimensions": {
+        "width": 291,
+        "height": 52,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.apspdcl.in",
+        "resolved_page_domain": "www.apspdcl.in",
+        "asset_domain": "www.apspdcl.in"
+      }
+    },
+    {
+      "canonical_name": "UHBVN",
+      "normalized_name": "UHBVN",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 60,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "UHBVN",
+        "Uttar Haryana Bijli Vitran Nigam",
+        "UHBVN Bill"
+      ],
+      "website_url": "https://uhbvn.org.in/",
+      "source_page_url": "https://apps.apple.com/in/app/uhbvn-electricity-bill-payment/id1300076407?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/ee/62/12/ee62123c-f3d4-eea3-b866-b71bd1b40042/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/uhbvn-f25edf6b59df.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "f25edf6b59dffd8d22b386ab8908abcfcccc57b8a35ed750aeb35ae74051ec16",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1300076407,
+        "track_name": "UHBVN Electricity Bill Payment",
+        "seller_name": "PRAGYAWARE INFORMATICS PRIVATE LIMITED",
+        "artist_name": "PRAGYAWARE INFORMATICS PRIVATE LIMITED",
+        "bundle_id": "com.pragyaware.epayment.UHBVN",
+        "seller_url": null,
+        "official_domain": "uhbvn.org.in",
+        "expected_seller_tokens": [
+          "UHBVN"
+        ]
+      }
+    },
+    {
+      "canonical_name": "DHBVN",
+      "normalized_name": "DHBVN",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 61,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "DHBVN",
+        "Dakshin Haryana Bijli Vitran Nigam",
+        "DHBVN Bill"
+      ],
+      "website_url": "https://dhbvn.org.in/web/portal/home",
+      "source_page_url": "https://dhbvn.org.in/web/portal/home",
+      "source_url": "https://dhbvn.org.in/RAPDRP-Redesign-theme/images/logo111.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/dhbvn-4df96c6b0e20.png",
+      "content_type": "image/png",
+      "content_sha256": "4df96c6b0e202d5f5a4fa2abaa829a8fe728f6c7279ecd1b96ed713609e5a7b6",
+      "asset_dimensions": {
+        "width": 471,
+        "height": 59,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "dhbvn.org.in",
+        "resolved_page_domain": "dhbvn.org.in",
+        "asset_domain": "dhbvn.org.in"
+      }
+    },
+    {
+      "canonical_name": "Delhi Jal Board",
+      "normalized_name": "DELHIJALBOARD",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 62,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "Delhi Jal Board",
+        "DJB",
+        "Delhi Water Bill"
+      ],
+      "website_url": "https://delhijalboard.delhi.gov.in/",
+      "source_page_url": "https://delhijalboard.delhi.gov.in/",
+      "source_url": "https://delhijalboard.delhi.gov.in/sites/default/files/DPGS/header-sublogos/logo.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/delhi-jal-board-e47f6935d62d.png",
+      "content_type": "image/png",
+      "content_sha256": "e47f6935d62df7c56150c2b2d047eb144bf76e1c3e6dd679cae1106bc9d4b9f5",
+      "asset_dimensions": {
+        "width": 600,
+        "height": 399,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "delhijalboard.delhi.gov.in",
+        "resolved_page_domain": "delhijalboard.delhi.gov.in",
+        "asset_domain": "delhijalboard.delhi.gov.in"
+      }
+    },
+    {
+      "canonical_name": "Chennai Metro Water",
+      "normalized_name": "CHENNAIMETROWATER",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 63,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "Chennai Metro Water",
+        "CMWSSB",
+        "Chennai Water Bill"
+      ],
+      "website_url": "https://cmwssb.tn.gov.in/",
+      "source_page_url": "https://cmwssb.tn.gov.in/",
+      "source_url": "https://cmwssb.tn.gov.in/sites/default/files/website_header_images/TN-eng-logo_0.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/chennai-metro-water-f5837865b43a.png",
+      "content_type": "image/png",
+      "content_sha256": "f5837865b43a90771d5b7fb4776ad31ecb0a625b83d4544b41c039d7c5fb4852",
+      "asset_dimensions": {
+        "width": 150,
+        "height": 151,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "cmwssb.tn.gov.in",
+        "resolved_page_domain": "cmwssb.tn.gov.in",
+        "asset_domain": "cmwssb.tn.gov.in"
+      }
+    },
+    {
+      "canonical_name": "Sun Direct",
+      "normalized_name": "SUNDIRECT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 64,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "Sun Direct",
+        "Sun Direct DTH"
+      ],
+      "website_url": "https://www.sundirect.in/",
+      "source_page_url": "https://www.sundirect.in/",
+      "source_url": "https://www.sundirect.in/assets/IMG00030.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/sun-direct-9d8667db9388.png",
+      "content_type": "image/png",
+      "content_sha256": "9d8667db9388c0c90d39db39c889a3f38f039bdca6dc36053454af8a7c6b78f1",
+      "asset_dimensions": {
+        "width": 384,
+        "height": 157,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.sundirect.in",
+        "resolved_page_domain": "www.sundirect.in",
+        "asset_domain": "www.sundirect.in"
+      }
+    },
+    {
+      "canonical_name": "d2h",
+      "normalized_name": "D2H",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 65,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "d2h",
+        "Videocon d2h",
+        "D2H Recharge"
+      ],
+      "website_url": "https://www.d2h.com/",
+      "source_page_url": "https://www.d2h.com/",
+      "source_url": "https://www.d2h.com/content/dam/d2h/homepage/footerlogo.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/d2h-88da48ccc4db.png",
+      "content_type": "image/png",
+      "content_sha256": "88da48ccc4dbec0528b6bfa67fa668fe3263443f812a9656cbeb4217c6147024",
+      "asset_dimensions": {
+        "width": 120,
+        "height": 120,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.d2h.com",
+        "resolved_page_domain": "www.d2h.com",
+        "asset_domain": "www.d2h.com"
+      }
+    },
+    {
+      "canonical_name": "Airtel Digital TV",
+      "normalized_name": "AIRTELDIGITALTV",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 66,
+      "selection_reason": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+      ],
+      "aliases": [
+        "Airtel Digital TV",
+        "Airtel DTH",
+        "Airtel TV Recharge"
+      ],
+      "website_url": "https://www.airtel.in/dth/",
+      "source_page_url": "https://apps.apple.com/in/app/airtel-tv/id1465575744?uo=4",
+      "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple125/v4/7c/44/5f/7c445fdf-2022-e185-99bd-55a55a64f32e/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-sRGB-0-0-0-GLES2_U002c0-512MB-85-220-0-0.jpeg/512x512bb.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-app-store-next-100-batch-4/airtel-digital-tv-f10745b692cf.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "f10745b692cf24a50d666e112cde63d56e8a07ff468c06f90b64c4c45103030e",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "APPLE_APP_STORE_IDENTITY",
+        "country": "IN",
+        "track_id": 1465575744,
+        "track_name": "Airtel TV+",
+        "seller_name": "Robi Axiata Limited",
+        "artist_name": "Robi Axiata Limited",
+        "bundle_id": "com.airtel.tvplus",
+        "seller_url": "http://www.airteltvplus.com",
+        "official_domain": "www.airtel.in",
+        "expected_seller_tokens": [
+          "AIRTEL",
+          "BHARTI"
+        ]
+      }
+    },
+    {
+      "canonical_name": "SITI Broadband",
+      "normalized_name": "SITIBROADBAND",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 67,
+      "selection_reason": "TRAI telecom and broadband-service coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.trai.gov.in/"
+      ],
+      "aliases": [
+        "SITI Broadband",
+        "SITI Cable",
+        "SITI Networks"
+      ],
+      "website_url": "https://www.sitinetworks.com/",
+      "source_page_url": "https://www.sitinetworks.com/",
+      "source_url": "https://www.sitinetworks.com/siti-assets/favicon-96x96.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/siti-broadband-0a1c780a766c.png",
+      "content_type": "image/png",
+      "content_sha256": "0a1c780a766c3cb16040431ff5efac5df491b913495d37fa2a7457598cfda68d",
+      "asset_dimensions": {
+        "width": 96,
+        "height": 96,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.sitinetworks.com",
+        "resolved_page_domain": "www.sitinetworks.com",
+        "asset_domain": "www.sitinetworks.com"
+      }
+    },
+    {
+      "canonical_name": "Kerala Vision",
+      "normalized_name": "KERALAVISION",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 68,
+      "selection_reason": "TRAI telecom and broadband-service coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.trai.gov.in/"
+      ],
+      "aliases": [
+        "Kerala Vision",
+        "Kerala Vision Broadband",
+        "KCCL"
+      ],
+      "website_url": "https://www.keralavisionisp.com/",
+      "source_page_url": "https://www.keralavisionisp.com/",
+      "source_url": "https://www.keralavisionisp.com/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/kerala-vision-39a1c489f7e6.png",
+      "content_type": "image/png",
+      "content_sha256": "39a1c489f7e6f43883b81a1107dbc65cb79176ebad6e4d34c5a054f7fd20a6e1",
+      "asset_dimensions": {
+        "width": 63,
+        "height": 65,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.keralavisionisp.com",
+        "resolved_page_domain": "www.keralavisionisp.com",
+        "asset_domain": "www.keralavisionisp.com"
+      }
+    },
+    {
+      "canonical_name": "Fastway",
+      "normalized_name": "FASTWAY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 70,
+      "selection_reason": "TRAI telecom and broadband-service coverage, accessed 9 August 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.trai.gov.in/"
+      ],
+      "aliases": [
+        "Fastway",
+        "Fastway Cable",
+        "Fastway Broadband"
+      ],
+      "website_url": "https://www.fastway.in/",
+      "source_page_url": "https://www.fastway.in/",
+      "source_url": "https://www.fastway.in/images/apple-icon-180x180.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/fastway-afa1d1fe3cb6.png",
+      "content_type": "image/png",
+      "content_sha256": "afa1d1fe3cb633e71e6627e1b0c3bd1d89d6011acaa955540e06ee84f48459c2",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.fastway.in",
+        "resolved_page_domain": "www.fastway.in",
+        "asset_domain": "www.fastway.in"
+      }
+    },
+    {
+      "canonical_name": "Clovia",
+      "normalized_name": "CLOVIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 73,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Clovia",
+        "Clovia India"
+      ],
+      "website_url": "https://www.clovia.com/",
+      "source_page_url": "https://www.clovia.com/",
+      "source_url": "https://static.clovia.com/static/mob/images/new-logo-clovia.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/clovia-5f0a5de91113.png",
+      "content_type": "image/png",
+      "content_sha256": "5f0a5de91113b149ba5f5fa17ea01e715c814596e4843a8dcfb9c51d64805f2b",
+      "asset_dimensions": {
+        "width": 250,
+        "height": 58,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.clovia.com",
+        "resolved_page_domain": "www.clovia.com",
+        "asset_domain": "static.clovia.com"
+      }
+    },
+    {
+      "canonical_name": "Libas",
+      "normalized_name": "LIBAS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 75,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Libas",
+        "Libas India"
+      ],
+      "website_url": "https://www.libas.in/",
+      "source_page_url": "https://www.libas.in/",
+      "source_url": "https://www.libas.in/cdn/shop/files/purple_Libas-Logo_1_1.png?v=1716187208&width=260",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/libas-cfaea2c838b5.avif",
+      "content_type": "image/avif",
+      "content_sha256": "cfaea2c838b5ef9377177e43e552c64bae85e69fb9003d665296d68e52d127bd",
+      "asset_dimensions": {
+        "width": 260,
+        "height": 147,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.libas.in",
+        "resolved_page_domain": "www.libas.in",
+        "asset_domain": "www.libas.in"
+      }
+    },
+    {
+      "canonical_name": "Go Colors",
+      "normalized_name": "GOCOLORS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 77,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Go Colors",
+        "GoColors"
+      ],
+      "website_url": "https://gocolors.com/",
+      "source_page_url": "https://gocolors.com/",
+      "source_url": "https://gocolors.com//cdn//shop//files//logo_8e9d7325-46c8-416f-9380-c4e7a8d40fee.svg?v=1737369902\\u0026width=500",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/go-colors-ee270b936e4e.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "ee270b936e4e994c997690cfe2bbec4649e91cf448fa3dabc9edb06eb4b19980",
+      "asset_dimensions": {
+        "width": 194,
+        "height": 50,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "gocolors.com",
+        "resolved_page_domain": "gocolors.com",
+        "asset_domain": "gocolors.com"
+      }
+    },
+    {
+      "canonical_name": "Soch",
+      "normalized_name": "SOCH",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 78,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Soch",
+        "Soch India"
+      ],
+      "website_url": "https://www.soch.com/in/",
+      "source_page_url": "https://www.soch.com/in/",
+      "source_url": "https://www.soch.com/media/favicon/stores/1/apple-touch-icon_1_.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/soch-55a4cf6fbfdd.webp",
+      "content_type": "image/webp",
+      "content_sha256": "55a4cf6fbfddb759a04ee9e11e4c5cd4bb8050c24882610f370693b7b8906279",
+      "asset_dimensions": {
+        "width": 181,
+        "height": 181,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.soch.com",
+        "resolved_page_domain": "www.soch.com",
+        "asset_domain": "www.soch.com"
+      }
+    },
+    {
+      "canonical_name": "Blissclub",
+      "normalized_name": "BLISSCLUB",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 79,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Blissclub",
+        "Bliss Club"
+      ],
+      "website_url": "https://blissclub.com/",
+      "source_page_url": "https://blissclub.com/",
+      "source_url": "https://blissclub.com/cdn/shop/files/bliss.png?v=1673007221&width=180",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/blissclub-53ec80b8acff.avif",
+      "content_type": "image/avif",
+      "content_sha256": "53ec80b8acff0cfc725a4e8302cae7cb0b82f61a028816506ee2042d1cf2fdfb",
+      "asset_dimensions": {
+        "width": 96,
+        "height": 96,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "blissclub.com",
+        "resolved_page_domain": "blissclub.com",
+        "asset_domain": "blissclub.com"
+      }
+    },
+    {
+      "canonical_name": "Bombay Shaving Company",
+      "normalized_name": "BOMBAYSHAVINGCOMPANY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 81,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Bombay Shaving Company",
+        "Bombay Shaving"
+      ],
+      "website_url": "https://www.bombayshavingcompany.com/",
+      "source_page_url": "https://www.bombayshavingcompany.com/",
+      "source_url": "https://www.bombayshavingcompany.com/cdn/shop/files/NewBSCLogo-01_1_90x.png?v=1739798445",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/bombay-shaving-company-53bd7d31179f.webp",
+      "content_type": "image/webp",
+      "content_sha256": "53bd7d31179f50cbebe0b09645979edf195867b6426b541e2b2c60b1cffc77d6",
+      "asset_dimensions": {
+        "width": 90,
+        "height": 72,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.bombayshavingcompany.com",
+        "resolved_page_domain": "www.bombayshavingcompany.com",
+        "asset_domain": "www.bombayshavingcompany.com"
+      }
+    },
+    {
+      "canonical_name": "Beardo",
+      "normalized_name": "BEARDO",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 82,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Beardo",
+        "Beardo India"
+      ],
+      "website_url": "https://beardo.in/",
+      "source_page_url": "https://beardo.in/",
+      "source_url": "https://beardo.in/cdn/shop/files/logo-container.png?v=1774261507&width=300",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/beardo-018315712158.avif",
+      "content_type": "image/avif",
+      "content_sha256": "0183157121589e15188f254c035beb4e7c797c22f665ba2198fb0e150330eba5",
+      "asset_dimensions": {
+        "width": 300,
+        "height": 129,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "beardo.in",
+        "resolved_page_domain": "beardo.in",
+        "asset_domain": "beardo.in"
+      }
+    },
+    {
+      "canonical_name": "Ustraa",
+      "normalized_name": "USTRAA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 83,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Ustraa",
+        "Ustraa India"
+      ],
+      "website_url": "https://www.ustraa.com/",
+      "source_page_url": "https://www.ustraa.com/",
+      "source_url": "https://www.ustraa.com/icon-180x180.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/ustraa-8f2e7f7e16a5.png",
+      "content_type": "image/png",
+      "content_sha256": "8f2e7f7e16a559133dcf8d4a3b80e991951e3d842a30ed23df034395fef83a5e",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.ustraa.com",
+        "resolved_page_domain": "www.ustraa.com",
+        "asset_domain": "www.ustraa.com"
+      }
+    },
+    {
+      "canonical_name": "Sangeetha Mobiles",
+      "normalized_name": "SANGEETHAMOBILES",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 84,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Sangeetha Mobiles",
+        "Sangeetha"
+      ],
+      "website_url": "https://www.sangeethamobiles.com/",
+      "source_page_url": "https://www.sangeethamobiles.com/",
+      "source_url": "https://www.sangeethamobiles.com/logo-144.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/sangeetha-mobiles-0f90f8d478f9.png",
+      "content_type": "image/png",
+      "content_sha256": "0f90f8d478f934ab759f89942b3965a268e620fa15c675d960d23e84403225ae",
+      "asset_dimensions": {
+        "width": 144,
+        "height": 144,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.sangeethamobiles.com",
+        "resolved_page_domain": "www.sangeethamobiles.com",
+        "asset_domain": "www.sangeethamobiles.com"
+      }
+    },
+    {
+      "canonical_name": "Pai International",
+      "normalized_name": "PAIINTERNATIONAL",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 86,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Pai International",
+        "Pai Electronics"
+      ],
+      "website_url": "https://www.paiinternational.in/",
+      "source_page_url": "https://www.paiinternational.in/",
+      "source_url": "https://www.paiinternational.in/images/logo_70.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/pai-international-cbf5963f3f23.png",
+      "content_type": "image/png",
+      "content_sha256": "cbf5963f3f2301b67ad03a3ee580bc84e4e3593c15da1f6e7d889f93c7bd779a",
+      "asset_dimensions": {
+        "width": 70,
+        "height": 70,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.paiinternational.in",
+        "resolved_page_domain": "www.paiinternational.in",
+        "asset_domain": "www.paiinternational.in"
+      }
+    },
+    {
+      "canonical_name": "CEAT",
+      "normalized_name": "CEAT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 90,
+      "selection_reason": "India UPI merchant-transaction relevance: Government of India FY 2025–26 update; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2257087"
+      ],
+      "aliases": [
+        "CEAT",
+        "CEAT Tyres"
+      ],
+      "website_url": "https://www.ceat.com/",
+      "source_page_url": "https://www.ceat.com/",
+      "source_url": "https://www.ceat.com/content/dam/ceat/website/logo.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/ceat-b39ab8e52469.png",
+      "content_type": "image/png",
+      "content_sha256": "b39ab8e52469615cd6089c583174a3285e39d54f3410fa2f4e489cebc6eff71f",
+      "asset_dimensions": {
+        "width": 300,
+        "height": 89,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.ceat.com",
+        "resolved_page_domain": "www.ceat.com",
+        "asset_domain": "www.ceat.com"
+      }
+    },
+    {
+      "canonical_name": "Apollo Tyres",
+      "normalized_name": "APOLLOTYRES",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 91,
+      "selection_reason": "India UPI merchant-transaction relevance: Government of India FY 2025–26 update; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2257087"
+      ],
+      "aliases": [
+        "Apollo Tyres",
+        "Apollo Tyre"
+      ],
+      "website_url": "https://www.apollotyres.com/en-in/",
+      "source_page_url": "https://www.apollotyres.com/en-in/",
+      "source_url": "https://www.apollotyres.com/content/dam/orbit/logos/Apollo-Tyres-New-Logo-Horizontal-Purple-RGB.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/apollo-tyres-c2ddd3ab2a1f.png",
+      "content_type": "image/png",
+      "content_sha256": "c2ddd3ab2a1f1c7f499255cf6f97cb5fa08f8df602c24c4376f6d41b0487933d",
+      "asset_dimensions": {
+        "width": 1272,
+        "height": 223,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.apollotyres.com",
+        "resolved_page_domain": "www.apollotyres.com",
+        "asset_domain": "www.apollotyres.com"
+      }
+    },
+    {
+      "canonical_name": "JK Tyre",
+      "normalized_name": "JKTYRE",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 92,
+      "selection_reason": "India UPI merchant-transaction relevance: Government of India FY 2025–26 update; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2257087"
+      ],
+      "aliases": [
+        "JK Tyre",
+        "JK Tyres"
+      ],
+      "website_url": "https://www.jktyre.com/",
+      "source_page_url": "https://www.jktyre.com/",
+      "source_url": "https://dwzytf8fljslz.cloudfront.net/Jk_Logo_Square_036aed0631.svg?format=auto&width=640&quality=75",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/jk-tyre-765d4cc6778e.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "765d4cc6778e860761fc286101358dda64cc5866c184855961c19683c25e037c",
+      "asset_dimensions": {
+        "width": 216,
+        "height": 216,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.jktyre.com",
+        "resolved_page_domain": "www.jktyre.com",
+        "asset_domain": "dwzytf8fljslz.cloudfront.net"
+      }
+    },
+    {
+      "canonical_name": "Goodyear India",
+      "normalized_name": "GOODYEARINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 93,
+      "selection_reason": "India UPI merchant-transaction relevance: Government of India FY 2025–26 update; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2257087"
+      ],
+      "aliases": [
+        "Goodyear India",
+        "Goodyear"
+      ],
+      "website_url": "https://www.goodyear.co.in/",
+      "source_page_url": "https://www.goodyear.co.in/",
+      "source_url": "https://assets.goodyear.co.in/uploads/2025/12/cropped-goodyear_favicon_2025-180x180.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/goodyear-india-281f0b22bbac.png",
+      "content_type": "image/png",
+      "content_sha256": "281f0b22bbac44fcf0af2dbe2dceca66e3fe686b1cb314e988fd95c8804790e6",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.goodyear.co.in",
+        "resolved_page_domain": "www.goodyear.co.in",
+        "asset_domain": "assets.goodyear.co.in"
+      }
+    },
+    {
+      "canonical_name": "Michelin India",
+      "normalized_name": "MICHELININDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 94,
+      "selection_reason": "India UPI merchant-transaction relevance: Government of India FY 2025–26 update; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2257087"
+      ],
+      "aliases": [
+        "Michelin India",
+        "Michelin"
+      ],
+      "website_url": "https://www.michelin.in/",
+      "source_page_url": "https://www.michelin.in/",
+      "source_url": "https://www.michelin.in/public/themes/michelin-commercial/assets/images/favicons/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/michelin-india-a180fb3ff525.png",
+      "content_type": "image/png",
+      "content_sha256": "a180fb3ff52552b1d9c05e87a13a79f3a584ab7516918d561554209f82052bd8",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.michelin.in",
+        "resolved_page_domain": "www.michelin.in",
+        "asset_domain": "www.michelin.in"
+      }
+    },
+    {
+      "canonical_name": "realme",
+      "normalized_name": "REALME",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 95,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "realme",
+        "Realme India"
+      ],
+      "website_url": "https://www.realme.com/in/",
+      "source_page_url": "https://www.realme.com/in/",
+      "source_url": "https://image01.realme.net/general/20240111/1704959188441eb3c2cc816e9406bb0a11105437907b0.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/realme-0ebb9094eac5.png",
+      "content_type": "image/png",
+      "content_sha256": "0ebb9094eac5a0c5719c10402090b819da657660a32ca8fde193315ab05a805f",
+      "asset_dimensions": {
+        "width": 96,
+        "height": 96,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.realme.com",
+        "resolved_page_domain": "www.realme.com",
+        "asset_domain": "image01.realme.net"
+      }
+    },
+    {
+      "canonical_name": "Nokia",
+      "normalized_name": "NOKIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 97,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Nokia",
+        "Nokia India"
+      ],
+      "website_url": "https://www.nokia.com/support/licensed-products/",
+      "source_page_url": "https://www.nokia.com/support/licensed-products/",
+      "source_url": "https://www.nokia.com/themes/custom/onenokia_reskin/icons/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/nokia-244c1dc2fb72.avif",
+      "content_type": "image/avif",
+      "content_sha256": "244c1dc2fb72aea473852e4130de44355709108c3e8592b7bb58e3e68fef4170",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.nokia.com",
+        "resolved_page_domain": "www.nokia.com",
+        "asset_domain": "www.nokia.com"
+      }
+    },
+    {
+      "canonical_name": "ASUS India",
+      "normalized_name": "ASUSINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 98,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "ASUS India",
+        "ASUS",
+        "Asus India"
+      ],
+      "website_url": "https://www.asus.com/in/",
+      "source_page_url": "https://www.asus.com/in/",
+      "source_url": "https://www.asus.com/new_asus_ico_256x256.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/asus-india-5b6a6fe201f8.png",
+      "content_type": "image/png",
+      "content_sha256": "5b6a6fe201f8f83109ebf040dd5182a2000f01b0fed65316ac63da58e5d5d7fe",
+      "asset_dimensions": {
+        "width": 256,
+        "height": 256,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.asus.com",
+        "resolved_page_domain": "www.asus.com",
+        "asset_domain": "www.asus.com"
+      }
+    },
+    {
+      "canonical_name": "HP India",
+      "normalized_name": "HPINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 99,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "HP India",
+        "HP",
+        "Hewlett Packard India"
+      ],
+      "website_url": "https://www.hp.com/in-en/home.html",
+      "source_page_url": "https://www.hp.com/in-en/home.html",
+      "source_url": "https://www.hp.com/content/dam/sites/worldwide/dems/hp_og_image.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/hp-india-b658defca265.avif",
+      "content_type": "image/avif",
+      "content_sha256": "b658defca265abb90d0bd2f877c47bd77573728311ff8257865047d62c5ac9d0",
+      "asset_dimensions": {
+        "width": 1200,
+        "height": 627,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.hp.com",
+        "resolved_page_domain": "www.hp.com",
+        "asset_domain": "www.hp.com"
+      }
+    },
+    {
+      "canonical_name": "Acer India",
+      "normalized_name": "ACERINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 100,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Acer India",
+        "Acer"
+      ],
+      "website_url": "https://www.acer.com/in-en/",
+      "source_page_url": "https://www.acer.com/in-en/",
+      "source_url": "https://www.acer.com/logo-acer.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/acer-india-a2f6746beb4f.png",
+      "content_type": "image/png",
+      "content_sha256": "a2f6746beb4f94c8f4e79c1dbdf1521391c2e61292ae84b1506e057d7d5d6647",
+      "asset_dimensions": {
+        "width": 600,
+        "height": 600,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.acer.com",
+        "resolved_page_domain": "www.acer.com",
+        "asset_domain": "www.acer.com"
+      }
+    },
+    {
+      "canonical_name": "LG India",
+      "normalized_name": "LGINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 101,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "LG India",
+        "LG"
+      ],
+      "website_url": "https://www.lg.com/in/",
+      "source_page_url": "https://www.lg.com/in/",
+      "source_url": "https://www.lg.com/etc.clientlibs/lge/clientlibs/clientlib-site/resources/images/favicons/apple-touch-icon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/lg-india-1024099aa7f8.avif",
+      "content_type": "image/avif",
+      "content_sha256": "1024099aa7f8873e3f2291687b4834a070657bce337c059b9cd9cea4c9d8689f",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.lg.com",
+        "resolved_page_domain": "www.lg.com",
+        "asset_domain": "www.lg.com"
+      }
+    },
+    {
+      "canonical_name": "Haier India",
+      "normalized_name": "HAIERINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 102,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Haier India",
+        "Haier"
+      ],
+      "website_url": "https://www.haier.com/in/",
+      "source_page_url": "https://www.haier.com/in/",
+      "source_url": "https://image.haier.com/in/images/haier2019_logo_wx.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/haier-india-4132eeb672cd.webp",
+      "content_type": "image/webp",
+      "content_sha256": "4132eeb672cd7fc5f681e5db65fd111f3a763f2190a49d79cfef14c36b612e76",
+      "asset_dimensions": {
+        "width": 300,
+        "height": 300,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.haier.com",
+        "resolved_page_domain": "www.haier.com",
+        "asset_domain": "image.haier.com"
+      }
+    },
+    {
+      "canonical_name": "Panasonic India",
+      "normalized_name": "PANASONICINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 103,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Panasonic India",
+        "Panasonic"
+      ],
+      "website_url": "https://www.panasonic.com/in/",
+      "source_page_url": "https://www.panasonic.com/in/",
+      "source_url": "https://www.panasonic.com",
+      "source_kind": "SIMPLE_ICONS",
+      "source_license": null,
+      "brand_color": "#0049AB",
+      "object_path": "simple-icons-16.27.0/panasonic-f71fd161676b.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "f71fd161676b343381c1c308cb3d0061430625513ab1fdf7ebc7664cec9db802",
+      "asset_dimensions": {
+        "width": 24,
+        "height": 24,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "SIMPLE_ICONS_WITH_OFFICIAL_SOURCE",
+        "simple_icons_slug": "panasonic",
+        "simple_icons_version": "16.27.0",
+        "official_source_url": "https://www.panasonic.com",
+        "color_override": null
+      }
+    },
+    {
+      "canonical_name": "TCL India",
+      "normalized_name": "TCLINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 104,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "TCL India",
+        "TCL"
+      ],
+      "website_url": "https://www.tcl.com/in/en",
+      "source_page_url": "https://www.tcl.com/in/en",
+      "source_url": "https://aws-obg-image-lb-3.tcl.com/content/dam/brandsite/it-resources/common/navigation/tcl-logo.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/tcl-india-48b02a9f8f8c.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "48b02a9f8f8cfcab2f29f4e8b16618072bc19281f7efdf4a0a836dfd1eae266c",
+      "asset_dimensions": {
+        "width": 68,
+        "height": 24,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.tcl.com",
+        "resolved_page_domain": "www.tcl.com",
+        "asset_domain": "aws-obg-image-lb-3.tcl.com"
+      }
+    },
+    {
+      "canonical_name": "Dyson India",
+      "normalized_name": "DYSONINDIA",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 105,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Dyson India",
+        "Dyson"
+      ],
+      "website_url": "https://www.dyson.in/",
+      "source_page_url": "https://www.dyson.in/",
+      "source_url": "https://www.dyson.in/media/icons/apple-touch-icon-152x152.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/dyson-india-aee6dba69e92.png",
+      "content_type": "image/png",
+      "content_sha256": "aee6dba69e92f7fd39702dfb5bf14d9590d4405cc815ae8ddb5af48f4dae993d",
+      "asset_dimensions": {
+        "width": 152,
+        "height": 152,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.dyson.in",
+        "resolved_page_domain": "www.dyson.in",
+        "asset_domain": "www.dyson.in"
+      }
+    },
+    {
+      "canonical_name": "Voltas",
+      "normalized_name": "VOLTAS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 107,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Voltas",
+        "Voltas India"
+      ],
+      "website_url": "https://www.voltas.com/",
+      "source_page_url": "https://www.voltas.com/",
+      "source_url": "https://cdn.shopify.com/s/files/1/0578/6845/2026/files/Voltas-beko-logo-svg.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/voltas-5e2ffec1154b.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "5e2ffec1154b4a494e42fb940c68661f318e09418023888651aca1437aab239f",
+      "asset_dimensions": {
+        "width": 667,
+        "height": 292,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.voltas.com",
+        "resolved_page_domain": "www.voltas.com",
+        "asset_domain": "cdn.shopify.com"
+      }
+    },
+    {
+      "canonical_name": "IFB",
+      "normalized_name": "IFB",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 109,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "IFB",
+        "IFB Appliances"
+      ],
+      "website_url": "https://www.ifbappliances.com/",
+      "source_page_url": "https://www.ifbappliances.com/",
+      "source_url": "https://www.ifbappliances.com/content/dam/ifbindustrieslimitedprogram/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/ifb-4e7b317d5795.png",
+      "content_type": "image/png",
+      "content_sha256": "4e7b317d5795ee24b61f57e7139783fc4c219b9d61ad9c7e0d9ff9bde510b7bc",
+      "asset_dimensions": {
+        "width": 128,
+        "height": 128,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.ifbappliances.com",
+        "resolved_page_domain": "www.ifbappliances.com",
+        "asset_domain": "www.ifbappliances.com"
+      }
+    },
+    {
+      "canonical_name": "Kent RO",
+      "normalized_name": "KENTRO",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 110,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Kent RO",
+        "Kent",
+        "Kent RO Systems"
+      ],
+      "website_url": "https://www.kent.co.in/",
+      "source_page_url": "https://www.kent.co.in/",
+      "source_url": "https://www.kent.co.in/cdn/shop/files/kent-logo-hop.svg?v=1775727660&width=110",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/kent-ro-9b7972bdc060.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "9b7972bdc060bbd733a3d0ca97ba1c46cafef480e401c4f2d3dd7ff60b03a825",
+      "asset_dimensions": {
+        "width": 752,
+        "height": 400,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.kent.co.in",
+        "resolved_page_domain": "www.kent.co.in",
+        "asset_domain": "www.kent.co.in"
+      }
+    },
+    {
+      "canonical_name": "Crompton",
+      "normalized_name": "CROMPTON",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 112,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Crompton",
+        "Crompton Greaves Consumer Electricals"
+      ],
+      "website_url": "https://www.crompton.co.in/",
+      "source_page_url": "https://www.crompton.co.in/",
+      "source_url": "https://www.crompton.co.in/cdn/shop/files/crompton-greaves-logo.webp",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/crompton-a90f5980e41b.webp",
+      "content_type": "image/webp",
+      "content_sha256": "a90f5980e41bcb7e9cac495b12337991ca7b9390b482250b9f8f4800054c4ad3",
+      "asset_dimensions": {
+        "width": 252,
+        "height": 48,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.crompton.co.in",
+        "resolved_page_domain": "www.crompton.co.in",
+        "asset_domain": "www.crompton.co.in"
+      }
+    },
+    {
+      "canonical_name": "Bajaj Electricals",
+      "normalized_name": "BAJAJELECTRICALS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 113,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Bajaj Electricals",
+        "Bajaj Electrical"
+      ],
+      "website_url": "https://www.bajajelectricals.com/",
+      "source_page_url": "https://www.bajajelectricals.com/",
+      "source_url": "https://www.bajajelectricals.com/cdn/shop/files/favicon-icon.jpg?crop=center&height=180&v=1719477569&width=180",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/bajaj-electricals-5ee45ccc996f.webp",
+      "content_type": "image/webp",
+      "content_sha256": "5ee45ccc996f1b4c436e51af9e13c597d7f2b8e33d63417d077919bb46f8bc3a",
+      "asset_dimensions": {
+        "width": 71,
+        "height": 71,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.bajajelectricals.com",
+        "resolved_page_domain": "www.bajajelectricals.com",
+        "asset_domain": "www.bajajelectricals.com"
+      }
+    },
+    {
+      "canonical_name": "V-Guard",
+      "normalized_name": "VGUARD",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 114,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "V-Guard",
+        "V Guard"
+      ],
+      "website_url": "https://www.vguard.in/",
+      "source_page_url": "https://www.vguard.in/",
+      "source_url": "https://www.vguard.in/ui/client/images/vguard-logo.jpg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/v-guard-eda271b031ea.jpg",
+      "content_type": "image/jpeg",
+      "content_sha256": "eda271b031ead79402dbbe992c6ef5177a45db3f77f24ff39b626f08c17b983f",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 87,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.vguard.in",
+        "resolved_page_domain": "www.vguard.in",
+        "asset_domain": "www.vguard.in"
+      }
+    },
+    {
+      "canonical_name": "Ginger Hotels",
+      "normalized_name": "GINGERHOTELS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 116,
+      "selection_reason": "Similarweb India travel and tourism traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+      ],
+      "aliases": [
+        "Ginger Hotels",
+        "Ginger"
+      ],
+      "website_url": "https://www.gingerhotels.com/",
+      "source_page_url": "https://www.gingerhotels.com/",
+      "source_url": "https://www.gingerhotels.com/favIcon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/ginger-hotels-1cad7bbe886e.png",
+      "content_type": "image/png",
+      "content_sha256": "1cad7bbe886e7cbcee7649c7baaea62b601e415f25cdefb9fe3b8f1aa43e5dcd",
+      "asset_dimensions": {
+        "width": 512,
+        "height": 512,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.gingerhotels.com",
+        "resolved_page_domain": "www.gingerhotels.com",
+        "asset_domain": "www.gingerhotels.com"
+      }
+    },
+    {
+      "canonical_name": "Marriott",
+      "normalized_name": "MARRIOTT",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 117,
+      "selection_reason": "Similarweb India travel and tourism traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+      ],
+      "aliases": [
+        "Marriott",
+        "Marriott Bonvoy",
+        "Marriott Hotels"
+      ],
+      "website_url": "https://www.marriott.com/",
+      "source_page_url": "https://www.marriott.com/",
+      "source_url": "https://marriott-hotels.marriott.com",
+      "source_kind": "SIMPLE_ICONS",
+      "source_license": null,
+      "brand_color": "#A70023",
+      "object_path": "simple-icons-16.27.0/marriott-f07cf9d0f35d.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "f07cf9d0f35dfd83b4101b72d90c63c99a885447c3d5aa5df6304108fd33b53e",
+      "asset_dimensions": {
+        "width": 24,
+        "height": 24,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "SIMPLE_ICONS_WITH_OFFICIAL_SOURCE",
+        "simple_icons_slug": "marriott",
+        "simple_icons_version": "16.27.0",
+        "official_source_url": "https://marriott-hotels.marriott.com",
+        "color_override": null
+      }
+    },
+    {
+      "canonical_name": "Hilton",
+      "normalized_name": "HILTON",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 118,
+      "selection_reason": "Similarweb India travel and tourism traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+      ],
+      "aliases": [
+        "Hilton",
+        "Hilton Honors",
+        "Hilton Hotels"
+      ],
+      "website_url": "https://www.hilton.com/en/locations/india/",
+      "source_page_url": "https://www.hilton.com/en/locations/india/",
+      "source_url": "https://www.hilton.com",
+      "source_kind": "SIMPLE_ICONS",
+      "source_license": null,
+      "brand_color": "#231F20",
+      "object_path": "simple-icons-16.27.0/hilton-6c4560967c5d.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "6c4560967c5d2e4f63bcc9df6df0676bd4895744c25613ca9273ca59d416d503",
+      "asset_dimensions": {
+        "width": 24,
+        "height": 24,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "SIMPLE_ICONS_WITH_OFFICIAL_SOURCE",
+        "simple_icons_slug": "hilton",
+        "simple_icons_version": "16.27.0",
+        "official_source_url": "https://www.hilton.com",
+        "color_override": null
+      }
+    },
+    {
+      "canonical_name": "Sarovar Hotels",
+      "normalized_name": "SAROVARHOTELS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 121,
+      "selection_reason": "Similarweb India travel and tourism traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+      ],
+      "aliases": [
+        "Sarovar Hotels",
+        "Sarovar"
+      ],
+      "website_url": "https://www.sarovarhotels.com/",
+      "source_page_url": "https://www.sarovarhotels.com/",
+      "source_url": "https://assets.simplotel.com/simplotel/image/upload/x_0,y_0,w_1500,h_751,r_0,c_crop,q_90/w_355,h_200,f_auto,c_fit/sarovar-hotels---indias-leading-hotel-chain/Sarovar_Hotels_Logo_qubx1f",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/sarovar-hotels-6ae1a3b03a99.avif",
+      "content_type": "image/avif",
+      "content_sha256": "6ae1a3b03a99be00c94d399f5fabead3a1ac8e3389560a748e1b5fbb790abab5",
+      "asset_dimensions": {
+        "width": 355,
+        "height": 178,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.sarovarhotels.com",
+        "resolved_page_domain": "www.sarovarhotels.com",
+        "asset_domain": "assets.simplotel.com"
+      }
+    },
+    {
+      "canonical_name": "The Fern Hotels",
+      "normalized_name": "THEFERNHOTELS",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 122,
+      "selection_reason": "Similarweb India travel and tourism traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+      ],
+      "aliases": [
+        "The Fern Hotels",
+        "Fern Hotels"
+      ],
+      "website_url": "https://www.fernhotels.com/",
+      "source_page_url": "https://www.fernhotels.com/",
+      "source_url": "https://www.fernhotels.com/images/logo.svg",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/the-fern-hotels-12da4a4f87ed.svg",
+      "content_type": "image/svg+xml",
+      "content_sha256": "12da4a4f87edef24c1562b753faf56bde4e0b460059665be81202e447557fcde",
+      "asset_dimensions": {
+        "width": 152,
+        "height": 69,
+        "scalable": true
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.fernhotels.com",
+        "resolved_page_domain": "www.fernhotels.com",
+        "asset_domain": "www.fernhotels.com"
+      }
+    },
+    {
+      "canonical_name": "Alliance Air",
+      "normalized_name": "ALLIANCEAIR",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 123,
+      "selection_reason": "Similarweb India travel and tourism traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+      ],
+      "aliases": [
+        "Alliance Air",
+        "AllianceAir"
+      ],
+      "website_url": "https://www.allianceair.in/",
+      "source_page_url": "https://www.allianceair.in/",
+      "source_url": "https://www.allianceair.in/aaalicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/alliance-air-09cffb327519.png",
+      "content_type": "image/png",
+      "content_sha256": "09cffb327519576a3b297b52a17982ad730a849dee46e33855fc88244c430ae2",
+      "asset_dimensions": {
+        "width": 100,
+        "height": 100,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.allianceair.in",
+        "resolved_page_domain": "www.allianceair.in",
+        "asset_domain": "www.allianceair.in"
+      }
+    },
+    {
+      "canonical_name": "Star Air",
+      "normalized_name": "STARAIR",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 124,
+      "selection_reason": "Similarweb India travel and tourism traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+      ],
+      "aliases": [
+        "Star Air",
+        "StarAir"
+      ],
+      "website_url": "https://www.starair.in/",
+      "source_page_url": "https://www.starair.in/",
+      "source_url": "https://www.starair.in/Content/images/logo/StarAir_Logo.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/star-air-6705c280032b.png",
+      "content_type": "image/png",
+      "content_sha256": "6705c280032bc7c79f6df0d039a00a936e661a7f5191fe7a10a2a951bf185432",
+      "asset_dimensions": {
+        "width": 1000,
+        "height": 295,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.starair.in",
+        "resolved_page_domain": "www.starair.in",
+        "asset_domain": "www.starair.in"
+      }
+    },
+    {
+      "canonical_name": "Fly91",
+      "normalized_name": "FLY91",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 125,
+      "selection_reason": "Similarweb India travel and tourism traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+      ],
+      "aliases": [
+        "Fly91",
+        "FLY91"
+      ],
+      "website_url": "https://fly91.in/",
+      "source_page_url": "https://fly91.in/",
+      "source_url": "https://fly91.in/sites/default/files/favicon.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/fly91-63b2d58ff222.png",
+      "content_type": "image/png",
+      "content_sha256": "63b2d58ff222dfd4290d4ca4049b8b315075712ebe419c0c1194b6c63c094a30",
+      "asset_dimensions": {
+        "width": 124,
+        "height": 124,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "fly91.in",
+        "resolved_page_domain": "fly91.in",
+        "asset_domain": "fly91.in"
+      }
+    },
+    {
+      "canonical_name": "Burger Singh",
+      "normalized_name": "BURGERSINGH",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 126,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Burger Singh",
+        "BurgerSingh"
+      ],
+      "website_url": "https://www.burgersinghonline.com/",
+      "source_page_url": "https://www.burgersinghonline.com/",
+      "source_url": "https://www.burgersinghonline.com/wp-content/uploads/2024/04/cropped-logo-v0.1-2-180x180.png",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/burger-singh-214969169ea4.png",
+      "content_type": "image/png",
+      "content_sha256": "214969169ea410ca357dad4f88a317e58a9cf7721533ee725aa7227b0b3c0aba",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.burgersinghonline.com",
+        "resolved_page_domain": "www.burgersinghonline.com",
+        "asset_domain": "www.burgersinghonline.com"
+      }
+    },
+    {
+      "canonical_name": "Biryani Blues",
+      "normalized_name": "BIRYANIBLUES",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 128,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Biryani Blues",
+        "BiryaniBlues"
+      ],
+      "website_url": "https://www.biryaniblues.com/",
+      "source_page_url": "https://www.biryaniblues.com/",
+      "source_url": "https://cdn.dotpe.in/longtail/store-logo/8083669/FENDSZeb.webp",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/biryani-blues-e69ff88a1ad0.webp",
+      "content_type": "image/webp",
+      "content_sha256": "e69ff88a1ad0f3167e236cd83ae28c1484ccafec2939274e4935d36389035eb4",
+      "asset_dimensions": {
+        "width": 600,
+        "height": 600,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "biryaniblues.com",
+        "resolved_page_domain": "www.biryaniblues.com",
+        "asset_domain": "cdn.dotpe.in"
+      }
+    },
+    {
+      "canonical_name": "Chai Sutta Bar",
+      "normalized_name": "CHAISUTTABAR",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 130,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Chai Sutta Bar",
+        "CSB Chai Sutta Bar"
+      ],
+      "website_url": "https://www.chaisuttabarindia.com/",
+      "source_page_url": "https://www.chaisuttabarindia.com/",
+      "source_url": "https://i0.wp.com/www.chaisuttabarindia.com/wp-content/uploads/2022/04/cropped-Chai-Sutta-Bar2.png?fit=180%2C180&",
+      "source_kind": "OFFICIAL_SITE_ICON",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/chai-sutta-bar-8ed965ad21e8.webp",
+      "content_type": "image/webp",
+      "content_sha256": "8ed965ad21e8c0cc7ce478cd499a6273c6ac7e367aacb62fa66913b5870cfc53",
+      "asset_dimensions": {
+        "width": 180,
+        "height": 180,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "chaisuttabarindia.com",
+        "resolved_page_domain": "www.chaisuttabarindia.com",
+        "asset_domain": "i0.wp.com"
+      }
+    },
+    {
+      "canonical_name": "Samosa Party",
+      "normalized_name": "SAMOSAPARTY",
+      "coverage": "ADDITIONAL",
+      "catalog_batch": "india-next-100-2026-08-batch-4",
+      "selection_rank": 131,
+      "selection_reason": "Similarweb India retail and ecommerce traffic coverage, June 2026; high transaction relevance",
+      "evidence_rank": null,
+      "transaction_relevance": "HIGH",
+      "evidence_urls": [
+        "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+      ],
+      "aliases": [
+        "Samosa Party",
+        "SamosaParty"
+      ],
+      "website_url": "https://samosaparty.in/",
+      "source_page_url": "https://samosaparty.in/",
+      "source_url": "https://cdn.uengage.io/brand_logo/logo-31763-1697094017.png",
+      "source_kind": "OFFICIAL_BRAND_ASSET",
+      "source_license": null,
+      "brand_color": null,
+      "object_path": "official-sites-next-100-batch-4/samosa-party-715e3803240f.png",
+      "content_type": "image/png",
+      "content_sha256": "715e3803240f8716ed9c5a726f7d7fc14dfe1b67b2d6336cecdf168eaab5daa2",
+      "asset_dimensions": {
+        "width": 358,
+        "height": 358,
+        "scalable": false
+      },
+      "identity_verification": {
+        "method": "OFFICIAL_DOMAIN",
+        "requested_domain": "www.samosaparty.in",
+        "resolved_page_domain": "samosaparty.in",
+        "asset_domain": "cdn.uengage.io"
+      }
     }
   ],
   "official_site_failures": [
@@ -17070,6 +21148,146 @@
         "healthcareIndia": {
           "label": "High-frequency Indian hospital, diagnostic, and healthcare payment coverage",
           "url": "https://irdai.gov.in/insurers/health-insurers"
+        }
+      }
+    },
+    "india-next-100-2026-08-batch-4": {
+      "generated_at": "2026-08-09T11:50:23.849Z",
+      "target": 100,
+      "selected": 100,
+      "candidate_pool": 189,
+      "evidence": {
+        "shopping": {
+          "label": "Apple App Store India Shopping chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6024"
+        },
+        "food": {
+          "label": "Apple App Store India Food & Drink chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6023"
+        },
+        "travel": {
+          "label": "Apple App Store India Travel chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6003"
+        },
+        "finance": {
+          "label": "Apple App Store India Finance chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6015"
+        },
+        "entertainment": {
+          "label": "Apple App Store India Entertainment chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6016"
+        },
+        "ecommerce": {
+          "label": "Similarweb India Ecommerce & Shopping rankings, June 2026",
+          "url": "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/e-commerce-and-shopping/trending/"
+        },
+        "brandz": {
+          "label": "Kantar BrandZ India Top 100, 2025",
+          "url": "https://www.kantar.com/campaigns/brandz/-/media/AB948C5121A54C28914E1B08C8B6EB1E.ashx"
+        },
+        "coverage": {
+          "label": "High-frequency India transaction category coverage",
+          "url": "https://www.kantar.com/campaigns/brandz/india"
+        },
+        "lifestyle": {
+          "label": "Apple App Store India Lifestyle chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6012"
+        },
+        "health": {
+          "label": "Apple App Store India Health & Fitness chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6013"
+        },
+        "medical": {
+          "label": "Apple App Store India Medical chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6020"
+        },
+        "education": {
+          "label": "Apple App Store India Education chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6017"
+        },
+        "music": {
+          "label": "Apple App Store India Music chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6011"
+        },
+        "productivity": {
+          "label": "Apple App Store India Productivity chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6007"
+        },
+        "photo": {
+          "label": "Apple App Store India Photo & Video chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6008"
+        },
+        "business": {
+          "label": "Apple App Store India Business chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6000"
+        },
+        "utilities": {
+          "label": "Apple App Store India Utilities chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6002"
+        },
+        "sports": {
+          "label": "Apple App Store India Sports chart, 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6004"
+        },
+        "transaction": {
+          "label": "High-frequency India card, UPI, bill-pay, retail, and subscription coverage",
+          "url": "https://www.kantar.com/campaigns/brandz/india"
+        },
+        "financeTraffic": {
+          "label": "Similarweb India Finance traffic ranking, June 2026",
+          "url": "https://www.similarweb.com/top-websites/india/finance/"
+        },
+        "foodTraffic": {
+          "label": "Similarweb India Food & Drink traffic ranking, June 2026",
+          "url": "https://www.similarweb.com/top-websites/india/food-and-drink/"
+        },
+        "travelTraffic": {
+          "label": "Similarweb India travel and tourism traffic coverage, June 2026",
+          "url": "https://www.similarweb.com/top-websites/india/travel-and-tourism/"
+        },
+        "telecomIndia": {
+          "label": "TRAI telecom and broadband-service coverage, accessed 9 August 2026",
+          "url": "https://www.trai.gov.in/"
+        },
+        "insurerIndia": {
+          "label": "IRDAI licensed insurance entities in India",
+          "url": "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+        },
+        "recurringBills": {
+          "label": "RBI Bharat Bill Payment System recurring-biller categories, accessed 9 August 2026",
+          "url": "https://www.rbi.org.in/scripts/FS_Overview.aspx?fn=9"
+        },
+        "paidSoftware": {
+          "label": "Common software, cloud, and subscription descriptors on Indian payment statements",
+          "url": "https://www.kantar.com/campaigns/brandz/india"
+        },
+        "healthcareIndia": {
+          "label": "India high-frequency hospital, diagnostics, and health-service coverage",
+          "url": "https://irdai.gov.in/insurers/health-insurers"
+        },
+        "financeApps": {
+          "label": "Apple App Store India Finance chart, accessed 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts/6015"
+        },
+        "securitiesIndia": {
+          "label": "SEBI registered stock broker and depository participant coverage, accessed 9 August 2026",
+          "url": "https://www.sebi.gov.in/intermediaries.html"
+        },
+        "insurersIndia": {
+          "label": "IRDAI licensed insurance-entity coverage, accessed 9 August 2026",
+          "url": "https://irdai.gov.in/en/list-of-licensed-insurance-entities"
+        },
+        "retailTraffic": {
+          "label": "Similarweb India retail and ecommerce traffic coverage, June 2026",
+          "url": "https://www.similarweb.com/top-websites/india/e-commerce-and-shopping/"
+        },
+        "appCharts": {
+          "label": "Apple App Store India category charts, accessed 9 August 2026",
+          "url": "https://apps.apple.com/in/iphone/charts"
+        },
+        "paymentRelevance": {
+          "label": "India UPI merchant-transaction relevance: Government of India FY 2025–26 update",
+          "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2257087"
         }
       }
     }
