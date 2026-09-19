@@ -28,7 +28,9 @@
 # Daily-jobs model per provider (sender classifier + merchant mapper):
 # OPENCODE_GO_MODEL=deepseek-v4-flash
 # OPENROUTER_MODEL=deepseek/deepseek-v4-flash
-# Only this authenticated app user can open the AI usage dashboard:
+# Only this authenticated app user can open the AI usage dashboard. No longer
+# a committed var (Task 7): set it here for local dev and with
+# `wrangler secret put AI_USAGE_ADMIN_USER_ID` for the deployed Worker.
 # AI_USAGE_ADMIN_USER_ID=a661a921-cdb0-503b-a810-4b25e4f15ca0
 
 # Per-tier attempt schedule before rotating to the next model tier
@@ -37,7 +39,8 @@
 
 # Pipeline trace logging (default off). One structured log line per
 # transaction with the full resolve outcome. Content-bearing (counterparty
-# names) — local dev only, never enable in production.
+# names) — local dev only. Refused outright when NODE_ENV=production, flag
+# or no flag.
 # EMAIL_PIPELINE_TRACE=true
 
 # Secret guarding the /internal/* ops endpoints (requeue, metadata backfill,
@@ -57,7 +60,37 @@
 # auto-verified.
 # TXN_DEDUP_WINDOW_MINUTES=10
 
+# Clerk Backend API secret (sk_test_… / sk_live_…). Lets DELETE /account remove
+# the Clerk user. Absent: the account data is still deleted and the nightly
+# purge job retries the Clerk deletion once the key is set.
+# CLERK_SECRET_KEY=sk_test_...
+
+# Days a processed / ignored / unrecognized email keeps its stored body before
+# the nightly purge job blanks it (default 90). The job itself is switched on
+# in the admin dashboard (job_schedules); failed emails always keep their body.
+# RAW_EMAIL_BODY_RETENTION_DAYS=90
+
 # Tavily web search for the daily merchant mapper (free tier: 1000/month).
 # Comma-separate multiple keys to rotate when one exhausts its quota.
 # Absent = mapper runs without web context, exactly as before.
 # TAVILY_API_KEY=tvly-aaa,tvly-bbb,tvly-ccc
+
+# Per-user fair use, reset at midnight Asia/Kolkata. The email cap applies
+# independently to listed message IDs and fetched bodies; AI includes retries.
+# Per-user overrides are editable in Settings -> AI operations -> Per-user fair use.
+# USER_DAILY_EMAIL_FETCH_CAP=500
+# USER_DAILY_AI_CALL_CAP=200
+# Nightly jobs take min(cap, backlog), in model batches of at most 40.
+# MAX_MERCHANTS_PER_RUN=200
+# MAX_SENDERS_PER_RUN=200
+
+# Frontend origins allowed to mint Clerk tokens for this backend, checked
+# against the token's `azp` claim (comma-separated). Clerk's default session
+# tokens carry no `aud`, so this is the cross-app protection. Unset = not
+# enforced, which is today's behaviour. Set it BEFORE the deploy that
+# enforces it, or every request 401s.
+# CLERK_AUTHORIZED_PARTIES=http://localhost:5173,https://app.example.com
+
+# Rate limiting needs no vars: the USER_RATE_LIMITER / IP_RATE_LIMITER
+# bindings live in wrangler.jsonc (300/min per user, 60/min per IP). They do
+# not exist under plain `vitest`, and the limiter fails open without them.

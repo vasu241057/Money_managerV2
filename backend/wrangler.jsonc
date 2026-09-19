@@ -7,10 +7,9 @@
 	"name": "backend",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-03-01",
+	// Keeps vars already set on the deployed Worker (including the
+	// AI_USAGE_ADMIN_USER_ID this file used to carry, now a secret — Task 7).
 	"keep_vars": true,
-	"vars": {
-		"AI_USAGE_ADMIN_USER_ID": "a661a921-cdb0-503b-a810-4b25e4f15ca0"
-	},
 	"observability": {
 		"enabled": true
 	},
@@ -38,6 +37,14 @@
 			{
 				"binding": "EMAIL_SYNC_QUEUE",
 				"queue": "money-manager-email-sync"
+			},
+			// Task 8. Create the queues before the first deploy that carries
+			// this block, or the deploy is rejected:
+			//   wrangler queues create money-manager-nightly
+			//   wrangler queues create money-manager-nightly-dlq
+			{
+				"binding": "NIGHTLY_QUEUE",
+				"queue": "money-manager-nightly"
 			}
 		],
 		"consumers": [
@@ -46,8 +53,77 @@
 				"max_batch_size": 1,
 				"max_batch_timeout": 5,
 				"max_retries": 5,
-				"dead_letter_queue": "money-manager-email-sync-dlq"
+				"dead_letter_queue": "money-manager-email-sync-dlq",
+				// Pooler slots, not CPU, are the ceiling: each invocation
+				// builds a client with max = DB_MAX_CONNECTIONS (5), so this
+				// bounds the worst case near 50 connections. A starting
+				// point to raise once there is a measurement (OPERATIONS.md).
+				"max_concurrency": 10
+			},
+			// Dead letters are logged (DLQ_MESSAGE) and acked. Without a
+			// consumer they are only a queue-depth number nobody sees. No
+			// retries and no DLQ of its own: this consumer never throws.
+			{
+				"queue": "money-manager-email-sync-dlq",
+				"max_batch_size": 10,
+				"max_batch_timeout": 30,
+				"max_retries": 0
+			},
+			// Nightly batch work (Task 8): sender classification, merchant
+			// mapping, body purge, and the backfill fan-out. Its own queue so
+			// a long job never sits in front of a user's email sync, and a
+			// low concurrency because these are few, large and unhurried.
+			{
+				"queue": "money-manager-nightly",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_retries": 5,
+				"dead_letter_queue": "money-manager-nightly-dlq",
+				"max_concurrency": 2
+			},
+			{
+				"queue": "money-manager-nightly-dlq",
+				"max_batch_size": 10,
+				"max_batch_timeout": 30,
+				"max_retries": 0
 			}
 		]
-	}
+	},
+	// Task 8, not yet enabled. Hyperdrive pools and keeps warm connections at
+	// the edge, removing the TLS handshake + pooler auth every request pays
+	// today. Create the resource against the PgBouncer URL (port 6543) and
+	// with query caching DISABLED — this app reads its own writes — then
+	// uncomment. Unbinding it again is the rollback: lib/config.ts falls back
+	// to SUPABASE_POOLER_URL with no code change.
+	//
+	//   wrangler hyperdrive create money-manager-db \
+	//     --connection-string="postgres://…@…:6543/postgres" --caching-disabled
+	//
+	// "hyperdrive": [
+	// 	{
+	// 		"binding": "HYPERDRIVE",
+	// 		"id": "<id printed by the create command>",
+	// 		"localConnectionString": "postgres://…@…:6543/postgres"
+	// 	}
+	// ],
+	// Per-colo fixed windows, not a global budget (A.2 §13). Both fail open
+	// in the Worker: a limiter outage must not take the API down.
+	"ratelimits": [
+		{
+			"name": "USER_RATE_LIMITER",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 300,
+				"period": 60
+			}
+		},
+		{
+			"name": "IP_RATE_LIMITER",
+			"namespace_id": "1002",
+			"simple": {
+				"limit": 60,
+				"period": 60
+			}
+		}
+	]
 }
