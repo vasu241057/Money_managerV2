@@ -19,14 +19,21 @@ import {
   FOURTH_BATCH_CANDIDATES,
   FOURTH_BATCH_EVIDENCE,
 } from './merchant-logo-batch-4-candidates.mjs';
+import {
+  FIFTH_BATCH_CANDIDATES,
+  FIFTH_BATCH_EVIDENCE,
+} from './merchant-logo-batch-5-candidates.mjs';
 
 const useSecondBatch = process.argv.includes('--batch-2');
 const useThirdBatch = process.argv.includes('--batch-3');
 const useFourthBatch = process.argv.includes('--batch-4');
-if ([useSecondBatch, useThirdBatch, useFourthBatch].filter(Boolean).length > 1) {
+const useFifthBatch = process.argv.includes('--batch-5');
+if ([useSecondBatch, useThirdBatch, useFourthBatch, useFifthBatch].filter(Boolean).length > 1) {
   throw new Error('Choose only one batch flag');
 }
-const BATCH_ID = useFourthBatch
+const BATCH_ID = useFifthBatch
+  ? 'india-next-100-2026-08-batch-5'
+  : useFourthBatch
   ? 'india-next-100-2026-08-batch-4'
   : useThirdBatch
   ? 'india-next-100-2026-08-batch-3'
@@ -74,6 +81,7 @@ const EVIDENCE = {
   ...SECOND_BATCH_EVIDENCE,
   ...THIRD_BATCH_EVIDENCE,
   ...FOURTH_BATCH_EVIDENCE,
+  ...FIFTH_BATCH_EVIDENCE,
 };
 
 function candidate(canonicalName, websiteUrl, aliases, evidenceKey, options = {}) {
@@ -273,7 +281,9 @@ const FIRST_BATCH_CANDIDATES = [
   candidate('Lionsgate Play', 'https://www.lionsgateplay.com/', [], 'entertainment'),
 ];
 
-const CANDIDATES = useFourthBatch
+const CANDIDATES = useFifthBatch
+  ? FIFTH_BATCH_CANDIDATES
+  : useFourthBatch
   ? FOURTH_BATCH_CANDIDATES
   : useThirdBatch
   ? THIRD_BATCH_CANDIDATES
@@ -293,7 +303,9 @@ const BLOCKED_SOURCE_HOSTS = [
 
 const manifestPath = resolve('supabase/merchant-logo-catalog.json');
 const reportPath = resolve(
-  useFourthBatch
+  useFifthBatch
+    ? 'supabase/merchant-logo-next-100-batch-5-report.json'
+    : useFourthBatch
     ? 'supabase/merchant-logo-next-100-batch-4-report.json'
     : useThirdBatch
     ? 'supabase/merchant-logo-next-100-batch-3-report.json'
@@ -302,7 +314,9 @@ const reportPath = resolve(
       : 'supabase/merchant-logo-next-100-report.json',
 );
 const seedMigrationPath = resolve(
-  useFourthBatch
+  useFifthBatch
+    ? 'supabase/migrations/20260809150000_seed_next_100_merchant_logo_catalog_batch_5.sql'
+    : useFourthBatch
     ? 'supabase/migrations/20260809140000_seed_next_100_merchant_logo_catalog_batch_4.sql'
     : useThirdBatch
     ? 'supabase/migrations/20260809130000_seed_next_100_merchant_logo_catalog_batch_3.sql'
@@ -311,7 +325,9 @@ const seedMigrationPath = resolve(
       : 'supabase/migrations/20260809100000_seed_next_100_merchant_logo_catalog.sql',
 );
 const contactSheetPath = resolve(
-  useFourthBatch
+  useFifthBatch
+    ? 'supabase/merchant-logo-next-100-batch-5-contact-sheet.png'
+    : useFourthBatch
     ? 'supabase/merchant-logo-next-100-batch-4-contact-sheet.png'
     : useThirdBatch
     ? 'supabase/merchant-logo-next-100-batch-3-contact-sheet.png'
@@ -319,23 +335,29 @@ const contactSheetPath = resolve(
       ? 'supabase/merchant-logo-next-100-batch-2-contact-sheet.png'
       : 'supabase/merchant-logo-next-100-contact-sheet.png',
 );
-const contactSheetReportPath = useThirdBatch
+const contactSheetReportPath = useFifthBatch
+  ? 'supabase/merchant-logo-next-100-batch-5-contact-sheet.png'
+  : useThirdBatch
   ? 'supabase/merchant-logo-next-100-batch-3-contact-sheet.png'
   : useFourthBatch
     ? 'supabase/merchant-logo-next-100-batch-4-contact-sheet.png'
   : useSecondBatch
     ? 'supabase/merchant-logo-next-100-batch-2-contact-sheet.png'
     : 'supabase/merchant-logo-next-100-contact-sheet.png';
-const assetBatchFolder = useFourthBatch
+const assetBatchFolder = useFifthBatch
+  ? 'next-100-batch-5'
+  : useFourthBatch
   ? 'next-100-batch-4'
   : useThirdBatch
   ? 'next-100-batch-3'
   : useSecondBatch
     ? 'next-100-batch-2'
     : 'next-100';
-const validateBatchOutputs = useSecondBatch || useThirdBatch || useFourthBatch;
+const validateBatchOutputs = useSecondBatch || useThirdBatch || useFourthBatch || useFifthBatch;
 const priorVerifiedReserveReportPath = resolve(
-  useFourthBatch
+  useFifthBatch
+    ? 'supabase/merchant-logo-next-100-batch-4-report.json'
+    : useFourthBatch
     ? 'supabase/merchant-logo-next-100-batch-3-report.json'
     : 'supabase/merchant-logo-next-100-batch-2-report.json',
 );
@@ -397,7 +419,7 @@ function isSameOfficialDomain(requestedUrl, resolvedUrl) {
 function isLikelyNonLogoAsset(assetUrl) {
   try {
     const path = decodeURIComponent(new URL(assetUrl).pathname).toLowerCase();
-    return /(?:social[-_]?media|download[-_]?app|(?:google|facebook|instagram|twitter|linkedin)[-_ ]?logo|(?:^|[-_/])banner(?:[-_./]|$)|(?:^|[-_/])hero(?:[-_./]|$)|(?:^|[-_/])carousel(?:[-_./]|$))/.test(path);
+    return /(?:social[-_]?media|download[-_]?app|(?:google|facebook|instagram|twitter|linkedin)[-_ ]?logo|(?:^|[-_/])(?:insurers|partners)(?:[-_./]|$)|(?:^|[-_/])banner(?:[-_./]|$)|(?:^|[-_/])hero(?:[-_./]|$)|(?:^|[-_/])carousel(?:[-_./]|$))/.test(path);
   } catch {
     return true;
   }
@@ -576,8 +598,22 @@ function buildSimpleIconRow(target, icon, rank) {
   });
 }
 
+function uniqueNormalizedAliases(values) {
+  const aliases = [];
+  const normalizedAliases = new Set();
+  for (const alias of values) {
+    const key = normalize(alias);
+    if (key && !normalizedAliases.has(key)) {
+      aliases.push(alias);
+      normalizedAliases.add(key);
+    }
+  }
+  return aliases;
+}
+
 function buildRow(target, rank, asset) {
   const evidence = EVIDENCE[target.evidenceKey];
+  const aliases = uniqueNormalizedAliases([target.canonicalName, ...target.aliases]);
   return {
     canonical_name: target.canonicalName,
     normalized_name: normalize(target.canonicalName),
@@ -592,7 +628,7 @@ function buildRow(target, rank, asset) {
     evidence_rank: target.evidenceRank,
     transaction_relevance: target.transactionRelevance,
     evidence_urls: [evidence.url],
-    aliases: [...new Set([target.canonicalName, ...target.aliases])],
+    aliases,
     website_url: asset.websiteUrl,
     source_page_url: asset.sourcePageUrl ?? asset.websiteUrl,
     source_url: asset.sourceUrl,
@@ -1041,7 +1077,7 @@ const priorBatchRows = new Map(
     .map((row) => [row.normalized_name, row]),
 );
 const priorVerifiedReserveRows = new Map();
-if ((useThirdBatch || useFourthBatch) && existsSync(priorVerifiedReserveReportPath)) {
+if ((useThirdBatch || useFourthBatch || useFifthBatch) && existsSync(priorVerifiedReserveReportPath)) {
   const priorReport = JSON.parse(readFileSync(priorVerifiedReserveReportPath, 'utf8'));
   for (const row of priorReport.verified_not_selected ?? []) {
     priorVerifiedReserveRows.set(row.normalized_name, row);
@@ -1125,7 +1161,12 @@ async function worker() {
       if (hash === cached.content_sha256) {
         attempts.push({
           ...entry,
-          row: { ...cached, selection_rank: entry.rank, _bytes: bytes },
+          row: {
+            ...cached,
+            aliases: uniqueNormalizedAliases([entry.target.canonicalName, ...entry.target.aliases]),
+            selection_rank: entry.rank,
+            _bytes: bytes,
+          },
           method: 'CACHE',
         });
         continue;
