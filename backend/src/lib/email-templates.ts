@@ -21,10 +21,23 @@
 //          formats ("May 18, 2026") aren't locked to the learn-time month
 //   {{mon}} anonymous month wildcard — a month word beside wildcarded
 //          numbers (due dates, footer dates); matched, not captured
+//   {{S}}  salutation wildcard — the greeting span after Dear/Hi/Hello/
+//          Namaste up to the next , ! or : (the addressee's name); matched
+//          as a bounded span, not captured, so a template never stores or
+//          depends on who the email was written to
 //
 // Static text (bank boilerplate) stays literal, which is what anchors the
 // match. Emails are whitespace-collapsed before both induction and
 // matching so sanitizer drift can't break templates.
+//
+// Scope: a template is PRIVATE to the user whose email taught it and only
+// ever applied to that user's mail. It becomes SHARED (owner null, applied
+// to everyone) only when a different user's email independently induces the
+// same skeleton with the same structural slot map — proof that the skeleton
+// contains nothing user-specific. FIXED merchant names are only learned when
+// the name is literally in the body (two-plus occurrences), so a payee that
+// reached the model from the subject or from its own normalization can never
+// be stamped onto other emails.
 
 import type { PaymentMethod, UUID } from '../../../shared/types';
 import type { SqlClient } from './db/client';
@@ -32,8 +45,13 @@ import { toNullableString, toRequiredString, toSafeInteger } from './db/serializ
 import { parseAmountTokenToPaise } from './identity';
 import { maskNumericTokens, parseDateTextToIso, unmaskText } from './masking';
 
+/** Default cap per partition: PRIVATE per (sender, owner), SHARED per sender. */
 export const MAX_TEMPLATES_PER_SENDER = 40;
 export const TEMPLATE_DISABLE_FAILURE_COUNT = 3;
+// The greeting must open the email (a short header line at most may precede
+// it) to count as a salutation; "hello" inside prose stays literal.
+const SALUTATION_WINDOW_CHARS = 60;
+const SALUTATION_MAX_SPAN = 80;
 // Below these, a skeleton is mostly wildcards and would over-match.
 const MIN_STATIC_CHARS_EXTRACT = 40;
 const MIN_STATIC_CHARS_IGNORE = 60;
@@ -41,11 +59,17 @@ const MIN_STATIC_CHARS_IGNORE = 60;
 const MAX_SKELETON_LENGTH = 20_000;
 
 const M_SENTINEL = '\u0000M\u0000';
+const S_SENTINEL = '\u0000S\u0000';
 const TOKEN_REF_GLOBAL_REGEX = /<(N\d+)>/g;
 // Non-global twin for .test() (a /g regex is stateful across .test calls).
 const TOKEN_REF_TEST_REGEX = /<N\d+>/;
-const MARKER_SPLIT_REGEX = /(\{\{(?:MON|mon|[NnWM])\}\})/;
-const MARKER_STRIP_REGEX = /\{\{(?:MON|mon|[NnWM]|\d+)\}\}/g;
+const MARKER_SPLIT_REGEX = /(\{\{(?:MON|mon|[NnWMS])\}\})/;
+const MARKER_STRIP_REGEX = /\{\{(?:MON|mon|[NnWMS]|\d+)\}\}/g;
+// Greeting word + addressee span up to the first , ! or : (lazy, bounded).
+const SALUTATION_REGEX = new RegExp(
+	`\\b(dear|hi|hello|namaste)\\s+([^,!:]{1,${SALUTATION_MAX_SPAN}}?)\\s*(?=[,!:])`,
+	'i',
+);
 // Month words near date slots are wildcarded so month-name formats don't
 // lock a template to the month it was learned in. Exact-name alternation
 // (not prefix matching), so e.g. merchant text "MAYUR" stays literal.
@@ -86,6 +110,8 @@ export interface TemplateSlotMap {
 	confidence?: number;
 }
 
+export type TemplateScope = 'PRIVATE' | 'SHARED';
+
 export interface EmailTemplate {
 	id: UUID;
 	from_address: string;
@@ -93,7 +119,15 @@ export interface EmailTemplate {
 	slot_map: TemplateSlotMap;
 	hit_count: number;
 	failure_count: number;
+	/** PRIVATE rows apply only to learned_from_user_id's mail. */
+	scope: TemplateScope;
+	learned_from_user_id: UUID | null;
 	compiled?: CompiledSkeleton | null;
+}
+
+/** True when this template may be applied to an email owned by `userId`. */
+export function isTemplateVisibleToUser(template: EmailTemplate, userId: UUID): boolean {
+	return template.scope === 'SHARED' || template.learned_from_user_id === userId;
 }
 
 export interface TemplateExtraction {
@@ -123,6 +157,25 @@ export function normalizeForTemplate(masked: string): string {
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Replaces the addressee span of a leading greeting ("Dear Vasu Khandelwal,"
+// → "Dear <S>,") so the person's name never enters a skeleton. Skipped when
+// the span holds a token ref: a referenced number must stay a slot.
+function wildcardSalutation(text: string): string {
+	const match = SALUTATION_REGEX.exec(text);
+	if (!match || match.index > SALUTATION_WINDOW_CHARS) return text;
+	const span = match[2] ?? '';
+	if (span.length === 0 || TOKEN_REF_TEST_REGEX.test(span) || span.includes(M_SENTINEL)) {
+		return text;
+	}
+	const spanStart = text.indexOf(span, match.index + (match[1]?.length ?? 0));
+	if (spanStart < 0) return text;
+	return text.slice(0, spanStart) + S_SENTINEL + text.slice(spanStart + span.length);
+}
+
+function finalizeSkeleton(skeleton: string): string {
+	return skeleton.split(S_SENTINEL).join('{{S}}');
 }
 
 function normalizeTokenRef(ref: string | null | undefined): string | null {
@@ -170,6 +223,11 @@ export function compileSkeleton(skeleton: string): CompiledSkeleton {
 			case '{{mon}}':
 				pattern += '[A-Za-z]{3,9}';
 				break;
+			// The addressee: any bounded run without the greeting terminators,
+			// never captured.
+			case '{{S}}':
+				pattern += `[^,!:]{1,${SALUTATION_MAX_SPAN}}`;
+				break;
 			default:
 				pattern += escapeRegExp(part);
 		}
@@ -199,16 +257,17 @@ export type TemplateInductionResult =
 	| { ok: true; skeleton: string; slot_map: TemplateSlotMap }
 	| { ok: false; reason: string };
 
-interface MerchantSpanResolution {
-	text: string;
-	merchant: TemplateMerchantSlot;
-}
+type MerchantSpanResolution =
+	| { ok: true; text: string; merchant: TemplateMerchantSlot }
+	| { ok: false; reason: string };
 
-// Wildcards the merchant span only when it occurs exactly once at word
-// boundaries and doesn't cover a referenced token. Anything else falls back
-// to a FIXED merchant name (the template remembers the AI's normalization),
-// which is always safe: a future email with different text at that spot
-// simply won't match and goes to the AI.
+// Wildcards the merchant span when it occurs exactly once at word boundaries
+// and doesn't cover a referenced token. Two-plus occurrences fall back to a
+// FIXED merchant name: the name is then literal in the skeleton, so the
+// template is inherently payee-specific and safe. Zero occurrences refuse to
+// learn (A.3 §2): the name came from the subject or from the model's own
+// normalization, the skeleton has no anchor for it, and a FIXED slot would
+// stamp this payee onto every future email of the same shape.
 function resolveMerchantSpan(
 	text: string,
 	counterpartyMasked: string | null,
@@ -216,20 +275,25 @@ function resolveMerchantSpan(
 	referencedIds: ReadonlySet<string>,
 ): MerchantSpanResolution {
 	if (!counterpartyMasked) {
-		return { text, merchant: { kind: 'NONE' } };
+		return { ok: true, text, merchant: { kind: 'NONE' } };
 	}
 
 	const fixedName = (unmaskText(counterpartyMasked, tokens) ?? counterpartyMasked)
 		.trim()
 		.slice(0, 500);
 	const fixed: MerchantSpanResolution = {
+		ok: true,
 		text,
 		merchant: fixedName ? { kind: 'FIXED', name: fixedName } : { kind: 'NONE' },
+	};
+	const notAnchored: MerchantSpanResolution = {
+		ok: false,
+		reason: 'merchant not anchored in body',
 	};
 
 	const needle = normalizeForTemplate(counterpartyMasked);
 	if (needle.length < 2) {
-		return fixed;
+		return notAnchored;
 	}
 
 	let occurrenceRegex: RegExp;
@@ -239,16 +303,19 @@ function resolveMerchantSpan(
 			'gi',
 		);
 	} catch {
-		return fixed;
+		return notAnchored;
 	}
 
 	const occurrences = [...text.matchAll(occurrenceRegex)];
-	if (occurrences.length !== 1) {
+	if (occurrences.length === 0) {
+		return notAnchored;
+	}
+	if (occurrences.length > 1) {
 		return fixed;
 	}
 
 	const start = occurrences[0]?.index ?? -1;
-	if (start < 0) return fixed;
+	if (start < 0) return notAnchored;
 	const spanText = text.slice(start, start + needle.length);
 	for (const refMatch of spanText.matchAll(TOKEN_REF_GLOBAL_REGEX)) {
 		if (referencedIds.has(refMatch[1] ?? '')) {
@@ -257,6 +324,7 @@ function resolveMerchantSpan(
 	}
 
 	return {
+		ok: true,
 		text: text.slice(0, start) + M_SENTINEL + text.slice(start + needle.length),
 		merchant: { kind: 'WILDCARD' },
 	};
@@ -391,7 +459,7 @@ function countStaticChars(skeleton: string): number {
 export function induceExtractTemplate(
 	input: TemplateInductionInput,
 ): TemplateInductionResult {
-	const text = normalizeForTemplate(input.masked_text);
+	const text = wildcardSalutation(normalizeForTemplate(input.masked_text));
 
 	const amountId = normalizeTokenRef(input.amount_token);
 	if (!amountId || !text.includes(`<${amountId}>`)) {
@@ -421,12 +489,11 @@ export function induceExtractTemplate(
 	const referencedIds = new Set<string>([amountId, ...dateRefIds]);
 	if (instrumentId) referencedIds.add(instrumentId);
 
-	const { text: spannedText, merchant } = resolveMerchantSpan(
-		text,
-		input.counterparty_raw_masked,
-		input.tokens,
-		referencedIds,
-	);
+	const span = resolveMerchantSpan(text, input.counterparty_raw_masked, input.tokens, referencedIds);
+	if (!span.ok) {
+		return { ok: false, reason: span.reason };
+	}
+	const { text: spannedText, merchant } = span;
 
 	// A FIXED merchant whose name still carries token refs would bake this
 	// email's digits into every future match (e.g. "POS 4521 KIRANA STORE"
@@ -442,13 +509,14 @@ export function induceExtractTemplate(
 	}
 
 	const {
-		skeleton,
+		skeleton: rawSkeleton,
 		ordinal_by_token_id: ordinalByTokenId,
 		month_ordinal: monthOrdinal,
 	} = buildSkeleton(spannedText, referencedIds, {
 		date_ref_ids: new Set(dateRefIds),
 		want_month: dateText !== null && MONTH_WORD_REGEX.test(dateText),
 	});
+	const skeleton = finalizeSkeleton(rawSkeleton);
 
 	if (skeleton.length > MAX_SKELETON_LENGTH) {
 		return { ok: false, reason: 'email too long to template' };
@@ -521,8 +589,8 @@ export function induceIgnoreTemplate(
 		return { ok: false, reason: 'email mentions money; not safe to auto-ignore' };
 	}
 
-	const text = normalizeForTemplate(maskedText);
-	const { skeleton } = buildSkeleton(text, new Set<string>());
+	const text = wildcardSalutation(normalizeForTemplate(maskedText));
+	const skeleton = finalizeSkeleton(buildSkeleton(text, new Set<string>()).skeleton);
 
 	if (skeleton.length > MAX_SKELETON_LENGTH) {
 		return { ok: false, reason: 'email too long to template' };
@@ -684,6 +752,8 @@ export function selfVerifyTemplate(
 		slot_map: slotMap,
 		hit_count: 0,
 		failure_count: 0,
+		scope: 'PRIVATE',
+		learned_from_user_id: null,
 	};
 
 	const applied = applyTemplate(probe, cleanText, internalDateIso);
@@ -717,6 +787,29 @@ export function skeletonHash(skeleton: string): string {
 	return hash.toString(16).padStart(16, '0');
 }
 
+function canonicalJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+	if (value && typeof value === 'object') {
+		const record = value as Record<string, unknown>;
+		return `{${Object.keys(record)
+			.filter(key => record[key] !== undefined)
+			.sort()
+			.map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+			.join(',')}}`;
+	}
+	return JSON.stringify(value);
+}
+
+/**
+ * The slot map without learn-time confidence, as a canonical string. Two
+ * users' inductions of the same format differ only in confidence, so this is
+ * what promotion compares (A.2 §1).
+ */
+export function structuralSlotMap(slotMap: TemplateSlotMap): string {
+	const { confidence: _confidence, ...structural } = slotMap;
+	return canonicalJson(structural);
+}
+
 interface EmailTemplateRowRaw {
 	id: unknown;
 	from_address: unknown;
@@ -724,6 +817,8 @@ interface EmailTemplateRowRaw {
 	slot_map: unknown;
 	hit_count: unknown;
 	failure_count: unknown;
+	scope?: unknown;
+	learned_from_user_id?: unknown;
 }
 
 function parseSlotMap(raw: unknown): TemplateSlotMap | null {
@@ -749,9 +844,15 @@ function parseSlotMap(raw: unknown): TemplateSlotMap | null {
 	return slotMap;
 }
 
+/**
+ * Every SHARED template for these senders plus the PRIVATE templates of the
+ * given users. The caller still filters per email with
+ * isTemplateVisibleToUser(): a batch may hold several users' mail.
+ */
 export async function loadTemplatesForSenders(
 	sql: SqlClient,
 	fromAddresses: string[],
+	userIds: UUID[],
 ): Promise<Map<string, EmailTemplate[]>> {
 	const bySender = new Map<string, EmailTemplate[]>();
 	if (fromAddresses.length === 0) {
@@ -759,10 +860,13 @@ export async function loadTemplatesForSenders(
 	}
 
 	const rows = await sql<EmailTemplateRowRaw[]>`
-		select et.id, et.from_address, et.skeleton, et.slot_map, et.hit_count, et.failure_count
+		select
+			et.id, et.from_address, et.skeleton, et.slot_map, et.hit_count, et.failure_count,
+			et.scope, et.learned_from_user_id
 		from public.email_templates as et
 		where et.from_address = any(${fromAddresses}::text[])
 			and et.status = 'ACTIVE'
+			and (et.scope = 'SHARED' or et.learned_from_user_id = any(${userIds}::uuid[]))
 		order by et.hit_count desc, et.created_at asc
 	`;
 
@@ -781,6 +885,10 @@ export async function loadTemplatesForSenders(
 			slot_map: slotMap,
 			hit_count: toSafeInteger(row.hit_count, 'email_templates.hit_count'),
 			failure_count: toSafeInteger(row.failure_count, 'email_templates.failure_count'),
+			// A row without a scope column (pre-Task-3 fixtures) reads as SHARED.
+			scope: row.scope === 'PRIVATE' ? 'PRIVATE' : 'SHARED',
+			learned_from_user_id:
+				typeof row.learned_from_user_id === 'string' ? (row.learned_from_user_id as UUID) : null,
 		};
 		const list = bySender.get(template.from_address) ?? [];
 		list.push(template);
@@ -790,57 +898,190 @@ export async function loadTemplatesForSenders(
 	return bySender;
 }
 
+export interface TemplateCaps {
+	/** PRIVATE templates kept per (sender, owner). */
+	private: number;
+	/** SHARED templates kept per sender. */
+	shared: number;
+}
+
+function parseCap(value: string | undefined, fallback: number): number {
+	const normalized = value?.trim() ?? '';
+	if (!/^[0-9]+$/.test(normalized)) return fallback;
+	const parsed = Number.parseInt(normalized, 10);
+	return parsed > 0 ? parsed : fallback;
+}
+
+/** EMAIL_TEMPLATE_PRIVATE_CAP / EMAIL_TEMPLATE_SHARED_CAP, default 40 each. */
+export function resolveTemplateCaps(env: Record<string, string | undefined>): TemplateCaps {
+	return {
+		private: parseCap(env.EMAIL_TEMPLATE_PRIVATE_CAP, MAX_TEMPLATES_PER_SENDER),
+		shared: parseCap(env.EMAIL_TEMPLATE_SHARED_CAP, MAX_TEMPLATES_PER_SENDER),
+	};
+}
+
 export interface SaveTemplateParams {
 	from_address: string;
 	skeleton: string;
 	slot_map: TemplateSlotMap;
 	learned_from_raw_email_id: UUID | null;
+	/** The user whose email taught this template; it starts PRIVATE to them. */
+	learned_from_user_id: UUID;
+	caps?: TemplateCaps;
+}
+
+export interface SaveTemplateOutcome {
+	/** The learner's PRIVATE row was new. */
+	inserted: boolean;
+	/** Another user already held the same structural template: one SHARED row now replaces the PRIVATE ones. */
+	promoted: boolean;
 }
 
 interface InsertedTemplateRowRaw {
 	id: unknown;
 }
 
-// Insert-or-skip on (from_address, skeleton_hash); concurrent learners of
-// the same format collapse into one row. After a successful insert the
-// sender's template set is pruned to the freshest MAX_TEMPLATES_PER_SENDER
-// so a noisy sender can't grow the table unboundedly.
+interface PromotionCandidateRowRaw {
+	id: unknown;
+	slot_map: unknown;
+	hit_count: unknown;
+	scope: unknown;
+	learned_from_user_id: unknown;
+}
+
+/**
+ * Stores the learner's PRIVATE row (insert-or-skip on the per-owner key), then
+ * — whether or not that insert landed (A.4 §3) — looks for other owners'
+ * ACTIVE PRIVATE rows with the same skeleton and an equal structural slot
+ * map. Finding one proves the skeleton holds nothing user-specific: one SHARED
+ * row (owner null, hit counts summed, the higher confidence) replaces those
+ * PRIVATE rows. Each partition — PRIVATE per (sender, owner), SHARED per
+ * sender — is pruned to its cap after a write, so a noisy sender can't grow
+ * the table unboundedly. One transaction; the candidate rows are locked so
+ * two concurrent learners cannot both promote.
+ */
 export async function saveTemplate(
 	sql: SqlClient,
 	params: SaveTemplateParams,
-): Promise<boolean> {
+): Promise<SaveTemplateOutcome> {
 	const hash = skeletonHash(params.skeleton);
-	const slotMapJson = JSON.stringify(params.slot_map);
+	const caps = params.caps ?? { private: MAX_TEMPLATES_PER_SENDER, shared: MAX_TEMPLATES_PER_SENDER };
+	const structure = structuralSlotMap(params.slot_map);
 
-	const inserted = await sql<InsertedTemplateRowRaw[]>`
-		insert into public.email_templates (
-			from_address, skeleton_hash, skeleton, slot_map, learned_from_raw_email_id
-		)
-		values (
-			${params.from_address}, ${hash}, ${params.skeleton},
-			${slotMapJson}::jsonb, ${params.learned_from_raw_email_id}
-		)
-		on conflict (from_address, skeleton_hash) do nothing
-		returning id
-	`;
+	return sql.begin(async (tx) => {
+		const txSql = tx as unknown as SqlClient;
 
-	if (inserted.length === 0) {
-		return false;
-	}
-
-	await sql`
-		delete from public.email_templates as et
-		where et.from_address = ${params.from_address}
-			and et.id in (
-				select stale.id
-				from public.email_templates as stale
-				where stale.from_address = ${params.from_address}
-				order by coalesce(stale.last_hit_at, stale.created_at) desc, stale.created_at desc
-				offset ${MAX_TEMPLATES_PER_SENDER}
+		const inserted = await txSql<InsertedTemplateRowRaw[]>`
+			insert into public.email_templates (
+				from_address, skeleton_hash, skeleton, slot_map, learned_from_raw_email_id,
+				learned_from_user_id, scope
 			)
-	`;
+			values (
+				${params.from_address}, ${hash}, ${params.skeleton},
+				${JSON.stringify(params.slot_map)}::jsonb, ${params.learned_from_raw_email_id},
+				${params.learned_from_user_id}, 'PRIVATE'
+			)
+			on conflict (from_address, skeleton_hash, learned_from_user_id) where scope = 'PRIVATE' do nothing
+			returning id
+		`;
+		let insertedPrivate = inserted.length > 0;
 
-	return true;
+		const candidates = await txSql<PromotionCandidateRowRaw[]>`
+			select et.id, et.slot_map, et.hit_count, et.scope, et.learned_from_user_id
+			from public.email_templates as et
+			where et.from_address = ${params.from_address}
+				and et.skeleton_hash = ${hash}
+				and et.status = 'ACTIVE'
+			for update
+		`;
+
+		const matching: Array<{ id: UUID; owner: UUID; hit_count: number; confidence: number | null }> = [];
+		let sharedTwin: { id: UUID; structure: string } | null = null;
+		for (const row of candidates) {
+			const slotMap = parseSlotMap(row.slot_map);
+			if (!slotMap) continue;
+			const rowStructure = structuralSlotMap(slotMap);
+			if (row.scope === 'SHARED') {
+				sharedTwin = { id: toRequiredString(row.id, 'email_templates.id') as UUID, structure: rowStructure };
+				continue;
+			}
+			if (rowStructure !== structure || typeof row.learned_from_user_id !== 'string') continue;
+			matching.push({
+				id: toRequiredString(row.id, 'email_templates.id') as UUID,
+				owner: row.learned_from_user_id as UUID,
+				hit_count: toSafeInteger(row.hit_count, 'email_templates.hit_count'),
+				confidence: typeof slotMap.confidence === 'number' ? slotMap.confidence : null,
+			});
+		}
+
+		let promoted = false;
+		const owners = new Set(matching.map(row => row.owner));
+		if (sharedTwin && sharedTwin.structure === structure && matching.length > 0) {
+			// The format is already shared: the private duplicates are redundant,
+			// and a row deleted here was never really learned.
+			await txSql`
+				delete from public.email_templates as et
+				where et.id = any(${matching.map(row => row.id)}::uuid[])
+			`;
+			insertedPrivate = false;
+		} else if (!sharedTwin && owners.size >= 2) {
+			const hitSum = matching.reduce((sum, row) => sum + row.hit_count, 0);
+			const confidences = matching
+				.map(row => row.confidence)
+				.filter((value): value is number => value !== null);
+			const sharedSlotMap: TemplateSlotMap = { ...params.slot_map };
+			if (confidences.length > 0) sharedSlotMap.confidence = Math.max(...confidences);
+			else delete sharedSlotMap.confidence;
+			const sharedRows = await txSql<InsertedTemplateRowRaw[]>`
+				insert into public.email_templates (
+					from_address, skeleton_hash, skeleton, slot_map, learned_from_raw_email_id,
+					learned_from_user_id, scope, hit_count
+				)
+				values (
+					${params.from_address}, ${hash}, ${params.skeleton},
+					${JSON.stringify(sharedSlotMap)}::jsonb, null,
+					null, 'SHARED', ${hitSum}
+				)
+				on conflict (from_address, skeleton_hash) where scope = 'SHARED' do nothing
+				returning id
+			`;
+			await txSql`
+				delete from public.email_templates as et
+				where et.id = any(${matching.map(row => row.id)}::uuid[])
+			`;
+			promoted = sharedRows.length > 0;
+		}
+
+		if (insertedPrivate) {
+			await txSql`
+				delete from public.email_templates as et
+				where et.id in (
+					select stale.id
+					from public.email_templates as stale
+					where stale.from_address = ${params.from_address}
+						and stale.scope = 'PRIVATE'
+						and stale.learned_from_user_id = ${params.learned_from_user_id}
+					order by coalesce(stale.last_hit_at, stale.created_at) desc, stale.created_at desc
+					offset ${caps.private}
+				)
+			`;
+		}
+		if (promoted) {
+			await txSql`
+				delete from public.email_templates as et
+				where et.id in (
+					select stale.id
+					from public.email_templates as stale
+					where stale.from_address = ${params.from_address}
+						and stale.scope = 'SHARED'
+					order by coalesce(stale.last_hit_at, stale.created_at) desc, stale.created_at desc
+					offset ${caps.shared}
+				)
+			`;
+		}
+
+		return { inserted: insertedPrivate, promoted };
+	}) as Promise<SaveTemplateOutcome>;
 }
 
 export async function recordTemplateHit(sql: SqlClient, templateId: UUID): Promise<void> {
