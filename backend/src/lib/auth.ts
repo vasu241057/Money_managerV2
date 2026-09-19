@@ -6,6 +6,11 @@ import { getAppConfig } from './config';
 import { getSqlClient } from './db/client';
 import { asyncHandler } from './http/async';
 import { serviceUnavailable, unauthorized } from './http/errors';
+import {
+	enforceIpRateLimit,
+	enforceUserRateLimit,
+	wasIpRateLimitConsidered,
+} from './http/rate-limit';
 import { parseEmail } from './http/validation';
 
 const AUTHORIZATION_HEADER = 'authorization';
@@ -438,19 +443,35 @@ export const requireAuthenticatedUser: RequestHandler = asyncHandler(async (req,
 
 	const authorizationHeader = getHeaderValue(req.header(AUTHORIZATION_HEADER) ?? undefined);
 	const bearerToken = parseBearerToken(authorizationHeader);
-	const payload = await verifyClerkJwt(bearerToken, {
-		jwksUrl: clerkJwksUrl,
-		issuer: clerkIssuer,
-		audience: parseCsvEnv(runtimeEnv.CLERK_JWT_AUDIENCE),
-		authorizedParties: parseCsvEnv(runtimeEnv.CLERK_AUTHORIZED_PARTIES),
-		clockSkewSeconds: parsePositiveIntegerEnv(
-			runtimeEnv.CLERK_JWT_CLOCK_SKEW_SECONDS,
-			DEFAULT_CLOCK_SKEW_SECONDS,
-		),
-	});
+	let payload: ClerkJwtPayload;
+	try {
+		payload = await verifyClerkJwt(bearerToken, {
+			jwksUrl: clerkJwksUrl,
+			issuer: clerkIssuer,
+			audience: parseCsvEnv(runtimeEnv.CLERK_JWT_AUDIENCE),
+			authorizedParties: parseCsvEnv(runtimeEnv.CLERK_AUTHORIZED_PARTIES),
+			clockSkewSeconds: parsePositiveIntegerEnv(
+				runtimeEnv.CLERK_JWT_CLOCK_SKEW_SECONDS,
+				DEFAULT_CLOCK_SKEW_SECONDS,
+			),
+		});
+	} catch (error) {
+		// A rejected token has no user to charge, so it falls to the IP
+		// limiter — otherwise an attacker could spend unlimited JWT
+		// verifications on an authenticated route. Requests the app-level
+		// middleware already handled are not charged twice; the request
+		// carries that fact, because by here express has rewritten its path.
+		if (!wasIpRateLimitConsidered(req)) {
+			await enforceIpRateLimit(runtimeEnv, req);
+		}
+		throw error;
+	}
 
 	const clerkSubject = (payload.sub as string).trim();
 	const userId = await deriveUserUuidFromClerkSubject(clerkSubject);
+	// Before the provisioning upsert below: a flood then costs one JWT
+	// verification each, not a database round trip each.
+	await enforceUserRateLimit(runtimeEnv, userId);
 	// The email comes ONLY from the verified Clerk token. A client-supplied
 	// header (the old x-user-email path) would let any authenticated caller
 	// write an arbitrary — including someone else's — address into their

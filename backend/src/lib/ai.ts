@@ -173,7 +173,24 @@ export function resolveEmailPipelineTraceEnabled(env: Env): boolean {
 	const raw = normalizeText(
 		(env as unknown as Record<string, string | undefined>).EMAIL_PIPELINE_TRACE,
 	)?.toLowerCase();
-	return raw === 'true' || raw === '1' || raw === 'on';
+	const requested = raw === 'true' || raw === '1' || raw === 'on';
+	if (!requested) {
+		return false;
+	}
+
+	// Refused outright when NODE_ENV says production (Task 7 log audit): the
+	// trace prints counterparty names and amounts, so the flag alone must not
+	// be enough to turn it on for a live mailbox. Unset NODE_ENV still allows
+	// it, because that is how local dev runs.
+	const nodeEnv = normalizeText(
+		(env as unknown as Record<string, string | undefined>).NODE_ENV,
+	)?.toLowerCase();
+	if (nodeEnv === 'production') {
+		console.warn('EMAIL_PIPELINE_TRACE_REFUSED', { nodeEnv });
+		return false;
+	}
+
+	return true;
 }
 
 // Template matching + learning is on by default; EMAIL_TEMPLATES=off forces
