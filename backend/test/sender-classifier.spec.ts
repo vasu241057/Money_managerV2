@@ -254,6 +254,57 @@ describe('sender-classifier worker', () => {
 		expect(queueSend).toHaveBeenCalledTimes(1);
 	});
 
+	it('takes min(cap, backlog) senders from MAX_SENDERS_PER_RUN and reports the backlog (Task 6)', async () => {
+		const insertedRules: string[] = [];
+		const sql = createHarnessSql({
+			gatedSenders: ['a@one.test', 'b@two.test', 'c@three.test'],
+			reaskPatterns: ['old@recheck.test'],
+			onInsertRule: values => {
+				insertedRules.push(values[0] as string);
+			},
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		getAppConfigMock.mockReturnValue({ ...appConfig, maxSendersPerRun: 2 });
+
+		const fetchMock = vi.fn().mockResolvedValue(
+			modelResponse([
+				{ address: 'a@one.test', financial: false, type: 'OTHER' },
+				{ address: 'b@two.test', financial: false, type: 'OTHER' },
+			]),
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await runSenderClassificationJob(JOB, createEnv());
+
+		expect(result.candidate_cap).toBe(2);
+		expect(result.reask_candidate_count).toBe(0);
+		expect(result.candidate_count).toBe(2);
+		expect(result.candidate_backlog_count).toBe(3);
+		const requestBody = JSON.parse(
+			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
+		) as { messages: Array<{ content: string }> };
+		const userContent = requestBody.messages[1]?.content ?? '';
+		expect(userContent).toContain('a@one.test');
+		expect(userContent).toContain('b@two.test');
+		expect(userContent).not.toContain('c@three.test');
+		expect(userContent).not.toContain('old@recheck.test');
+		expect(insertedRules).toEqual(['a@one.test', 'b@two.test']);
+	});
+
+	it('splits a capped sender backlog into chunks of at most forty', async () => {
+		const addresses = Array.from({ length: 45 }, (_, i) => `sender${i}@bank.test`);
+		getSqlClientMock.mockReturnValue(createHarnessSql({ gatedSenders: addresses }));
+		getAppConfigMock.mockReturnValue({ ...appConfig, maxSendersPerRun: 42 });
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(modelResponse(addresses.slice(0, 40).map(address => ({ address, financial: false, type: 'OTHER' }))))
+			.mockResolvedValueOnce(modelResponse(addresses.slice(40, 42).map(address => ({ address, financial: false, type: 'OTHER' }))));
+		vi.stubGlobal('fetch', fetchMock);
+		const result = await runSenderClassificationJob(JOB, createEnv());
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(result.classified_count).toBe(42);
+		expect(result.candidate_backlog_count).toBe(45);
+	});
+
 	it('ignores model-invented addresses and already-ruled senders', async () => {
 		const insertedRules: string[] = [];
 		const sql = createHarnessSql({

@@ -160,6 +160,7 @@ describe('email-sync-dispatcher', () => {
 			queue_batch_count: 13,
 			marked_dormant_user_count: 0,
 			reactivated_user_count: 0,
+			quota_skipped_user_count: 0,
 			continuation_offset: null,
 			scan_upper_user_id: scanUpperUserId,
 		});
@@ -242,6 +243,63 @@ describe('email-sync-dispatcher', () => {
 		expect(result.marked_dormant_user_count).toBe(1);
 		expect(result.enqueued_user_job_count).toBe(1);
 		expect(result.failed_user_job_count).toBe(0);
+	});
+
+	it('skips users who already spent today’s fetch cap, by default or by their override', async () => {
+		const nowMs = Date.parse('2026-03-09T00:00:00.000Z');
+		const scanUpperUserId = buildUserId(9_999);
+
+		const sql = createSqlMock([
+			(query) => {
+				// One join each: today's counter row and the per-user override.
+				expect(query).toContain('left join public.user_usage_daily as uud');
+				expect(query).toContain('left join public.user_limits as ul');
+				expect(query).toContain("(now() at time zone 'Asia/Kolkata')::date");
+				return [
+					// At the metadata cap even with no bodies: skipped.
+					{ ...createCandidate(1), messages_listed_today: 500, bodies_fetched_today: 0, daily_email_fetch_cap_override: null },
+					// Under the default but at their own lower cap: skipped.
+					{ ...createCandidate(2), bodies_fetched_today: 30, daily_email_fetch_cap_override: 30 },
+					// One under the default: enqueued.
+					{ ...createCandidate(3), bodies_fetched_today: 499, daily_email_fetch_cap_override: null },
+					// Over the default but under their own raised cap: enqueued.
+					{ ...createCandidate(4), bodies_fetched_today: 700, daily_email_fetch_cap_override: 1000 },
+					// No usage row today at all: enqueued.
+					{ ...createCandidate(5), bodies_fetched_today: null, daily_email_fetch_cap_override: null },
+				];
+			},
+		]);
+		const { queue, sendBatch } = createQueueMock();
+
+		const result = await dispatchEmailSyncUsers(sql, queue, nowMs, {
+			scan_upper_user_id: scanUpperUserId,
+		});
+
+		expect(sendBatch).toHaveBeenCalledTimes(1);
+		const batch = sendBatch.mock.calls[0]?.[0] as Array<{ body: { user_id: string } }>;
+		expect(batch.map((entry) => entry.body.user_id)).toEqual([buildUserId(3), buildUserId(4), buildUserId(5)]);
+		expect(result.quota_skipped_user_count).toBe(2);
+		expect(result.enqueued_user_job_count).toBe(3);
+	});
+
+	it('honours a lower env default for the fetch cap', async () => {
+		const nowMs = Date.parse('2026-03-09T00:00:00.000Z');
+		const sql = createSqlMock([
+			() => [
+				{ ...createCandidate(1), bodies_fetched_today: 100, daily_email_fetch_cap_override: null },
+				{ ...createCandidate(2), bodies_fetched_today: 99, daily_email_fetch_cap_override: null },
+			],
+		]);
+		const { queue, sendBatch } = createQueueMock();
+
+		const result = await dispatchEmailSyncUsers(sql, queue, nowMs, {
+			scan_upper_user_id: buildUserId(9_999),
+			daily_email_fetch_cap: 100,
+		});
+
+		const batch = sendBatch.mock.calls[0]?.[0] as Array<{ body: { user_id: string } }>;
+		expect(batch.map((entry) => entry.body.user_id)).toEqual([buildUserId(2)]);
+		expect(result.quota_skipped_user_count).toBe(1);
 	});
 
 	it('reactivates dormant users that are within inactivity threshold', async () => {
