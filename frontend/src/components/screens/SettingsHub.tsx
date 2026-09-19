@@ -7,6 +7,7 @@ import {
 	ReceiptText,
 	Store,
 	Tags,
+	Trash2,
 	WalletCards,
 	type LucideIcon,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ interface SettingsHubProps {
 	onOpenMerchants: () => void;
 	onOpenConnection: () => void;
 	onOpenAiUsage: () => void;
+	onOpenDeleteAccount: () => void;
 	onSignOut: () => void;
 }
 
@@ -117,6 +119,7 @@ export function SettingsHub({
 	onOpenMerchants,
 	onOpenConnection,
 	onOpenAiUsage,
+	onOpenDeleteAccount,
 	onSignOut,
 }: SettingsHubProps) {
 	const { signOut } = useAuth();
@@ -221,6 +224,13 @@ export function SettingsHub({
 								title="Sign out"
 								description="End this session on this device"
 								onClick={() => { void signOut().then(onSignOut); }}
+								destructive
+							/>
+							<SettingsRow
+								icon={Trash2}
+								title="Delete account"
+								description="Permanently erase your data and sign-in"
+								onClick={onOpenDeleteAccount}
 								destructive
 								isLast
 							/>
