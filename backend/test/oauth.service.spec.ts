@@ -406,4 +406,79 @@ describe('oauth.service', () => {
 			disconnectGoogleOAuthConnection(sql, '11111111-1111-4111-8111-111111111111'),
 		).resolves.toBeUndefined();
 	});
+
+	it('revokes the grant at Google before forgetting the tokens when the environment is supplied', async () => {
+		const userId = '11111111-1111-4111-8111-111111111111';
+		const env = createEnv();
+		const keyBytes = new Uint8Array(32).fill(7);
+		const { encryptTokenValue } = await import('../src/workers/email-sync-fetcher');
+		const encryptedRefresh = await encryptTokenValue('refresh-secret', keyBytes);
+
+		const queries: string[] = [];
+		const sql = createSqlMock([
+			(query) => {
+				queries.push(query);
+				expect(query).toContain('from public.oauth_connections as oc');
+				return [
+					{
+						id: '22222222-2222-4222-8222-222222222222',
+						user_id: userId,
+						provider: 'google',
+						email_address: 'person@gmail.test',
+						access_token: null,
+						refresh_token: encryptedRefresh,
+						last_sync_timestamp: 0,
+						sync_status: 'ACTIVE',
+						created_at: new Date('2026-09-01T00:00:00Z'),
+						updated_at: new Date('2026-09-01T00:00:00Z'),
+					},
+				];
+			},
+			(query) => {
+				queries.push(query);
+				expect(query).toContain('set access_token = null');
+				return [];
+			},
+		]);
+		const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			expect(input.toString()).toBe('https://oauth2.googleapis.com/revoke');
+			expect(init?.method).toBe('POST');
+			expect(init?.body).toBe('token=refresh-secret');
+			return new Response('', { status: 200 });
+		});
+
+		await expect(disconnectGoogleOAuthConnection(sql, userId, env, fetcher)).resolves.toBeUndefined();
+		expect(fetcher).toHaveBeenCalledTimes(1);
+		expect(queries).toHaveLength(2);
+	});
+
+	it('still forgets the tokens locally when Google cannot be reached', async () => {
+		const userId = '11111111-1111-4111-8111-111111111111';
+		const sql = createSqlMock([
+			() => [
+				{
+					id: '22222222-2222-4222-8222-222222222222',
+					user_id: userId,
+					provider: 'google',
+					email_address: 'person@gmail.test',
+					access_token: null,
+					refresh_token: 'plain-refresh',
+					last_sync_timestamp: 0,
+					sync_status: 'ACTIVE',
+					created_at: new Date('2026-09-01T00:00:00Z'),
+					updated_at: new Date('2026-09-01T00:00:00Z'),
+				},
+			],
+			(query) => {
+				expect(query).toContain('set access_token = null');
+				return [];
+			},
+		]);
+		const fetcher = vi.fn(async () => {
+			throw new Error('network down');
+		});
+
+		await expect(disconnectGoogleOAuthConnection(sql, userId, createEnv(), fetcher)).resolves.toBeUndefined();
+		expect(fetcher).toHaveBeenCalledTimes(1);
+	});
 });
