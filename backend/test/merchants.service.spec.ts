@@ -85,10 +85,12 @@ describe('merchants service', () => {
 		).toThrow('q must be at most 120 characters');
 	});
 
-	it('queries and maps merchants list', async () => {
+	it('queries and maps merchants list scoped to shared brands and the caller’s own payees', async () => {
 		const sql = createSqlMock((query, values) => {
 			expect(query).toContain('from public.global_merchants as gm');
+			expect(query).toContain('(gm.owner_user_id is null or gm.owner_user_id =');
 			expect(query).toContain("gm.canonical_name ilike");
+			expect(values[0]).toBe(USER_ID);
 			expect(values).toContain('%shop%');
 			expect(values).toContain(25);
 
@@ -111,7 +113,7 @@ describe('merchants service', () => {
 			limit: '25',
 		});
 
-		const result = await listGlobalMerchants(sql, query);
+		const result = await listGlobalMerchants(sql, USER_ID, query);
 		expect(result).toEqual([
 			{
 				id: '00000000-0000-4000-8000-000000000001',
