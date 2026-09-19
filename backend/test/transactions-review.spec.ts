@@ -369,7 +369,7 @@ describe('reviewTransaction', () => {
 
 	it('confirms an unconfirmed AI mapping when the review keeps its merchant', async () => {
 		const MERCHANT = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
-		const { sql, queries } = createSqlForReviewTests([
+		const { sql, queries, values } = createSqlForReviewTests([
 			() => [
 				{
 					transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -392,8 +392,9 @@ describe('reviewTransaction', () => {
 			})],
 			// probation lookup: AI-sourced alias pointing at the kept merchant
 			() => [{ merchant_id: MERCHANT, source: 'AI' }],
-			// confirm update
+			// this user's CONFIRM verdict, then the recompute from every verdict
 			() => [],
+			() => [{ confirmed: true, confirms: 1, dissents: 0 }],
 		]);
 
 		const result = await reviewTransaction(
@@ -401,11 +402,16 @@ describe('reviewTransaction', () => {
 			'11111111-1111-4111-8111-111111111111',
 			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 			{},
+			{ merchantConfirmationThreshold: 1 },
 		);
 
-		const confirm = queries[4] ?? '';
-		expect(confirm).toContain('set confirmed = true');
-		expect(confirm).toContain('confirmed = false');
+		const verdict = queries[4] ?? '';
+		expect(verdict).toContain('insert into public.merchant_confirmations');
+		expect(values[4]).toEqual([MERCHANT, '11111111-1111-4111-8111-111111111111', 'CONFIRM']);
+		const recompute = queries[5] ?? '';
+		expect(recompute).toContain('update public.global_merchants as gm');
+		expect(recompute).toContain('set confirmed = (tally.confirms >=');
+		expect(values[5]).toContain(1);
 		expect(result.transaction.merchant?.logo).toEqual({
 			public_url: 'https://example.supabase.co/storage/v1/object/public/merchant-logos/swiggy.svg',
 			brand_color: '#FC8019',
@@ -415,7 +421,7 @@ describe('reviewTransaction', () => {
 	it('dissents (demotes) an AI mapping when the review replaces its merchant', async () => {
 		const ALIAS_MERCHANT = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 		const USER_PICK = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
-		const { sql, queries } = createSqlForReviewTests([
+		const { sql, queries, values } = createSqlForReviewTests([
 			() => [
 				{
 					transaction_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -427,11 +433,14 @@ describe('reviewTransaction', () => {
 					financial_event_search_key: 'bundltech',
 				},
 			],
+			// merchant visibility: the user's pick is a shared brand or their own payee
+			() => [{ id: USER_PICK }],
 			() => [],
 			() => [transactionFeedRow({ transaction_merchant_id: USER_PICK, merchant_id: USER_PICK, merchant_canonical_name: 'Zepto', merchant_type: 'MERCHANT' })],
 			() => [{ merchant_id: ALIAS_MERCHANT, source: 'AI' }],
-			// dissent update
+			// this user's DISSENT verdict, then the recompute
 			() => [],
+			() => [{ confirmed: false, confirms: 0, dissents: 1 }],
 		]);
 
 		await reviewTransaction(
@@ -439,11 +448,18 @@ describe('reviewTransaction', () => {
 			'11111111-1111-4111-8111-111111111111',
 			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 			{ merchant_id: USER_PICK },
+			{ merchantConfirmationThreshold: 1 },
 		);
 
-		const dissent = queries[4] ?? '';
-		expect(dissent).toContain('dissent_count = gm.dissent_count + 1');
-		expect(dissent).toContain('set confirmed = false');
+		const visibility = queries[1] ?? '';
+		expect(visibility).toContain('gm.owner_user_id is null or gm.owner_user_id =');
+		const probation = queries[4] ?? '';
+		expect(probation).toContain('gma.owner_user_id is null or gma.owner_user_id =');
+		const verdict = queries[5] ?? '';
+		expect(verdict).toContain('insert into public.merchant_confirmations');
+		expect(values[5]).toEqual([ALIAS_MERCHANT, '11111111-1111-4111-8111-111111111111', 'DISSENT']);
+		const recompute = queries[6] ?? '';
+		expect(recompute).toContain('dissent_count = tally.dissents');
 	});
 
 	it('never touches SEED/MANUAL merchants from the probation path', async () => {

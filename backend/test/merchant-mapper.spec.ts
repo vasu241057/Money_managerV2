@@ -23,6 +23,8 @@ function createSqlMock(handler: QueryHandler): SqlClient {
 	const tag = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
 		const query = strings.join(' ').replace(/\s+/g, ' ').trim();
 		if (query.includes('insert into public.ai_usage_events')) return [];
+		// The known-person fan-out runs first on every job; nothing to fan out here.
+		if (query.includes("mma.last_resolution = 'P2P'")) return [];
 		return handler(query, values);
 	};
 	return tag as unknown as SqlClient;
@@ -220,6 +222,139 @@ describe('merchant-mapper worker', () => {
 		// still deserve the merchant name).
 		expect(relinkQuery).toContain('merchant_id is null');
 		expect(relinkQuery).not.toContain('classification_source');
+	});
+
+	it('takes min(cap, backlog) keys from MAX_MERCHANTS_PER_RUN and reports the backlog (Task 6)', async () => {
+		let candidateLimit: unknown = null;
+		let fanoutLimit: unknown = null;
+		const sql = createSqlMock((query, values) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('from public.financial_events as fe') && query.includes('group by fe.search_key')) {
+				candidateLimit = values.at(-1);
+				expect(query).toContain('count(*) over () as backlog_count');
+				return [
+					{ search_key: 'FSNECOMMERCEVENTURES', counterparty_raw: 'FSN E-COMMERCE VENTURES LTD', backlog_count: '7' },
+				];
+			}
+			if (query.includes('from public.global_merchants as gm') && query.includes('default_category_id is null')) return [];
+			if (query.includes('insert into public.global_merchants')) return [{ id: MERCHANT_ID }];
+			if (query.includes('insert into public.global_merchant_category_defaults')) return [];
+			if (query.includes('insert into public.global_merchant_aliases')) return [{ search_key: values[0] }];
+			if (query.includes('update public.transactions as t')) return [];
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		// The fan-out shares the cap; capture its limit through the central intercept's sibling.
+		const wrapped = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+			const query = strings.join(' ').replace(/\s+/g, ' ').trim();
+			if (query.includes("mma.last_resolution = 'P2P'")) {
+				fanoutLimit = values.at(-1);
+			}
+			return (sql as unknown as (s: TemplateStringsArray, ...v: unknown[]) => Promise<unknown>)(strings, ...values);
+		}) as unknown as SqlClient;
+		getSqlClientMock.mockReturnValue(wrapped);
+		getAppConfigMock.mockReturnValue({ ...appConfig, maxMerchantsPerRun: 1 });
+
+		stubModelFetch({
+			merchants: [{ key: 'FSNECOMMERCEVENTURES', canonical_name: 'Nykaa', type: 'MERCHANT', category: 'Shopping' }],
+		});
+
+		const result = await runMerchantMappingJob(JOB, createEnv());
+
+		expect(candidateLimit).toBe(1);
+		expect(fanoutLimit).toBe(1);
+		expect(result.candidate_cap).toBe(1);
+		expect(result.candidate_count).toBe(1);
+		expect(result.candidate_backlog_count).toBe(7);
+		expect(result.mapped_count).toBe(1);
+	});
+
+	it('writes a person once per paying user (owned) and a brand once (shared), remembering each resolution', async () => {
+		const USER_A = '00000000-0000-4000-8000-0000000000a1';
+		const USER_B = '00000000-0000-4000-8000-0000000000b1';
+		const insertedMerchants: Array<{ name: string; type: string; owner: unknown; query: string }> = [];
+		const insertedAliases: Array<{ key: string; owner: unknown; query: string }> = [];
+		let attemptValues: unknown[] = [];
+		let candidateQuery = '';
+
+		const sql = createSqlMock((query, values) => {
+			const categories = expenseCategoriesHandler(query);
+			if (categories) return categories;
+			if (query.includes('group by fe.search_key')) {
+				candidateQuery = query;
+				return [
+					{ search_key: 'AJAYKUMAR', counterparty_raw: 'AJAY KUMAR', user_ids: [USER_A, USER_B] },
+					{ search_key: 'BUNDLTECHNOLOGIES', counterparty_raw: 'BUNDL TECHNOLOGIES', user_ids: [USER_A] },
+				];
+			}
+			if (query.includes('default_category_id is null')) return [];
+			if (query.includes('insert into public.global_merchants')) {
+				// Owned payee inserts bind (name, owner) with the type literal; shared
+				// brand inserts bind (name, category, type) with a literal null owner.
+				const owned = query.includes("'P2P', 'AI', false,");
+				insertedMerchants.push({
+					name: values[0] as string,
+					type: owned ? 'P2P' : (values[2] as string),
+					owner: owned ? values[1] : null,
+					query,
+				});
+				return [{ id: `${MERCHANT_ID.slice(0, -1)}${insertedMerchants.length}` }];
+			}
+			if (query.includes('insert into public.global_merchant_category_defaults')) return [];
+			if (query.includes('insert into public.global_merchant_aliases')) {
+				// Shared alias inserts bind a literal null owner (no placeholder).
+				insertedAliases.push({ key: values[0] as string, owner: values[2] ?? null, query });
+				return [{ search_key: values[0] }];
+			}
+			if (query.includes('update public.transactions as t')) return [];
+			if (query.includes('insert into public.merchant_mapping_attempts')) {
+				attemptValues = values;
+				return [];
+			}
+			if (query.includes('insert into public.usage_counters')) return [];
+			throw new Error(`Unexpected query: ${query}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		stubModelFetch({
+			merchants: [
+				{ key: 'AJAYKUMAR', canonical_name: 'Ajay Kumar', type: 'P2P', category: null },
+				{ key: 'BUNDLTECHNOLOGIES', canonical_name: 'Swiggy', type: 'MERCHANT', category: 'Shopping' },
+			],
+		});
+
+		const result = await runMerchantMappingJob(JOB, createEnv());
+
+		expect(result.mapped_count).toBe(2);
+		expect(result.alias_created_count).toBe(3);
+		expect(result.owned_alias_created_count).toBe(2);
+		expect(result.person_fanout_count).toBe(0);
+		// One private payee per paying user, one shared brand.
+		expect(insertedMerchants.map(({ name, type, owner }) => ({ name, type, owner }))).toEqual([
+			{ name: 'Ajay Kumar', type: 'P2P', owner: USER_A },
+			{ name: 'Ajay Kumar', type: 'P2P', owner: USER_B },
+			{ name: 'Swiggy', type: 'MERCHANT', owner: null },
+		]);
+		expect(insertedAliases.map(({ key, owner }) => ({ key, owner }))).toEqual([
+			{ key: 'AJAYKUMAR', owner: USER_A },
+			{ key: 'AJAYKUMAR', owner: USER_B },
+			{ key: 'BUNDLTECHNOLOGIES', owner: null },
+		]);
+		// Owned writes target the owned partial indexes, shared writes the shared ones.
+		expect(insertedMerchants[0]?.query).toContain('on conflict (owner_user_id, canonical_name) where owner_user_id is not null');
+		expect(insertedMerchants[2]?.query).toContain('on conflict (canonical_name) where owner_user_id is null');
+		expect(insertedAliases[0]?.query).toContain('on conflict (search_key, owner_user_id) where owner_user_id is not null');
+		expect(insertedAliases[2]?.query).toContain('on conflict (search_key) where owner_user_id is null');
+		// Attempts remember what each key resolved to, with the person's name.
+		expect(attemptValues).toEqual([
+			['AJAYKUMAR', 'BUNDLTECHNOLOGIES'],
+			['P2P', 'MERCHANT'],
+			['Ajay Kumar', null],
+		]);
+		// A key counts as unmapped for a user when neither a shared alias nor
+		// that user's own alias covers it, and the candidate carries those users.
+		expect(candidateQuery).toContain('gma.owner_user_id is null or gma.owner_user_id = fe.user_id');
+		expect(candidateQuery).toContain('array_agg(distinct fe.user_id) as user_ids');
 	});
 
 	it('drops hallucinated categories and gives aggregators no category', async () => {
