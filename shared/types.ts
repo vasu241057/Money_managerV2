@@ -94,6 +94,10 @@ export const CANONICAL_MUTABLE_ENTITY = 'transactions' as const;
 export interface UserRow {
   id: UUID;
   email: string;
+  /** Identity provider that issued auth_subject; only 'clerk' today. */
+  auth_provider: string;
+  /** Provider subject (Clerk `sub`); null until the user's first request after Task 2. */
+  auth_subject: string | null;
   last_app_open_date: ISODateTimeString;
   created_at: ISODateTimeString;
 }
@@ -163,13 +167,19 @@ export interface GlobalMerchantRow {
   default_category_id: UUID | null;
   type: MerchantType;
   is_context_required: boolean;
+  /** Null: shared brand. Set: private payee visible only to that user. */
+  owner_user_id: UUID | null;
   created_at: ISODateTimeString;
   updated_at: ISODateTimeString;
 }
 
 export interface GlobalMerchantAliasRow {
-  search_key: string; // PRIMARY KEY
+  id: UUID;
+  /** Unique among shared aliases, and per owner among owned ones. */
+  search_key: string;
   merchant_id: UUID;
+  /** Mirrors the merchant's owner (trigger-enforced). */
+  owner_user_id: UUID | null;
   created_at: ISODateTimeString;
   updated_at: ISODateTimeString;
 }
@@ -674,6 +684,16 @@ export interface MerchantMappingJobPayload {
 }
 
 /**
+ * Nightly retention job: blanks stored email bodies older than
+ * RAW_EMAIL_BODY_RETENTION_DAYS (processed / ignored / unrecognized rows;
+ * failed rows keep theirs) and retries pending identity-provider deletions.
+ */
+export interface RawEmailBodyPurgeJobPayload {
+  job_type: 'RAW_EMAIL_BODY_PURGE';
+  triggered_at: ISODateTimeString;
+}
+
+/**
  * Backfill job for a newly allowlisted sender: refetches full bodies for the
  * user's metadata-only gated raw emails and re-enters them into extraction.
  */
@@ -694,7 +714,8 @@ export type EmailSyncJobPayload =
   | NormalizeRawEmailsJobPayload
   | SenderClassificationJobPayload
   | SenderBackfillJobPayload
-  | MerchantMappingJobPayload;
+  | MerchantMappingJobPayload
+  | RawEmailBodyPurgeJobPayload;
 
 
 export interface AiRequiresWebhookResponse {
@@ -1154,6 +1175,8 @@ export interface AiMerchantMapping {
   /** The canonical brand it was mapped to, e.g. "Swiggy". */
   canonical_name: string;
   merchant_type: MerchantType;
+  /** Null for shared brands; the owning user for private payees. */
+  owner_user_id: UUID | null;
   /** Default spending category; deliberately null for aggregators and people. */
   default_category: string | null;
   /** Whether the mapping has been confirmed by a human review. */
@@ -1191,7 +1214,11 @@ export interface AiTavilyKeysResponse {
 
 // ---- Nightly job schedules (admin-controlled, database-owned) ----
 
-export const SCHEDULED_JOB_NAMES = ['merchant_mapping', 'sender_classification'] as const;
+export const SCHEDULED_JOB_NAMES = [
+  'merchant_mapping',
+  'sender_classification',
+  'raw_email_body_purge',
+] as const;
 
 export type ScheduledJobName = (typeof SCHEDULED_JOB_NAMES)[number];
 
@@ -1223,6 +1250,59 @@ export interface JobSchedulesResponse {
 export interface JobScheduleUpdateRequest {
   enabled?: boolean;
   run_at_local?: string;
+}
+
+// ---- Account lifecycle (Task 5) ----
+
+/** The literal a caller must type to delete their account. */
+export const DELETE_ACCOUNT_CONFIRMATION = 'DELETE';
+
+export interface DeleteAccountRequest {
+  confirm: typeof DELETE_ACCOUNT_CONFIRMATION;
+}
+
+// ---- Quotas and fairness (Task 6) ----
+
+/** One user's counters for one IST day, against the caps that apply to them. */
+export interface UserQuotaRollupRow {
+  user_id: UUID;
+  email: string;
+  /** YYYY-MM-DD in Asia/Kolkata. */
+  day: string;
+  /** Gmail message ids listed (metadata only for gated mail). */
+  messages_listed: number;
+  /** Full bodies fetched — the counter the fetch cap is checked against. */
+  bodies_fetched: number;
+  /** Provider attempts ledgered in ai_usage_events for this user and day. */
+  ai_calls: number;
+  ai_cost_usd: number;
+  pending_extraction_count: number;
+  active_connection_count: number;
+  /** Mailboxes whose sync the fetch cap stopped mid-listing; each resumes from its saved page token. */
+  deferred_connection_count: number;
+  /** The caps in force: the override when set, else the env default. */
+  daily_email_fetch_cap: number;
+  daily_ai_call_cap: number;
+  email_fetch_cap_override: number | null;
+  ai_call_cap_override: number | null;
+  over_email_fetch_cap: boolean;
+  over_ai_call_cap: boolean;
+  last_pending_requeue_at: ISODateTimeString | null;
+}
+
+export interface UserQuotasResponse {
+  day: string;
+  defaults: {
+    daily_email_fetch_cap: number;
+    daily_ai_call_cap: number;
+  };
+  users: UserQuotaRollupRow[];
+}
+
+/** Admin-only. A null cap clears the override so the env default applies again. */
+export interface UserLimitsUpdateRequest {
+  daily_email_fetch_cap?: number | null;
+  daily_ai_call_cap?: number | null;
 }
 
 export interface AiUsageDashboardResponse {
