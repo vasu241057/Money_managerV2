@@ -25,10 +25,11 @@ export function createMerchantsRouter(): Router {
 	router.get(
 		'/',
 		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
 			const config = getAppConfig(runtimeEnv);
 			const sql = getSqlClient(config);
 			const query = parseListGlobalMerchantsQuery(req.query as Record<string, unknown>);
-			const response = await listGlobalMerchants(sql, query);
+			const response = await listGlobalMerchants(sql, userId, query);
 			res.status(200).json({ data: response });
 		}),
 	);
