@@ -195,6 +195,7 @@ interface MappingRowRaw {
 	raw_payee: unknown;
 	canonical_name: unknown;
 	merchant_type: unknown;
+	owner_user_id: unknown;
 	default_category_name: unknown;
 	confirmed: unknown;
 }
@@ -660,6 +661,7 @@ export async function getMerchantMappingSummary(
 				raw.counterparty_raw as raw_payee,
 				gm.canonical_name,
 				gm.type as merchant_type,
+				gm.owner_user_id,
 				c.name as default_category_name,
 				gm.confirmed
 			from public.global_merchant_aliases as gma
@@ -688,6 +690,7 @@ export async function getMerchantMappingSummary(
 				row.merchant_type,
 				'global_merchants.type',
 			) as MerchantType,
+			owner_user_id: toNullableString(row.owner_user_id, 'global_merchants.owner_user_id'),
 			default_category: toNullableString(
 				row.default_category_name,
 				'categories.name',

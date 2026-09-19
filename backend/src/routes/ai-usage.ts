@@ -6,6 +6,7 @@ import { getAppConfig } from '../lib/config';
 import { getSqlClient } from '../lib/db/client';
 import { asyncHandler } from '../lib/http/async';
 import { badRequest, notFound } from '../lib/http/errors';
+import { parseUuid } from '../lib/http/validation';
 import {
 	fetchTavilyKeysUsage,
 	getAiUsageDashboard,
@@ -20,6 +21,13 @@ import {
 	listJobSchedules,
 	updateJobSchedule,
 } from '../services/job-schedules.service';
+import {
+	isValidQuotaDay,
+	listUserQuotaRollup,
+	parseUserLimitsUpdate,
+	resolveDefaultQuotaCaps,
+	upsertUserLimits,
+} from '../services/user-quotas.service';
 
 function requireAiUsageAdmin(userId: string): void {
 	if (!isAiUsageAdmin(runtimeEnv, userId)) {
@@ -106,6 +114,59 @@ export function createAiUsageRouter(): Router {
 				throw notFound('NOT_FOUND', 'Unknown scheduled job');
 			}
 			res.status(200).json({ data: { schedule } });
+		}),
+	);
+
+	// Per-user counters against the fair-use caps (Task 6), today in IST by
+	// default. Carries each user's email: the operator has to know whose cap
+	// to change. Admin-only like everything on this router.
+	router.get(
+		'/users',
+		asyncHandler(async (req, res) => {
+			const userId = getAuthenticatedUserId(req);
+			requireAiUsageAdmin(userId);
+
+			const day = typeof req.query.day === 'string' ? req.query.day : null;
+			if (day !== null && !isValidQuotaDay(day)) {
+				throw badRequest('INVALID_DAY', 'day must use YYYY-MM-DD');
+			}
+
+			const config = getAppConfig(runtimeEnv);
+			const sql = getSqlClient(config);
+			const defaults = resolveDefaultQuotaCaps(config);
+			const rollup = await listUserQuotaRollup(sql, day, defaults);
+			res.status(200).json({ data: { day: rollup.day, defaults, users: rollup.users } });
+		}),
+	);
+
+	// Per-user cap overrides; null clears one so the env default applies.
+	router.put(
+		'/users/:userId/limits',
+		asyncHandler(async (req, res) => {
+			const adminUserId = getAuthenticatedUserId(req);
+			requireAiUsageAdmin(adminUserId);
+
+			let targetUserId: string;
+			try {
+				targetUserId = parseUuid(req.params.userId, 'userId');
+			} catch {
+				throw notFound('NOT_FOUND', 'Unknown user');
+			}
+			const update = parseUserLimitsUpdate(req.body);
+
+			const config = getAppConfig(runtimeEnv);
+			const sql = getSqlClient(config);
+			const exists = await upsertUserLimits(sql, targetUserId, update);
+			if (!exists) {
+				throw notFound('NOT_FOUND', 'Unknown user');
+			}
+			const defaults = resolveDefaultQuotaCaps(config);
+			const rollup = await listUserQuotaRollup(sql, null, defaults, 1, targetUserId);
+			const user = rollup.users[0];
+			if (!user) {
+				throw notFound('NOT_FOUND', 'Unknown user');
+			}
+			res.status(200).json({ data: { user } });
 		}),
 	);
 
