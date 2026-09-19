@@ -8,13 +8,22 @@ export class HttpError extends Error {
 	readonly statusCode: number;
 	readonly errorCode: string;
 	readonly details?: string;
+	/** Response headers the error itself requires, e.g. Retry-After on a 429. */
+	readonly headers?: Readonly<Record<string, string>>;
 
-	constructor(statusCode: number, errorCode: string, message: string, details?: string) {
+	constructor(
+		statusCode: number,
+		errorCode: string,
+		message: string,
+		details?: string,
+		headers?: Record<string, string>,
+	) {
 		super(message);
 		this.name = 'HttpError';
 		this.statusCode = statusCode;
 		this.errorCode = errorCode;
 		this.details = details;
+		this.headers = headers;
 	}
 }
 
@@ -43,6 +52,21 @@ export function notFound(errorCode: string, message: string, details?: string): 
 
 export function conflict(errorCode: string, message: string, details?: string): HttpError {
 	return new HttpError(409, errorCode, message, details);
+}
+
+/**
+ * 429 with the Retry-After the caller must honour. The window is whole
+ * seconds because that is what the rate-limit bindings count in.
+ */
+export function tooManyRequests(
+	errorCode: string,
+	message: string,
+	retryAfterSeconds: number,
+	details?: string,
+): HttpError {
+	return new HttpError(429, errorCode, message, details, {
+		'Retry-After': String(Math.max(1, Math.ceil(retryAfterSeconds))),
+	});
 }
 
 export function payloadTooLarge(errorCode: string, message: string, details?: string): HttpError {
