@@ -4,6 +4,7 @@ import type {
 	EmailSyncUserJobPayload,
 	MerchantMappingJobPayload,
 	NormalizeRawEmailsJobPayload,
+	RawEmailBodyPurgeJobPayload,
 	SenderBackfillJobPayload,
 	SenderClassificationJobPayload,
 	UUID,
@@ -18,6 +19,7 @@ export type NormalizeRawEmailsJob = NormalizeRawEmailsJobPayload;
 export type SenderClassificationJob = SenderClassificationJobPayload;
 export type SenderBackfillJob = SenderBackfillJobPayload;
 export type MerchantMappingJob = MerchantMappingJobPayload;
+export type RawEmailBodyPurgeJob = RawEmailBodyPurgeJobPayload;
 export type EmailSyncQueueJob = EmailSyncJobPayload;
 export type QueueJob = EmailSyncQueueJob;
 
@@ -191,6 +193,31 @@ export function buildMerchantMappingJob(
 export function parseMerchantMappingJob(value: unknown): MerchantMappingJob {
 	if (!isMerchantMappingJob(value)) {
 		throw new PoisonMessageError('Invalid MERCHANT_MAPPING payload');
+	}
+
+	return value;
+}
+
+export function isRawEmailBodyPurgeJob(value: unknown): value is RawEmailBodyPurgeJob {
+	if (!isRecord(value)) {
+		return false;
+	}
+
+	return value.job_type === 'RAW_EMAIL_BODY_PURGE' && isIsoDateTimeString(value.triggered_at);
+}
+
+export function buildRawEmailBodyPurgeJob(
+	triggeredAt: string = new Date().toISOString(),
+): RawEmailBodyPurgeJob {
+	return {
+		job_type: 'RAW_EMAIL_BODY_PURGE',
+		triggered_at: triggeredAt,
+	};
+}
+
+export function parseRawEmailBodyPurgeJob(value: unknown): RawEmailBodyPurgeJob {
+	if (!isRawEmailBodyPurgeJob(value)) {
+		throw new PoisonMessageError('Invalid RAW_EMAIL_BODY_PURGE payload');
 	}
 
 	return value;
