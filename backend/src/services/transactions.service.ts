@@ -19,7 +19,11 @@ import type {
 	UpdateTransactionRequest,
 } from '../../../shared/types';
 import { calculateBudget, type BudgetCalculationTransaction } from './budget-calculator';
-import { backfillDescriptorCategory } from './merchants.service';
+import {
+	assertMerchantVisibleToUser,
+	backfillDescriptorCategory,
+	recordMerchantConfirmation,
+} from './merchants.service';
 import type { SqlClient } from '../lib/db/client';
 import {
 	toIsoDateTime,
@@ -1398,6 +1402,9 @@ export async function createManualTransaction(
 			input.category_id ?? null,
 			input.type,
 		);
+		if (input.merchant_id) {
+			await assertMerchantVisibleToUser(transactionSql, userId, input.merchant_id);
+		}
 
 		const financialEventRows = await transactionSql<{ id: string }[]>`
 			insert into public.financial_events (
@@ -1557,6 +1564,9 @@ export async function updateTransaction(
 	if (input.type !== undefined || input.category_id !== undefined) {
 		await assertCategoryMatchesTransactionType(sql, userId, nextCategoryId, nextType);
 	}
+	if (input.merchant_id) {
+		await assertMerchantVisibleToUser(sql, userId, input.merchant_id);
+	}
 
 	let targetCreditCardAccountId: string | null | undefined;
 	if (input.credit_card_id !== undefined && input.credit_card_id !== null) {
@@ -1631,12 +1641,19 @@ export async function updateTransaction(
 	return updatedTransaction;
 }
 
+export interface ReviewTransactionOptions {
+	/** Distinct users needed to confirm (or demote) an AI merchant mapping; default 1. */
+	merchantConfirmationThreshold?: number;
+}
+
 export async function reviewTransaction(
 	sql: SqlClient,
 	userId: string,
 	transactionId: string,
 	input: ReviewTransactionRequest,
+	options: ReviewTransactionOptions = {},
 ): Promise<ReviewTransactionResponse> {
+	const confirmationThreshold = options.merchantConfirmationThreshold ?? 1;
 	return sql.begin(async (tx) => {
 		const transactionSql = tx as unknown as SqlClient;
 		const contextRows = await transactionSql<ReviewContextRow[]>`
@@ -1713,6 +1730,9 @@ export async function reviewTransaction(
 				nextType,
 			);
 		}
+		if (input.merchant_id) {
+			await assertMerchantVisibleToUser(transactionSql, userId, input.merchant_id);
+		}
 
 		await transactionSql`
 			update public.transactions as t
@@ -1752,17 +1772,21 @@ export async function reviewTransaction(
 		}
 
 		// Probation feedback for AI-created merchant mappings: a review that
-		// KEEPS the alias-suggested merchant confirms the mapping globally
-		// (auto-verify turns on for later hits); a review that replaces or
-		// clears it dissents — the mapping demotes back to probation.
-		// Threshold 1 while single-user; revisit as voting for multi-tenant.
+		// KEEPS the alias-suggested merchant is this user's CONFIRM vote, a
+		// review that replaces or clears it is their DISSENT. The merchant's
+		// confirmed flag is recomputed from every user's verdict against the
+		// threshold, so one user can no longer flip a shared brand for all.
 		const probationSearchKey = normalizeSearchKey(context.financial_event_search_key);
 		if (probationSearchKey) {
+			// Only aliases this user can see; an owned payee outranks a shared
+			// brand on the same key, matching the ingestion lookup.
 			const aliasRows = await transactionSql<Array<{ merchant_id: unknown; source: unknown }>>`
 				select gma.merchant_id, gm.source
 				from public.global_merchant_aliases as gma
 				join public.global_merchants as gm on gm.id = gma.merchant_id
 				where gma.search_key = ${probationSearchKey}
+					and (gma.owner_user_id is null or gma.owner_user_id = ${userId})
+				order by (gma.owner_user_id is not null) desc
 				limit 1
 			`;
 			const aliasRow = aliasRows[0];
@@ -1774,18 +1798,21 @@ export async function reviewTransaction(
 					'global_merchant_aliases.merchant_id',
 				);
 				if (nextMerchantId === aliasMerchantId) {
-					await transactionSql`
-						update public.global_merchants as gm
-						set confirmed = true, updated_at = now()
-						where gm.id = ${aliasMerchantId}
-							and gm.confirmed = false
-					`;
+					await recordMerchantConfirmation(
+						transactionSql,
+						userId,
+						aliasMerchantId,
+						'CONFIRM',
+						confirmationThreshold,
+					);
 				} else if (hasMerchantUpdate) {
-					await transactionSql`
-						update public.global_merchants as gm
-						set confirmed = false, dissent_count = gm.dissent_count + 1, updated_at = now()
-						where gm.id = ${aliasMerchantId}
-					`;
+					await recordMerchantConfirmation(
+						transactionSql,
+						userId,
+						aliasMerchantId,
+						'DISSENT',
+						confirmationThreshold,
+					);
 				}
 			}
 		}

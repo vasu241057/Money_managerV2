@@ -71,7 +71,9 @@ export function createTransactionsRouter(): Router {
 			const sql = getSqlClient(config);
 			const payload = parseReviewTransactionRequest(req.body);
 
-			const reviewResult = await reviewTransaction(sql, userId, transactionId, payload);
+			const reviewResult = await reviewTransaction(sql, userId, transactionId, payload, {
+				merchantConfirmationThreshold: config.merchantConfirmationThreshold,
+			});
 			res.status(200).json({ data: reviewResult });
 		}),
 	);
