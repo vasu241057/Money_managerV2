@@ -10,6 +10,7 @@ import {
 	normalizeForTemplate,
 	selfVerifyTemplate,
 	skeletonHash,
+	structuralSlotMap,
 } from '../src/lib/email-templates';
 import { maskNumericTokens } from '../src/lib/masking';
 
@@ -48,6 +49,8 @@ function asTemplate(skeleton: string, slotMap: TemplateSlotMap): EmailTemplate {
 		slot_map: slotMap,
 		hit_count: 0,
 		failure_count: 0,
+		scope: 'SHARED',
+		learned_from_user_id: null,
 	};
 }
 
@@ -133,9 +136,10 @@ describe('email template induction', () => {
 	});
 
 	it('refuses to learn a FIXED merchant whose name contains volatile digits', () => {
-		// The model paraphrased the counterparty, so the span is not found in
-		// the text (0 occurrences → FIXED), and the name carries this email's
-		// digits — replaying "POS 4521" onto future emails would go stale.
+		// The counterparty span covers the referenced instrument token, so it
+		// cannot be wildcarded and falls back to FIXED — but the name carries
+		// this email's digits, and replaying "POS 4521" onto future emails
+		// would go stale.
 		// N1=99.00, N2=4521, N3=05, N4=07, N5=26, N6=ref, N7=helpline.
 		const text =
 			'Alert: Rs.99.00 spent at POS 4521 KIRANA STORE on 05-07-26 using your card. Ref 5544332211. Call 18002586161 for disputes.';
@@ -145,15 +149,100 @@ describe('email template induction', () => {
 			tokens: masked.tokens,
 			amount_token: 'N1',
 			date_text: '<N3>-<N4>-<N5>',
-			instrument_token: null,
-			counterparty_raw_masked: 'KIRANA STORE (POS <N2>)',
+			instrument_token: 'N2',
+			counterparty_raw_masked: 'POS <N2> KIRANA STORE',
 			direction: 'debit',
-			payment_method: 'card',
+			payment_method: 'debit_card',
 			confidence: 0.8,
 		});
 		expect(induced.ok).toBe(false);
 		if (induced.ok) return;
 		expect(induced.reason).toContain('volatile');
+	});
+
+	it('refuses to learn when the counterparty is not anchored in the body', () => {
+		// The model paraphrased the counterparty (or took it from the subject):
+		// zero occurrences in the body means the skeleton has no anchor for it,
+		// and a FIXED slot would stamp this payee onto every email of this shape.
+		const text =
+			'Alert: Rs.99.00 spent at POS 4521 KIRANA STORE on 05-07-26 using your card. Ref 5544332211. Call 18002586161 for disputes.';
+		const masked = maskNumericTokens(text);
+		const induced = induceExtractTemplate({
+			masked_text: masked.masked,
+			tokens: masked.tokens,
+			amount_token: 'N1',
+			date_text: '<N3>-<N4>-<N5>',
+			instrument_token: null,
+			counterparty_raw_masked: 'Kirana Store Pvt Ltd',
+			direction: 'debit',
+			payment_method: 'debit_card',
+			confidence: 0.8,
+		});
+		expect(induced.ok).toBe(false);
+		if (induced.ok) return;
+		expect(induced.reason).toBe('merchant not anchored in body');
+	});
+
+	it('wildcards the addressee of a leading greeting so a name never enters a skeleton', () => {
+		// Same format as SOURCE_TEXT, addressed by name.
+		const named =
+			'Dear Vasu Khandelwal, Rs.123.45 has been debited from your account **9876 on 05-07-26 to VPA zepto@ybl. UPI Ref No 5544332211. Not you? Call 18002586161.';
+		const masked = maskNumericTokens(named);
+		const induced = induceExtractTemplate({
+			masked_text: masked.masked,
+			tokens: masked.tokens,
+			amount_token: 'N1',
+			date_text: '<N3>-<N4>-<N5>',
+			instrument_token: 'N2',
+			counterparty_raw_masked: 'zepto@ybl',
+			direction: 'debit',
+			payment_method: 'upi',
+			confidence: 0.9,
+		});
+		expect(induced.ok).toBe(true);
+		if (!induced.ok) return;
+		expect(induced.skeleton.startsWith('Dear {{S}}, Rs.{{N}}')).toBe(true);
+		expect(induced.skeleton).not.toContain('Vasu');
+		expect(induced.skeleton).not.toContain('Khandelwal');
+
+		// Self-verifies against the source, and applies to another addressee.
+		expect(
+			selfVerifyTemplate(induced.skeleton, induced.slot_map, named, INTERNAL_DATE, {
+				amount_in_paise: 12_345,
+				txn_timestamp: '2026-07-04T18:30:00.000Z',
+				instrument_last4: '9876',
+				counterparty_raw: 'zepto@ybl',
+			}),
+		).toBe(true);
+		const other =
+			'Dear Priya Sharma, Rs.9,999.00 has been debited from your account **1234 on 06-07-26 to VPA swiggy@icici. UPI Ref No 99887766550011. Not you? Call 18002586161.';
+		const applied = applyTemplate(asTemplate(induced.skeleton, induced.slot_map), other, INTERNAL_DATE);
+		expect(applied.outcome).toBe('extracted');
+		if (applied.outcome !== 'extracted') return;
+		expect(applied.extraction.counterparty_raw).toBe('swiggy@icici');
+		expect(applied.extraction.amount_in_paise).toBe(999_900);
+	});
+
+	it('leaves a greeting word that is not a salutation alone', () => {
+		// "Hello" deep in the prose is boilerplate, not an addressee.
+		const text =
+			'Transaction alert. Rs.123.45 has been debited from your account **9876 on 05-07-26 to VPA zepto@ybl. UPI Ref No 5544332211. For assistance say hello to our support desk anytime, we are available round the clock: 18002586161.';
+		const masked = maskNumericTokens(text);
+		const induced = induceExtractTemplate({
+			masked_text: masked.masked,
+			tokens: masked.tokens,
+			amount_token: 'N1',
+			date_text: '<N3>-<N4>-<N5>',
+			instrument_token: 'N2',
+			counterparty_raw_masked: 'zepto@ybl',
+			direction: 'debit',
+			payment_method: 'upi',
+			confidence: 0.9,
+		});
+		expect(induced.ok).toBe(true);
+		if (!induced.ok) return;
+		expect(induced.skeleton).not.toContain('{{S}}');
+		expect(induced.skeleton).toContain('say hello to our support desk');
 	});
 
 	it('still learns a WILDCARD merchant whose digits vary per email (VPA with digits)', () => {
@@ -529,6 +618,44 @@ describe('IGNORE templates', () => {
 });
 
 describe('skeleton plumbing', () => {
+	it('compiles the salutation marker to a bounded, non-captured span', () => {
+		const compiled = compileSkeleton('Dear {{S}}, Rs.{{N}} debited.');
+		expect(compiled.capture_kinds).toEqual(['N']);
+		expect(compiled.regex.test('Dear Vasu Khandelwal, Rs.<N1> debited.')).toBe(true);
+		expect(compiled.regex.test(`Dear ${'x'.repeat(120)}, Rs.<N1> debited.`)).toBe(false);
+		expect(compiled.regex.test('Dear Vasu, Rs.<N1> debited.')).toBe(true);
+	});
+
+	it('compares slot maps structurally, ignoring confidence and key order', () => {
+		const left: TemplateSlotMap = {
+			version: 1,
+			kind: 'EXTRACT',
+			direction: 'debit',
+			payment_method: 'upi',
+			amount_ordinal: 1,
+			date_pattern: '{{3}}-{{4}}-{{5}}',
+			instrument_ordinal: 2,
+			merchant: { kind: 'WILDCARD' },
+			confidence: 0.6,
+		};
+		const right: TemplateSlotMap = {
+			confidence: 0.95,
+			merchant: { kind: 'WILDCARD' },
+			instrument_ordinal: 2,
+			date_pattern: '{{3}}-{{4}}-{{5}}',
+			amount_ordinal: 1,
+			payment_method: 'upi',
+			direction: 'debit',
+			kind: 'EXTRACT',
+			version: 1,
+		};
+		expect(structuralSlotMap(left)).toBe(structuralSlotMap(right));
+		expect(structuralSlotMap({ ...left, payment_method: 'card' })).not.toBe(structuralSlotMap(right));
+		expect(structuralSlotMap({ ...left, merchant: { kind: 'FIXED', name: 'Swiggy' } })).not.toBe(
+			structuralSlotMap(right),
+		);
+	});
+
 	it('escapes regex specials in static text', () => {
 		const skeleton = normalizeForTemplate('Total (incl. tax): Rs.<N1> [paid] *thanks*').replace(
 			'<N1>',
