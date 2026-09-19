@@ -16,7 +16,11 @@ import {
 } from '../lib/db/serialization';
 import { asRecord, parseRequiredString } from '../lib/http/validation';
 import { badRequest, serviceUnavailable } from '../lib/http/errors';
-import { getGoogleRefreshConfig, refreshAccessTokenWithOcc } from '../workers/email-sync-fetcher';
+import {
+	decryptTokenValue,
+	getGoogleRefreshConfig,
+	refreshAccessTokenWithOcc,
+} from '../workers/email-sync-fetcher';
 
 const GOOGLE_OAUTH_PROVIDER = 'google';
 const GOOGLE_OAUTH_SCOPE =
@@ -24,6 +28,7 @@ const GOOGLE_OAUTH_SCOPE =
 const GOOGLE_OAUTH_AUTHORIZE_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_OAUTH_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_OAUTH_USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
+const GOOGLE_OAUTH_REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 const OAUTH_STATE_VERSION = 1;
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const ENCRYPTED_TOKEN_PREFIX = 'enc:v1:';
@@ -77,7 +82,7 @@ interface GoogleUserInfoResponse {
 	email?: unknown;
 }
 
-interface FetchLike {
+export interface FetchLike {
 	(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
@@ -524,7 +529,10 @@ async function updateDuplicateGoogleConnectionsToRevoked(
 		set
 			access_token = null,
 			refresh_token = null,
-			sync_status = 'AUTH_REVOKED'
+			sync_status = 'AUTH_REVOKED',
+			email_sync_continuation_token = null,
+			email_sync_continuation_after_seconds = null,
+			email_sync_continuation_max_seen = null
 		where oc.user_id = ${userId}
 			and oc.provider = ${GOOGLE_OAUTH_PROVIDER}
 			and oc.id <> ${keepConnectionId}
@@ -560,7 +568,12 @@ async function upsertGoogleConnectionByEmail(
 			provider = excluded.provider,
 			access_token = excluded.access_token,
 			refresh_token = excluded.refresh_token,
-			sync_status = 'ACTIVE'
+			sync_status = 'ACTIVE',
+			-- A fresh grant lists from the cursor; a page token parked by a
+			-- quota stop under the old grant is not worth resuming.
+			email_sync_continuation_token = null,
+			email_sync_continuation_after_seconds = null,
+			email_sync_continuation_max_seen = null
 		returning
 			id,
 			user_id,
@@ -730,16 +743,115 @@ export async function getGoogleOAuthConnectionStatus(
 	};
 }
 
+export interface GoogleTokenRevocationResult {
+	connection_count: number;
+	revoked_count: number;
+	failed_count: number;
+}
+
+async function revokeGoogleToken(token: string, fetcher: FetchLike): Promise<boolean> {
+	try {
+		const response = await fetcher(GOOGLE_OAUTH_REVOKE_ENDPOINT, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/x-www-form-urlencoded',
+			},
+			body: new URLSearchParams({ token }).toString(),
+		});
+		// 200: revoked. 400: Google no longer recognises the token (already
+		// revoked or expired), so there is nothing left to revoke.
+		return response.ok || response.status === 400;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Revokes the Google grant behind every connection of this user, so the
+ * refresh tokens the database is about to forget stop working at Google
+ * too. Best-effort: nothing here throws for a Google-side failure; the
+ * caller decides whether to log or refuse.
+ */
+export async function revokeGoogleOAuthTokens(
+	sql: SqlClient,
+	userId: UUID,
+	env: Env,
+	fetcher: FetchLike = fetch,
+): Promise<GoogleTokenRevocationResult> {
+	const connections = await listGoogleConnections(sql, userId);
+	const result: GoogleTokenRevocationResult = {
+		connection_count: connections.length,
+		revoked_count: 0,
+		failed_count: 0,
+	};
+	const withTokens = connections.filter(
+		connection => connection.refresh_token !== null || connection.access_token !== null,
+	);
+	if (withTokens.length === 0) {
+		return result;
+	}
+
+	let tokenEncryptionKey: Uint8Array;
+	try {
+		tokenEncryptionKey = getGoogleRefreshConfig(env).tokenEncryptionKey;
+	} catch (error) {
+		result.failed_count = withTokens.length;
+		console.warn('GOOGLE_TOKEN_REVOKE_UNCONFIGURED', {
+			userId,
+			message: error instanceof Error ? error.message : 'unknown',
+		});
+		return result;
+	}
+
+	for (const connection of withTokens) {
+		// Revoking the refresh token invalidates every access token minted
+		// from it; the access token is only the fallback when no refresh
+		// token was ever stored.
+		const stored = connection.refresh_token ?? connection.access_token;
+		if (stored === null) {
+			continue;
+		}
+		let plainToken: string;
+		try {
+			plainToken = await decryptTokenValue(stored, tokenEncryptionKey);
+		} catch {
+			result.failed_count += 1;
+			continue;
+		}
+		if (await revokeGoogleToken(plainToken, fetcher)) {
+			result.revoked_count += 1;
+		} else {
+			result.failed_count += 1;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * Disconnects Gmail: revokes the grant at Google when the environment is
+ * supplied (best-effort), then forgets the tokens locally either way.
+ */
 export async function disconnectGoogleOAuthConnection(
 	sql: SqlClient,
 	userId: UUID,
+	env?: Env,
+	fetcher: FetchLike = fetch,
 ): Promise<void> {
+	if (env) {
+		const revocation = await revokeGoogleOAuthTokens(sql, userId, env, fetcher);
+		console.info('GOOGLE_CONNECTION_DISCONNECTED', { userId, ...revocation });
+	}
+
 	await sql`
 		update public.oauth_connections as oc
 		set
 			access_token = null,
 			refresh_token = null,
-			sync_status = 'AUTH_REVOKED'
+			sync_status = 'AUTH_REVOKED',
+			email_sync_continuation_token = null,
+			email_sync_continuation_after_seconds = null,
+			email_sync_continuation_max_seen = null
 		where oc.user_id = ${userId}
 			and oc.provider = ${GOOGLE_OAUTH_PROVIDER}
 	`;
