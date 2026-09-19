@@ -21,6 +21,35 @@ describe('config', () => {
 		expect(config.supabasePoolerUrl).toBeNull();
 		expect(config.dbMaxConnections).toBe(5);
 		expect(config.dbConnectTimeoutSeconds).toBe(5);
+		expect(config.merchantConfirmationThreshold).toBe(1);
+		expect(config.rawEmailBodyRetentionDays).toBe(90);
+		expect(config.userDailyEmailFetchCap).toBe(500);
+		expect(config.userDailyAiCallCap).toBe(200);
+		expect(config.maxMerchantsPerRun).toBe(200);
+		expect(config.maxSendersPerRun).toBe(200);
+	});
+
+	it('reads the fair-use caps and nightly caps from the env, ignoring junk', () => {
+		const base = { SUPABASE_POOLER_URL: '' } as unknown as Env;
+		const config = getAppConfig({
+			...base,
+			USER_DAILY_EMAIL_FETCH_CAP: '1000',
+			USER_DAILY_AI_CALL_CAP: '50',
+			MAX_MERCHANTS_PER_RUN: '80',
+			MAX_SENDERS_PER_RUN: 'lots',
+		} as Env);
+		expect(config.userDailyEmailFetchCap).toBe(1000);
+		expect(config.userDailyAiCallCap).toBe(50);
+		expect(config.maxMerchantsPerRun).toBe(80);
+		expect(config.maxSendersPerRun).toBe(200);
+		expect(getAppConfig({ ...base, USER_DAILY_AI_CALL_CAP: '0' } as Env).userDailyAiCallCap).toBe(200);
+	});
+
+	it('reads the merchant confirmation threshold and falls back to 1 on junk', () => {
+		const base = { SUPABASE_POOLER_URL: '' } as unknown as Env;
+		expect(getAppConfig({ ...base, MERCHANT_CONFIRMATION_THRESHOLD: '3' } as Env).merchantConfirmationThreshold).toBe(3);
+		expect(getAppConfig({ ...base, MERCHANT_CONFIRMATION_THRESHOLD: '0' } as Env).merchantConfirmationThreshold).toBe(1);
+		expect(getAppConfig({ ...base, MERCHANT_CONFIRMATION_THRESHOLD: 'many' } as Env).merchantConfirmationThreshold).toBe(1);
 	});
 
 	it('uses env values when provided', () => {
