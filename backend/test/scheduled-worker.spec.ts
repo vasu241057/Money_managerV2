@@ -9,8 +9,10 @@ vi.mock('../src/lib/config', () => ({
 	getAppConfig: () => ({ databaseUrl: 'postgres://test' }),
 }));
 
+// The tick reads the stale-extraction MV; this stands in for that one query.
+const stalePendingQuery = vi.fn();
 vi.mock('../src/lib/db/client', () => ({
-	getSqlClient: () => ({}),
+	getSqlClient: () => (...args: unknown[]) => stalePendingQuery(...args),
 }));
 
 vi.mock('../src/services/job-schedules.service', () => ({
@@ -28,6 +30,15 @@ describe('scheduled.worker', () => {
 	beforeEach(() => {
 		claimDueScheduledJobs.mockReset().mockResolvedValue([]);
 		releaseScheduledJobClaim.mockReset().mockResolvedValue(undefined);
+		stalePendingQuery.mockReset().mockResolvedValue([
+			{
+				user_count: 0,
+				stale_count: 0,
+				oldest_created_at: null,
+				snapshot_at: null,
+				snapshot_age_seconds: null,
+			},
+		]);
 	});
 
 	it('enqueues EMAIL_SYNC_DISPATCH job for expected cron', async () => {
@@ -124,10 +135,13 @@ describe('scheduled.worker', () => {
 			{ waitUntil: vi.fn() } as unknown as ExecutionContext,
 		);
 
-		expect(claimDueScheduledJobs.mock.calls[0]?.[1]).toEqual(['sender_classification']);
+		expect(claimDueScheduledJobs.mock.calls[0]?.[1]).toEqual([
+			'sender_classification',
+			'raw_email_body_purge',
+		]);
 	});
 
-	it('offers both jobs to the claim by default', async () => {
+	it('offers every job to the claim by default', async () => {
 		const send = vi.fn().mockResolvedValue(undefined);
 
 		await handleScheduled(
@@ -138,7 +152,26 @@ describe('scheduled.worker', () => {
 
 		expect(claimDueScheduledJobs.mock.calls[0]?.[1]).toEqual([
 			'sender_classification',
+			'raw_email_body_purge',
 			'merchant_mapping',
+		]);
+	});
+
+	it('enqueues the body purge job when the schedule claims it', async () => {
+		claimDueScheduledJobs.mockResolvedValue([
+			{ job: 'raw_email_body_purge', previous_enqueued_on: null, previous_enqueued_at: null },
+		]);
+		const send = vi.fn().mockResolvedValue(undefined);
+
+		await handleScheduled(
+			controllerFor(EMAIL_SYNC_CRON),
+			{ EMAIL_SYNC_QUEUE: { send } } as unknown as Env,
+			{ waitUntil: vi.fn() } as unknown as ExecutionContext,
+		);
+
+		expect(send.mock.calls.map(([payload]) => payload.job_type).sort()).toEqual([
+			'EMAIL_SYNC_DISPATCH',
+			'RAW_EMAIL_BODY_PURGE',
 		]);
 	});
 
@@ -177,5 +210,112 @@ describe('scheduled.worker', () => {
 		expect(send.mock.calls[0]?.[0]).toEqual(
 			expect.objectContaining({ job_type: 'EMAIL_SYNC_DISPATCH' }),
 		);
+	});
+});
+
+describe('scheduled.worker stale extraction alert', () => {
+	beforeEach(() => {
+		claimDueScheduledJobs.mockReset().mockResolvedValue([]);
+		releaseScheduledJobClaim.mockReset().mockResolvedValue(undefined);
+		stalePendingQuery.mockReset();
+	});
+
+	async function runTick(): Promise<void> {
+		const pending: Promise<unknown>[] = [];
+		await handleScheduled(
+			controllerFor(EMAIL_SYNC_CRON),
+			{ EMAIL_SYNC_QUEUE: { send: vi.fn().mockResolvedValue(undefined) } } as unknown as Env,
+			{
+				waitUntil: (promise: Promise<unknown>) => {
+					pending.push(promise);
+				},
+			} as unknown as ExecutionContext,
+		);
+		await Promise.all(pending);
+	}
+
+	it('logs STALE_PENDING_EXTRACTION when the view has rows', async () => {
+		stalePendingQuery.mockResolvedValue([
+			{
+				user_count: 2,
+				stale_count: '17',
+				oldest_created_at: '2026-09-19T01:00:00.000Z',
+				snapshot_at: '2026-09-19T01:30:00.000Z',
+				snapshot_age_seconds: '120',
+			},
+		]);
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await runTick();
+
+		const alert = errorLog.mock.calls.find((call) => call[0] === 'STALE_PENDING_EXTRACTION');
+		expect(alert).toBeDefined();
+		expect(alert?.[1]).toMatchObject({ userCount: 2, staleCount: 17 });
+		errorLog.mockRestore();
+	});
+
+	it('stays quiet when nothing is stale', async () => {
+		stalePendingQuery.mockResolvedValue([
+			{
+				user_count: 0,
+				stale_count: '0',
+				oldest_created_at: null,
+				snapshot_at: null,
+				snapshot_age_seconds: null,
+			},
+		]);
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await runTick();
+
+		expect(errorLog.mock.calls.some((call) => call[0] === 'STALE_PENDING_EXTRACTION')).toBe(false);
+		errorLog.mockRestore();
+	});
+
+	it('still dispatches when the view read fails', async () => {
+		stalePendingQuery.mockRejectedValue(new Error('relation missing'));
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const send = vi.fn().mockResolvedValue(undefined);
+		const pending: Promise<unknown>[] = [];
+
+		await handleScheduled(
+			controllerFor(EMAIL_SYNC_CRON),
+			{ EMAIL_SYNC_QUEUE: { send } } as unknown as Env,
+			{
+				waitUntil: (promise: Promise<unknown>) => {
+					pending.push(promise);
+				},
+			} as unknown as ExecutionContext,
+		);
+		await Promise.all(pending);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(
+			errorLog.mock.calls.some((call) => call[0] === 'STALE_PENDING_EXTRACTION_CHECK_FAILED'),
+		).toBe(true);
+		errorLog.mockRestore();
+	});
+
+	it('reports a frozen view instead of alerting on its numbers', async () => {
+		// pg_cron refreshes the view; if it stops, the counts describe an
+		// earlier moment and must not be raised as current.
+		stalePendingQuery.mockResolvedValue([
+			{
+				user_count: 5,
+				stale_count: '99',
+				oldest_created_at: '2026-09-01T00:00:00.000Z',
+				snapshot_at: '2026-09-01T00:00:00.000Z',
+				snapshot_age_seconds: '1600000',
+			},
+		]);
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await runTick();
+
+		expect(
+			errorLog.mock.calls.some((call) => call[0] === 'STALE_PENDING_EXTRACTION_SNAPSHOT_STALE'),
+		).toBe(true);
+		expect(errorLog.mock.calls.some((call) => call[0] === 'STALE_PENDING_EXTRACTION')).toBe(false);
+		errorLog.mockRestore();
 	});
 });

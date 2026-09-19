@@ -14,6 +14,7 @@ const {
 		failed_user_job_count: 0,
 		queue_batch_count: 0,
 		marked_dormant_user_count: 0,
+		quota_skipped_user_count: 0,
 		reactivated_user_count: 0,
 		continuation_offset: null,
 		scan_upper_user_id: null,
@@ -63,6 +64,23 @@ vi.mock('../src/workers/email-ai-normalizer', () => ({
 
 vi.mock('../src/workers/merchant-mapper', () => ({
 	runMerchantMappingJob: runMerchantMappingJobMock,
+}));
+
+const runRawEmailBodyPurgeJobMock = vi.fn().mockResolvedValue({
+	retention_days: 90,
+	purge: { purged_count: 0, batch_count: 1, exhausted: false },
+	clerk_retry: {
+		pending_count: 0,
+		deleted_count: 0,
+		user_returned_count: 0,
+		failed_count: 0,
+		skipped_reason: null,
+	},
+	idempotency: { deleted_count: 0, exhausted: false },
+});
+
+vi.mock('../src/workers/raw-email-body-purge', () => ({
+	runRawEmailBodyPurgeJob: (...args: unknown[]) => runRawEmailBodyPurgeJobMock(...args),
 }));
 
 import { QUEUE_NAMES } from '../src/lib/infra';
@@ -252,6 +270,31 @@ describe('queue.worker', () => {
 		);
 
 		expect(runMerchantMappingJobMock).toHaveBeenCalledTimes(1);
+		expect(harness.ack).toHaveBeenCalledTimes(1);
+		expect(harness.retry).not.toHaveBeenCalled();
+	});
+
+	it('runs the body purge job and acks it', async () => {
+		const harness = createMessage(
+			{
+				job_type: 'RAW_EMAIL_BODY_PURGE',
+				triggered_at: new Date().toISOString(),
+			},
+			1,
+		);
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		expect(runRawEmailBodyPurgeJobMock).toHaveBeenCalledTimes(1);
 		expect(harness.ack).toHaveBeenCalledTimes(1);
 		expect(harness.retry).not.toHaveBeenCalled();
 	});
@@ -776,5 +819,62 @@ describe('queue.worker', () => {
 			}),
 		);
 		errorSpy.mockRestore();
+	});
+
+	it('logs and acks a dead-letter message without running any handler', async () => {
+		const harness = createMessage(
+			{
+				job_type: 'EMAIL_SYNC_USER',
+				user_id: '11111111-1111-4111-8111-111111111111',
+				sync_run_id: '22222222-2222-4222-8222-222222222222',
+				last_sync_timestamp: null,
+			},
+			6,
+		);
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC_DLQ,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		const dlqLog = errorLog.mock.calls.find((call) => call[0] === 'DLQ_MESSAGE');
+		expect(dlqLog?.[1]).toMatchObject({
+			queue: QUEUE_NAMES.EMAIL_SYNC_DLQ,
+			jobType: 'EMAIL_SYNC_USER',
+			userId: '11111111-1111-4111-8111-111111111111',
+			dlqDeliveryAttempts: 6,
+		});
+		expect(harness.ack).toHaveBeenCalledTimes(1);
+		expect(harness.retry).not.toHaveBeenCalled();
+		expect(runEmailSyncUserJobMock).not.toHaveBeenCalled();
+		errorLog.mockRestore();
+	});
+
+	it('acks an unreadable dead letter instead of losing it to a retry loop', async () => {
+		const harness = createMessage('not-an-object', 6);
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await handleQueue(
+			{
+				queue: QUEUE_NAMES.EMAIL_SYNC_DLQ,
+				messages: [harness.message],
+				ackAll: vi.fn(),
+				retryAll: vi.fn(),
+			} as unknown as MessageBatch<unknown>,
+			{} as Env,
+			{} as ExecutionContext,
+		);
+
+		const dlqLog = errorLog.mock.calls.find((call) => call[0] === 'DLQ_MESSAGE');
+		expect(dlqLog?.[1]).toMatchObject({ jobType: null, userId: null });
+		expect(harness.ack).toHaveBeenCalledTimes(1);
+		errorLog.mockRestore();
 	});
 });
