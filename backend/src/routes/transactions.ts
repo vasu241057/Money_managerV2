@@ -6,6 +6,7 @@ import { getAppConfig } from '../lib/config';
 import { getSqlClient } from '../lib/db/client';
 import { asyncHandler } from '../lib/http/async';
 import { parseUuid } from '../lib/http/validation';
+import { withIdempotency } from '../services/idempotency.service';
 import {
 	createManualTransaction,
 	deleteTransaction,
@@ -41,10 +42,18 @@ export function createTransactionsRouter(): Router {
 			const userId = getAuthenticatedUserId(req);
 			const config = getAppConfig(runtimeEnv);
 			const sql = getSqlClient(config);
+
+			// Validated before the key is claimed, so a malformed body still
+			// fails fast without touching the ledger.
 			const payload = parseCreateManualTransactionRequest(req.body);
 
-			const transaction = await createManualTransaction(sql, userId, payload);
-			res.status(201).json({ data: transaction });
+			// The only creating POST in the API, and the one a lost response
+			// duplicates. `Idempotency-Key` is opt-in: without the header this
+			// behaves exactly as before (Task 7).
+			await withIdempotency(sql, userId, req, res, async () => {
+				const transaction = await createManualTransaction(sql, userId, payload);
+				return { status: 201, body: { data: transaction } };
+			});
 		}),
 	);
 

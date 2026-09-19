@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import { requireAuthenticatedUser } from '../lib/auth';
+import { createAccountRouter } from './account';
 import { createAccountsRouter } from './accounts';
 import { createAiUsageRouter } from './ai-usage';
 import { createAnalyticsRouter } from './analytics';
@@ -23,6 +24,7 @@ export function createRoutes(): Router {
 	router.use('/version', createVersionRouter());
 	router.use('/internal/requeue', createInternalRequeueRouter());
 	router.use('/internal', createInternalOpsRouter());
+	router.use('/account', requireAuthenticatedUser, createAccountRouter());
 	router.use('/accounts', requireAuthenticatedUser, createAccountsRouter());
 	router.use('/ai-usage', requireAuthenticatedUser, createAiUsageRouter());
 	router.use('/analytics', requireAuthenticatedUser, createAnalyticsRouter());
