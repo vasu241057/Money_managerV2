@@ -69,9 +69,11 @@ Historical rows are deliberately unchanged.
 
 ## Hygiene
 
-16. **Purge pre-gate bodies** — `update public.raw_emails set clean_text = ''
-    where status in ('IGNORED','UNRECOGNIZED') and clean_text <> '';`
-    (one-time, after backfill considerations).
+16. **Purge pre-gate bodies** — superseded (Sep 18, 2026) by the nightly
+    `raw_email_body_purge` job from the multi-tenant Task 5: its first run
+    is this purge, with `body_purged_at` stamped so purged rows are never
+    mistaken for sender-gated ones. Enable it in the admin dashboard; do not
+    run the old manual `update`.
 17. **Card API polish** — `is_active` on POST silently coerces non-booleans
     to false (PATCH 400s correctly); card create + relink are not atomic;
     no end-to-end test that a `credit_card` extraction persists its card link.

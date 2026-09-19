@@ -1,8 +1,26 @@
 # Money Manager — Context Transfer
 
-> Last updated: July 24, 2026
+> Last updated: September 19, 2026 (Task 7 perimeter hardening completed locally)
 
 ---
+
+Tasks 6 and 7 are implemented and locally verified. See `MULTITENANT_TASKS.md`
+for the exact status and production runbooks.
+
+Task 6 (quotas): 500 listed messages and 500 fetched bodies independently per
+user per IST day, and 200 AI attempts including retries; both cap settings are
+overridable per user in AI operations.
+
+Task 7 (perimeter): 300 requests/minute per user and 60/minute per IP on
+unauthenticated and OAuth paths, both fail-open; an optional
+`Idempotency-Key` on `POST /transactions`; `azp` validated against
+`CLERK_AUTHORIZED_PARTIES` when that secret is set; a dead-letter consumer
+that logs `DLQ_MESSAGE`; a `STALE_PENDING_EXTRACTION` alert on the 10-minute
+tick; and `AI_USAGE_ADMIN_USER_ID` moved out of `wrangler.jsonc` into a
+secret.
+
+Each task needs its migration applied before its code is deployed. Production
+was not migrated or deployed during either completion.
 
 ## 1. Project Overview
 
@@ -357,7 +375,7 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 ### Required (always)
 | Variable | Purpose |
 |----------|---------|
-| `SUPABASE_POOLER_URL` | PostgreSQL connection (PgBouncer port 6543) |
+| `SUPABASE_POOLER_URL` | PostgreSQL connection (transaction pooler, port 6543). Production Worker: role `app_backend` (RLS blanket policies, no DDL). `backend/.dev.vars`: role `postgres`, which the migration runner needs |
 | `CLERK_JWKS_URL` | Clerk JWT verification endpoint |
 | `CLERK_JWT_ISSUER` | Clerk issuer URL |
 
@@ -501,7 +519,7 @@ cd backend && npm run typecheck
 
 1. **Phase E superseded (July 10):** templates are now learned automatically from AI answers (§7) instead of being derived offline from accumulated mail. The `{{MON}}` month wildcard shipped July 11 (month-name formats no longer month-lock). Remaining template follow-ups: template-vs-AI agreement as an additional auto-verify signal; PII scrub of skeletons before any multi-tenant launch. Do **not** seed templates from `docs/EXHAUSTIVE_INDIAN_BANKING_ALGO.md` — it is untrusted AI-generated brainstorming, kept only as inspiration.
 
-2. **Old data isn't retroactively cleaned.** Emails ingested before the sender gate still have bodies in `raw_emails.clean_text`. Conservative purge: `update public.raw_emails set clean_text = '' where status in ('IGNORED','UNRECOGNIZED') and clean_text <> '';`
+2. **Old bodies are purged by the nightly retention job, once enabled.** Emails ingested before the sender gate still have bodies in `raw_emails.clean_text` until the `raw_email_body_purge` job (Task 5, ships disabled in `job_schedules`) blanks processed/ignored/unrecognized rows older than `RAW_EMAIL_BODY_RETENTION_DAYS` (default 90) and stamps `body_purged_at`. Do not run the old manual `update … set clean_text = ''` any more: without the stamp a purged row is indistinguishable from a sender-gated one.
 
 3. **Gmail metadata responses include a ~100-char `snippet`** which we don't store or read for gated mail, but it does transit. No way to suppress server-side.
 
