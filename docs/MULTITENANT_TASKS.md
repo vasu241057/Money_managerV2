@@ -1,7 +1,8 @@
 # Multi-Tenant Rollout — Design Review and Task Plan
 
-> Status: **Tasks 1, 2, 4a, 4b, 3, 5, 6 and 7 implemented (Task 7 completed
-> September 19, 2026); Task 8 awaiting go.**
+> Status: **All eight tasks implemented (Tasks 7 and 8 completed September
+> 19, 2026). Task 8's code is done; its largest item — Google verification
+> and CASA — is operator work that has not been started.**
 > Task 1 delivered: `scripts/db-migrate.mjs` (+ `db:status`, `db:migrate`,
 > `db:baseline`), `backend/test/tenancy/` (PGlite harness, adapter, two-tenant
 > fixture, snapshots: constraints, service matrix, route enrollment, runner
@@ -1419,6 +1420,126 @@ Runbook (production; migration now, deploy at the end):
   Hyperdrive host, port check relaxed for it).
 - Split nightly jobs onto their own queue; tune consumer concurrency.
 - PITR on Supabase + one restore-to-staging drill; error reporting hook.
+
+**Delivered (September 19, 2026).** No migration; this is the only task in
+the plan whose largest part cannot be written in code. Each bullet was taken
+as far as the repo can take it, and the remainder is stated as an operator
+step rather than quietly dropped.
+
+- **The Google track is entirely operator work** — a verification
+  submission, a demo video, a CASA assessment with months of lead time, a
+  quota form. The runbook for it is in `OPERATIONS.md`; what the code now
+  contributes is a tripwire, because the failure mode is silent and remote:
+  user 101 registers successfully here and only then fails at Google's
+  consent step. Once a day the tick counts distinct users holding a Google
+  connection and logs `GOOGLE_TEST_USER_CAPACITY`, escalating to
+  `GOOGLE_TEST_USER_CAP_WARNING` (and a webhook report) from 80 of 100.
+  The count is deliberately a **lower bound**: Google counts entries on the
+  consent screen's test-user list, and a deleted account's row cascades away
+  here while its entry there survives, so this can only under-report. Said
+  so in the log field (`countIsLowerBound`), the contract and the runbook,
+  because a tripwire nobody distrusts is worse than none.
+- **Hyperdrive is wired but not enabled.** `config.ts` now resolves the
+  connection from `HYPERDRIVE.connectionString` when the binding exists and
+  from `SUPABASE_POOLER_URL` otherwise, reporting which in
+  `AppConfig.dbConnectionSource` and logging it once per isolate as
+  `DB_CONNECTION_SOURCE`. The PgBouncer port check is skipped for the
+  Hyperdrive string and kept for the pooler: Hyperdrive listens on a local
+  port it chooses, so the check is meaningless against it — but the check it
+  replaces (that the resource itself was created against 6543, not the
+  direct 5432 that exhausts connections from a Worker) is unverifiable from
+  inside the Worker, and is written down as an operator guarantee instead.
+  The `hyperdrive` block sits commented in `wrangler.jsonc` with the create
+  command, including `--caching-disabled`: Hyperdrive caches reads by
+  default and this app reads its own writes. Rollback is to unbind and
+  redeploy.
+- **Nightly work moved to `money-manager-nightly`** with its own DLQ, so a
+  batch job that runs for minutes never sits in front of a user's email
+  sync. Four job types move: the three claimed from `job_schedules` plus the
+  `SENDER_BACKFILL` fan-out the classifier produces during its own run. Two
+  decisions make this a one-step, reversible deploy: the consumer dispatches
+  on `job_type` and **both work queues accept every type**, so messages
+  enqueued before the split drain normally; and an absent `NIGHTLY_QUEUE`
+  binding falls back to the sync queue (logged once) rather than failing the
+  send, which covers local dev, the unit suite and the window between
+  creating the queue and deploying. A misrouted job still runs, and says so
+  once via `QUEUE_ROUTING_UNEXPECTED`.
+- **Consumer concurrency is now explicit**: 10 for sync, 2 for nightly,
+  mirrored in `QUEUE_MAX_CONCURRENCY` and asserted against `wrangler.jsonc`
+  by the infra contract test. Unset means Cloudflare auto-scales, which is
+  the thing being prevented — the real ceiling is pooler slots, roughly
+  `concurrency x DB_MAX_CONNECTIONS`. **These numbers come from arithmetic,
+  not from a measurement**, and the runbook says so and says what to watch
+  before raising them.
+- **The error reporting hook is a webhook, deliberately not a vendor.**
+  `ERROR_REPORTING_WEBHOOK_URL` is unset by default and the module is inert
+  without it. It posts a fixed envelope for eight events (5xx, dead letters,
+  queue threshold breaches, the two scheduled-job failures, stale
+  extraction, snapshot staleness, the Google cap warning). Constraints it
+  holds itself to: never throws, never retries, 3-second timeout, https only
+  (localhost excepted), at most 10 sends per minute per isolate, message
+  truncated to 500 characters and context to 20 keys of 200 characters. A
+  delivery failure is a `console.warn` and nothing more — reporting a failed
+  report would recurse. Throttling lives at the call sites, not in the sink:
+  a dead-letter batch of ten is one report with a count, stale extraction
+  pushes at most hourly while still logging every tick, and the capacity
+  warning is daily.
+- **The webhook is a new outbound data path, so it is in the contract.** A
+  postgres error message can quote a constraint name or a failing value, so
+  the honest statement — made in `CONTRACT.md` next to the AI-provider and
+  logging paragraphs — is that the sink can receive fragments of user data
+  and must be kept private. Request reports carry `req.path` and never the
+  query string.
+- **PITR is a Supabase setting and stays an operator step**, with the drill
+  written down. One correction while writing it: the restore-check command
+  is `npm run db:status`, and `scripts/db-migrate.mjs` reads
+  `SUPABASE_POOLER_URL` from the environment *first, then
+  `backend/.dev.vars`* — so a forgotten variable is not an error but a
+  silent run against production. That is the Task 1 incident, and the step
+  now sets the variable inline and says why.
+
+Tests: `test/error-reporting.spec.ts` (16), `test/nightly-queue.spec.ts`
+(8), `test/tenancy/google-capacity.spec.ts` (4, real schema), plus new cases
+in `config.spec.ts`, `infra-contract.spec.ts` and `scheduled-worker.spec.ts`.
+The capacity query gets a PGlite test for the reason Task 7's MV query did:
+every other test of that path mocks the SQL client, so a wrong column name
+would pass the suite and then throw once a day into a caller's own catch —
+a tripwire that never trips. It also pins the semantics worth arguing about:
+one user with two mailboxes is one test user, and a revoked connection still
+counts because the slot on Google's list is still spent.
+
+**Operator runbook (in order).**
+
+1. **Start the Google verification track now.** Nothing else here depends on
+   it and it is the only item with a lead time measured in months. Until it
+   lands, keep the Clerk allowlist mirrored against the Google test-user
+   list (D10).
+2. **Create the nightly queues before the deploy**, or the deploy is
+   rejected for an unknown queue:
+   `wrangler queues create money-manager-nightly` and
+   `wrangler queues create money-manager-nightly-dlq`.
+3. **Deploy.** Verify: a nightly job appears on the new queue (or logs
+   `NIGHTLY_QUEUE_BINDING_MISSING` if a binding was missed), and
+   `QUEUE_BATCH_SUMMARY` names both queues over a day.
+4. **Optional, any time after:** `wrangler secret put
+   ERROR_REPORTING_WEBHOOK_URL`. Test it by watching for the first
+   `UNHANDLED_REQUEST_ERROR`; no deploy needed.
+5. **Optional, measured:** create the Hyperdrive resource, uncomment the
+   block, deploy, and confirm `DB_CONNECTION_SOURCE` reads `hyperdrive`.
+6. **Enable PITR** and do the restore drill once, against a new project,
+   with `SUPABASE_POOLER_URL` set inline on the command.
+7. **Rollback.** `wrangler rollback` returns to the single-queue Worker:
+   the older code has no `NIGHTLY_QUEUE` binding, so it produces nightly
+   jobs onto the sync queue again, and it declares no consumer for
+   `money-manager-nightly` — so anything still sitting there stalls until
+   Cloudflare's retention expires. That costs a day, not data: these are
+   daily jobs claimed from `job_schedules`, and the next tick re-runs
+   whatever the stranded message was carrying. Let the nightly queue drain
+   first if that day matters. Unsetting `ERROR_REPORTING_WEBHOOK_URL`
+   disables reporting with no deploy; commenting the `hyperdrive` block out
+   returns to the pooler.
+
+**Production migration and deployment have not been performed by this task.**
 
 ---
 

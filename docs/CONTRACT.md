@@ -336,6 +336,44 @@ Transaction classification invariants:
   bodies are not. The one content-bearing log, `PIPELINE_TRACE_RESOLVED`,
   requires `EMAIL_PIPELINE_TRACE` and is refused outright when
   `NODE_ENV=production`.
+- **What reaches the error webhook (Task 8).** Nothing, unless
+  `ERROR_REPORTING_WEBHOOK_URL` is set; it is off by default. When set, a
+  fixed envelope goes out per incident: service, version, environment,
+  severity, event code, an `occurred_at` timestamp, a message truncated to
+  500 characters, and a flat `context` of identifiers and counts (20 keys
+  max, 200 characters each). Request reports carry the method and
+  `req.path`, never the query string. No email content, no subjects, no
+  amounts. The honest caveat: a postgres error *message* can quote a
+  constraint name or a failing value, so the sink must be treated as capable
+  of receiving fragments of user data and kept private. It is https-only
+  (localhost excepted for dev), rate-limited per isolate, and never retried.
+
+### Scale runway (multi-tenant, Task 8)
+
+- **Signup is still not gated, and the cap is Google's.** `gmail.readonly`
+  is a restricted scope, so an unverified app is limited to 100 test users
+  on the consent screen. Nothing in this codebase enforces that limit and
+  nothing can: the failure happens at Google's consent step, after the user
+  already exists here. The operator mirrors the Clerk allowlist against the
+  Google test-user list (D10). The backend contributes one tripwire, a daily
+  `GOOGLE_TEST_USER_CAP_WARNING` from 80 of 100, whose count is a **lower
+  bound** — it counts distinct users holding a Google `oauth_connections`
+  row, so a deleted account frees a row here while its entry on Google's
+  list survives.
+- **The database connection may come from either of two places.**
+  `HYPERDRIVE`, when bound, supplies the connection string; otherwise
+  `SUPABASE_POOLER_URL` does. `AppConfig.dbConnectionSource` names which,
+  and it is logged once per isolate as `DB_CONNECTION_SOURCE`. The
+  PgBouncer-port check applies only to the pooler URL: Hyperdrive listens on
+  a local port of its own, so the check cannot be applied to it, and that
+  the resource points at the pooler is an operator guarantee rather than a
+  verified one.
+- **Queue choice is routing, never semantics.** Nightly jobs
+  (`SENDER_CLASSIFICATION`, `SENDER_BACKFILL`, `MERCHANT_MAPPING`,
+  `RAW_EMAIL_BODY_PURGE`) are produced onto `money-manager-nightly`, but the
+  consumer dispatches on `job_type` and both work queues accept every type.
+  A job behaves identically wherever it arrives, which is what makes the
+  split deployable in one step and reversible without a migration.
 
 ### Auth context for backend CRUD (Milestone 4)
 

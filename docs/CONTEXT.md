@@ -1,11 +1,11 @@
 # Money Manager — Context Transfer
 
-> Last updated: September 19, 2026 (Task 7 perimeter hardening completed locally)
+> Last updated: September 19, 2026 (Tasks 7 and 8 completed locally; Task 8's Google verification track is operator work, not started)
 
 ---
 
-Tasks 6 and 7 are implemented and locally verified. See `MULTITENANT_TASKS.md`
-for the exact status and production runbooks.
+All eight multi-tenant tasks are implemented and locally verified. See
+`MULTITENANT_TASKS.md` for the exact status and production runbooks.
 
 Task 6 (quotas): 500 listed messages and 500 fetched bodies independently per
 user per IST day, and 200 AI attempts including retries; both cap settings are
@@ -19,8 +19,20 @@ that logs `DLQ_MESSAGE`; a `STALE_PENDING_EXTRACTION` alert on the 10-minute
 tick; and `AI_USAGE_ADMIN_USER_ID` moved out of `wrangler.jsonc` into a
 secret.
 
-Each task needs its migration applied before its code is deployed. Production
-was not migrated or deployed during either completion.
+Task 8 (scale runway): nightly jobs moved to their own queue
+(`money-manager-nightly` + DLQ) with consumer concurrency capped at 10 sync /
+2 nightly; Hyperdrive support in `config.ts` behind a still-commented
+binding, with `SUPABASE_POOLER_URL` as the rollback; an optional error
+reporting webhook (`ERROR_REPORTING_WEBHOOK_URL`, off by default); and a
+daily `GOOGLE_TEST_USER_CAP_WARNING` tripwire for Google's 100-test-user
+ceiling. The blocking part of Task 8 — OAuth verification and the CASA
+assessment for `gmail.readonly` — is operator work with months of lead time
+and has not been started; until it completes, signup must stay gated to the
+Google test-user list (D10).
+
+Each task needs its migration applied before its code is deployed (Task 8
+adds none). Production was not migrated or deployed during any of these
+completions.
 
 ## 1. Project Overview
 
@@ -53,11 +65,11 @@ money-manager/
 | **Supabase** | PostgreSQL database | PgBouncer at port 6543. Project: `sfucyhewgqyawrsfuyfa`, region: ap-southeast-1 |
 | **Cloudflare Workers** | Backend API + queue workers | Wrangler 4.69.0, Express 5 inside worker |
 | **Clerk** | Authentication | JWT-based. JWKS: `big-mosquito-76.clerk.accounts.dev` |
-| **Cloudflare Queues** | Async job processing | 1 queue: `money-manager-email-sync` (DLQ: `money-manager-email-sync-dlq`) |
+| **Cloudflare Queues** | Async job processing | 2 work queues, each with a DLQ: `money-manager-email-sync` (concurrency 10) and `money-manager-nightly` (concurrency 2, Task 8) |
 | **Google OAuth** | Gmail access | Client ID: `611255820334-d25utocn5qima99l4o8hhe2346c732ee.apps...` |
 | **OpenCode Go / OpenRouter** | AI model access | Provider selected by `AI_PROVIDER` (default `opencode`; `openrouter` switches URL + key + model defaults in one flip). Email extraction + daily sender/merchant classification. The OpenRouter normalizer uses paid DeepSeek first, then free Nemotron and GPT-OSS fallbacks |
 
-Cron trigger (wrangler.jsonc): `*/10 * * * *` — the only one. Each tick enqueues the email sync dispatch, then claims any nightly job whose scheduled local time has arrived. Nightly schedules (sender classification, merchant mapping) live in the `job_schedules` table and are edited from the AI operations screen, not from deploy config.
+Cron trigger (wrangler.jsonc): `*/10 * * * *` — the only one. Each tick enqueues the email sync dispatch onto the sync queue, then claims any nightly job whose scheduled local time has arrived and enqueues it onto the nightly queue. Nightly schedules (sender classification, merchant mapping) live in the `job_schedules` table and are edited from the AI operations screen, not from deploy config. The same tick also reads the stale-extraction view (hourly alerting) and, once a day, counts Google-connected users against the 100 test-user cap.
 
 ---
 

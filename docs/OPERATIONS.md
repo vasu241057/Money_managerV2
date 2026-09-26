@@ -290,3 +290,202 @@ amounts, subjects and bodies are not. The single content-bearing trace,
 `PIPELINE_TRACE_RESOLVED`, needs `EMAIL_PIPELINE_TRACE` and is refused when
 `NODE_ENV=production`. Keep it that way when adding logs: a new field
 carrying user content belongs behind that flag or nowhere.
+
+## Scale runway (Task 8)
+
+Four independent tracks. Only the first is blocking, and it is the one that
+runs on a calendar rather than on engineering time — start it first.
+
+### Google verification and the 100-user cap
+
+`gmail.readonly` is a **restricted** OAuth scope. Until the app is verified,
+Google caps it at **100 test users**, listed by address on the OAuth consent
+screen. Signup is not gated (A.1 §6, decision D10): user 101 registers with
+Clerk, gets provisioned, and then fails at Google's consent step with an
+error the app cannot explain. Until verification completes, **the Clerk
+allowlist must mirror the Google test-user list**, and the mirror is manual.
+
+The tripwire, once a day at the first 10-minute tick after 02:00 UTC:
+
+- `GOOGLE_TEST_USER_CAPACITY` — an info line with the current count.
+- `GOOGLE_TEST_USER_CAP_WARNING` — an error line from 80 of 100, and a
+  webhook report if one is configured.
+- `GOOGLE_TEST_USER_CAPACITY_CHECK_FAILED` — the read failed; the tick was
+  unaffected.
+
+**The count is a lower bound.** It counts distinct users holding a Google
+`oauth_connections` row — users, not mailboxes, and revoked connections still
+count because the slot on Google's list is still spent. What it cannot see is
+a deleted account: the row cascades away here while the entry on Google's
+list stays until it is removed by hand. The authoritative number is in the
+Google Cloud console. Treat the warning as "go and count properly".
+
+Verification track, in the order the lead times demand:
+
+1. Publish a privacy policy and a homepage on the app's own domain; the
+   policy must describe the Gmail data use in the terms Google asks for. The
+   data-flow list in `CONTRACT.md` ("What leaves the system") is the source
+   for it — it is kept accurate for exactly this reason.
+2. In the Google Cloud console, complete the OAuth consent screen: scope
+   justification for `gmail.readonly`, a demo video showing the consent flow
+   and what the app does with the data, and the domain verification.
+3. Submit for verification. Restricted scopes additionally require a **CASA**
+   security assessment through an authorised third-party assessor, which is
+   annual, paid, and the long pole. Budget months, not weeks.
+4. Separately, request a **Gmail API quota increase** in the console if the
+   per-user or daily unit limits become the constraint. That is a different
+   form from verification and much faster.
+5. Only once verification is granted: remove the test-user gating on the
+   Clerk side, and retire the mirror.
+
+Nothing in this track is a deploy. None of it can be done from this repo.
+
+### Cloudflare Hyperdrive
+
+Every HTTP request currently builds its own postgres client, paying a TLS
+handshake and pooler auth before the first query. Hyperdrive keeps warm
+connections at the edge and removes that cost without changing the code
+shape.
+
+Rollout:
+
+1. Create the resource against the **PgBouncer** URL (port 6543), with query
+   caching **disabled** — this app reads its own writes, and a cached read
+   after a write would show a user stale data:
+
+```bash
+npx wrangler hyperdrive create money-manager-db --connection-string="postgres://USER:PASSWORD@HOST:6543/postgres" --caching-disabled
+```
+
+2. Uncomment the `hyperdrive` block in `wrangler.jsonc` and paste in the id
+   the command printed.
+3. Deploy. Confirm with the `DB_CONNECTION_SOURCE` log line, which is written
+   once per isolate and reads `{ source: "hyperdrive" }`.
+
+`SUPABASE_POOLER_URL` stays configured underneath and unused; the binding
+wins while it exists. **Rollback is to comment the block out and redeploy** —
+no code change, straight back to the pooler.
+
+Two things the Worker cannot check for you: that the connection string you
+gave Hyperdrive really is the pooler on 6543 (all the binding exposes is its
+own localhost address, so `config.ts` cannot apply the port check to it), and
+that caching is off. Both are properties of the resource you created.
+
+### Nightly queue split and consumer concurrency
+
+Nightly work runs on `money-manager-nightly`, with its own dead-letter queue.
+Sender classification, merchant mapping, the raw-email body purge and the
+sender-backfill fan-out go there; email sync keeps `money-manager-email-sync`
+to itself, so a batch job that runs for minutes never sits in front of a
+user's mail.
+
+Create both queues **before** the first deploy carrying this config, or the
+deploy is rejected:
+
+```bash
+npx wrangler queues create money-manager-nightly
+```
+
+```bash
+npx wrangler queues create money-manager-nightly-dlq
+```
+
+- The consumer dispatches on `job_type`, not on the queue, and the main queue
+  still accepts every nightly type. So messages enqueued before the split
+  drain normally, and nothing breaks if a job lands on the "wrong" queue.
+- If the `NIGHTLY_QUEUE` binding is missing, nightly jobs fall back to the
+  sync queue and `NIGHTLY_QUEUE_BINDING_MISSING` is logged once per isolate.
+  That is the deploy-window safety net, not a steady state.
+- `QUEUE_ROUTING_UNEXPECTED` means a non-nightly job arrived on the nightly
+  queue. It still ran; a steady stream means a producer is misrouting.
+- `DLQ_MESSAGE` now names its own queue, so nightly dead letters are
+  distinguishable from sync ones.
+
+**Concurrency** is capped explicitly: 10 for email sync, 2 for nightly
+(`max_concurrency` in `wrangler.jsonc`, asserted against
+`QUEUE_MAX_CONCURRENCY` in `lib/infra.ts` by a contract test). Unset means
+Cloudflare auto-scales, which is what these numbers exist to prevent: the
+binding constraint is pooler slots, roughly `concurrency x
+DB_MAX_CONNECTIONS` (5), so 10 and 2 hold the worst case near 60 client
+connections.
+
+These are a starting point chosen from arithmetic, not from a measurement.
+Raise the sync number if the backlog stops clearing inside a 10-minute cycle,
+and watch Supabase's pooler connection count while you do.
+
+### Error reporting webhook
+
+Off by default. Set `ERROR_REPORTING_WEBHOOK_URL` to a private https endpoint
+(anything that accepts a POST: ntfy, a Discord or Slack hook, a Worker of
+your own) and the events below are pushed as JSON instead of waiting in the
+logs for someone to look.
+
+```bash
+npx wrangler secret put ERROR_REPORTING_WEBHOOK_URL
+```
+
+What is sent, and only this: `source`, `service`, `version`, `environment`,
+`severity`, `event`, a message truncated to 500 characters, an `occurred_at`
+timestamp, and a flat `context` of identifiers and counts, each value
+truncated to 200 characters and capped at 20 keys.
+
+| Event | Fires when |
+|---|---|
+| `UNHANDLED_REQUEST_ERROR` | any 5xx leaves the API (method, path, status, error code — never the query string) |
+| `DLQ_MESSAGE` | a batch of dead letters was consumed; one report per batch, with a count |
+| `QUEUE_ALERT_THRESHOLD_BREACH` | a queue batch breached a retry/poison/final-retry threshold |
+| `SCHEDULED_JOB_CLAIM_FAILED` | the tick could not read the job schedule |
+| `SCHEDULED_JOB_ENQUEUE_FAILED` | a claimed nightly job could not be enqueued |
+| `STALE_PENDING_EXTRACTION` | mail is stuck before extraction; at most hourly |
+| `STALE_PENDING_EXTRACTION_SNAPSHOT_STALE` | pg_cron stopped refreshing the view; at most hourly |
+| `GOOGLE_TEST_USER_CAP_WARNING` | the test-user count reached 80; at most daily |
+
+Guarantees worth knowing before pointing this at a third-party sink:
+
+- **The console line is always written first**, whatever the webhook does.
+  The sink is a convenience, never the record.
+- Delivery never throws, never retries, and times out after 3 seconds
+  (`ERROR_REPORTING_TIMEOUT_MS`). A failed delivery logs
+  `ERROR_REPORT_DELIVERY_FAILED` and nothing else — reporting a failed report
+  would recurse.
+- At most 10 reports per minute per isolate
+  (`ERROR_REPORTING_MAX_PER_MINUTE`); the rest are counted and logged as
+  `ERROR_REPORT_SUPPRESSED`. Isolates are many and short-lived, so this is a
+  brake on a storm, not a global rate limit.
+- Only https is accepted, plus http on localhost for `wrangler dev`. A bad
+  URL logs `ERROR_REPORTING_URL_INVALID` once and disables delivery.
+- `ERROR_REPORTING_WEBHOOK_TOKEN` is sent as `Authorization: Bearer` if set.
+- Reports from the HTTP path have no `ExecutionContext` to keep the isolate
+  alive, so they race the response and can be dropped. Queue and scheduled
+  reports use `waitUntil` and do not.
+
+A postgres error message can quote a constraint name or a failing value, so
+treat the sink as capable of receiving fragments of user data and keep it
+private. `CONTRACT.md` lists it among the outbound data paths for that
+reason.
+
+### Backups: PITR and the restore drill
+
+Not yet enabled. At the current data size this is a checkbox, and it is
+cheapest to decide before the data grows.
+
+1. Enable **PITR** on the Supabase project (paid tiers; daily backups alone
+   restore to a day boundary, which for financial data is a bad worst case).
+2. Do the drill once, and write the numbers down: restore to a *new*
+   project, check its schema, and record how long the restore took end to
+   end.
+
+```bash
+SUPABASE_POOLER_URL="postgres://USER:PASSWORD@RESTORED-HOST:6543/postgres" npm run db:status
+```
+
+   **Set that variable inline, on the command itself.** `scripts/db-migrate.mjs`
+   reads the environment first and falls back to `backend/.dev.vars` — which
+   points at production. A forgotten variable is not an error, it is a silent
+   run against the live database, and it has happened here before.
+3. Never point the Worker at the restored project. The drill is to prove the
+   restore works and to know its duration, not to fail over.
+
+Restore granularity is the whole database. Per-user "undelete" is served by
+the soft-delete design (`user_deleted_at`, REVERSED events), not by backups —
+a restore to undo one user's mistake would roll back everyone.
