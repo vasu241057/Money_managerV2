@@ -6,16 +6,23 @@ Mirrors `wrangler.jsonc`; the infra contract test fails if the names drift.
 
 - Cron trigger: `*/10 * * * *` (the single driver; nightly work is scheduled
   in `job_schedules` and claimed by this tick)
-- Queue producer binding:
+- Queue producer bindings:
   - `EMAIL_SYNC_QUEUE` -> `money-manager-email-sync`
+  - `NIGHTLY_QUEUE` -> `money-manager-nightly` (Task 8)
 - Queue consumer bindings:
   - `money-manager-email-sync` (`max_batch_size=1`, `max_batch_timeout=5`,
-    `max_retries=5`, DLQ `money-manager-email-sync-dlq`)
+    `max_retries=5`, `max_concurrency=10`, DLQ `money-manager-email-sync-dlq`)
   - `money-manager-email-sync-dlq` (`max_batch_size=10`,
     `max_batch_timeout=30`, `max_retries=0`) — logs `DLQ_MESSAGE` and acks
+  - `money-manager-nightly` (`max_batch_size=1`, `max_batch_timeout=5`,
+    `max_retries=5`, `max_concurrency=2`, DLQ `money-manager-nightly-dlq`)
+  - `money-manager-nightly-dlq` (`max_batch_size=10`,
+    `max_batch_timeout=30`, `max_retries=0`)
 - Rate limiters (Task 7):
   - `USER_RATE_LIMITER` — 300 requests / 60s, keyed by `users.id`
   - `IP_RATE_LIMITER` — 60 requests / 60s, keyed by `CF-Connecting-IP`
+- `HYPERDRIVE` (Task 8) — declared but **commented out** in
+  `wrangler.jsonc` until the resource exists
 
 ## Milestone 4 API (manual CRUD)
 
@@ -184,3 +191,39 @@ Apply `20260919090000_perimeter_hardening.sql` before deploying this code.
   `STALE_PENDING_EXTRACTION`, `STALE_PENDING_EXTRACTION_SNAPSHOT_STALE`,
   `IDEMPOTENCY_CLAIM_RECLAIMED`, `IDEMPOTENCY_COMPLETE_FAILED`. See
   `docs/OPERATIONS.md` for what each one means and the secret-rotation table.
+
+## Scale runway (Task 8)
+
+No migration. Create the two nightly queues before the deploy that carries
+this config, or the deploy is rejected.
+
+- **Nightly work has its own queue.** `SENDER_CLASSIFICATION`,
+  `SENDER_BACKFILL`, `MERCHANT_MAPPING` and `RAW_EMAIL_BODY_PURGE` are
+  produced onto `money-manager-nightly`. The consumer dispatches on
+  `job_type` and both work queues accept every type, so pre-split messages
+  drain normally and the split is reversible. Without the `NIGHTLY_QUEUE`
+  binding they fall back to the sync queue and log
+  `NIGHTLY_QUEUE_BINDING_MISSING` once.
+- **Consumer concurrency is capped** at 10 (sync) and 2 (nightly), mirrored
+  by `QUEUE_MAX_CONCURRENCY` in `lib/infra.ts` and checked by the infra
+  contract test. The ceiling they protect is pooler slots, roughly
+  `concurrency x DB_MAX_CONNECTIONS`.
+- **Hyperdrive is code-ready, not enabled.** Bound, its connection string
+  wins over `SUPABASE_POOLER_URL` and the PgBouncer port check is skipped
+  (it listens on a local port of its own). `DB_CONNECTION_SOURCE` logs which
+  source is live, once per isolate. Rollback is to unbind and redeploy.
+- **`ERROR_REPORTING_WEBHOOK_URL`** (optional) pushes 5xx responses, dead
+  letters, queue threshold breaches, scheduled-job failures, stale
+  extraction and the Google cap warning to a webhook. Off by default; never
+  throws, never retries, 3s timeout, 10/minute per isolate, https only.
+  Related: `ERROR_REPORTING_WEBHOOK_TOKEN`,
+  `ERROR_REPORTING_MAX_PER_MINUTE`, `ERROR_REPORTING_TIMEOUT_MS`.
+- **Google test-user tripwire.** Once a day the tick counts distinct users
+  with a Google connection and logs `GOOGLE_TEST_USER_CAPACITY`, or
+  `GOOGLE_TEST_USER_CAP_WARNING` from 80 of 100. The count is a lower bound;
+  the Google Cloud console holds the real list.
+- New log lines: `NIGHTLY_QUEUE_BINDING_MISSING`, `QUEUE_ROUTING_UNEXPECTED`,
+  `DB_CONNECTION_SOURCE`, `GOOGLE_TEST_USER_CAPACITY`,
+  `GOOGLE_TEST_USER_CAP_WARNING`, `GOOGLE_TEST_USER_CAPACITY_CHECK_FAILED`,
+  `ERROR_REPORT_DELIVERY_FAILED`, `ERROR_REPORT_SUPPRESSED`,
+  `ERROR_REPORTING_URL_INVALID`. See `docs/OPERATIONS.md`.
