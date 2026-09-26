@@ -1,6 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EMAIL_SYNC_CRON, SENDER_CLASSIFICATION_CRON } from '../src/lib/infra';
+import { SCHEDULED_JOB_NAMES } from '../../shared/types';
+import {
+	EMAIL_SYNC_CRON,
+	isNightlyJobType,
+	SENDER_CLASSIFICATION_CRON,
+} from '../src/lib/infra';
 
 const claimDueScheduledJobs = vi.fn();
 const releaseScheduledJobClaim = vi.fn();
@@ -9,10 +14,18 @@ vi.mock('../src/lib/config', () => ({
 	getAppConfig: () => ({ databaseUrl: 'postgres://test' }),
 }));
 
-// The tick reads the stale-extraction MV; this stands in for that one query.
+// The tick reads the stale-extraction MV, and once a day the Google
+// test-user count; these stand in for those two queries, routed by the SQL
+// they carry so each test can drive them independently.
 const stalePendingQuery = vi.fn();
+const capacityQuery = vi.fn();
 vi.mock('../src/lib/db/client', () => ({
-	getSqlClient: () => (...args: unknown[]) => stalePendingQuery(...args),
+	getSqlClient: () => (...args: unknown[]) => {
+		const text = Array.isArray(args[0]) ? (args[0] as string[]).join(' ') : '';
+		return text.includes('oauth_connections')
+			? capacityQuery(...args)
+			: stalePendingQuery(...args);
+	},
 }));
 
 vi.mock('../src/services/job-schedules.service', () => ({
@@ -21,10 +34,17 @@ vi.mock('../src/services/job-schedules.service', () => ({
 }));
 
 const { handleScheduled } = await import('../src/workers/scheduled.worker');
+const { resetErrorReportingState } = await import('../src/lib/error-reporting');
+const { resetNightlyQueueBindingWarning } = await import('../src/workers/queue.producers');
 
-function controllerFor(cron: string): ScheduledController {
-	return { cron, scheduledTime: 1_700_000_000_000 } as ScheduledController;
+function controllerFor(cron: string, scheduledTime = 1_700_000_000_000): ScheduledController {
+	return { cron, scheduledTime } as ScheduledController;
 }
+
+/** 1_700_000_000_000 is 22:13 UTC: neither the hourly nor the daily window. */
+const AT_0200_UTC = Date.UTC(2026, 8, 19, 2, 0, 0);
+const AT_0220_UTC = Date.UTC(2026, 8, 19, 2, 20, 0);
+const AT_0900_UTC = Date.UTC(2026, 8, 19, 9, 0, 0);
 
 describe('scheduled.worker', () => {
 	beforeEach(() => {
@@ -317,5 +337,249 @@ describe('scheduled.worker stale extraction alert', () => {
 		).toBe(true);
 		expect(errorLog.mock.calls.some((call) => call[0] === 'STALE_PENDING_EXTRACTION')).toBe(false);
 		errorLog.mockRestore();
+	});
+});
+
+describe('scheduled.worker nightly queue routing (Task 8)', () => {
+	beforeEach(() => {
+		claimDueScheduledJobs.mockReset().mockResolvedValue([
+			{ job: 'merchant_mapping', previous_enqueued_on: null, previous_enqueued_at: null },
+		]);
+		releaseScheduledJobClaim.mockReset().mockResolvedValue(undefined);
+		stalePendingQuery.mockReset().mockResolvedValue([
+			{
+				user_count: 0,
+				stale_count: 0,
+				oldest_created_at: null,
+				snapshot_at: null,
+				snapshot_age_seconds: null,
+			},
+		]);
+		resetNightlyQueueBindingWarning();
+	});
+
+	it('sends the claimed nightly job to the nightly queue, sync dispatch to the sync queue', async () => {
+		const syncSend = vi.fn().mockResolvedValue(undefined);
+		const nightlySend = vi.fn().mockResolvedValue(undefined);
+
+		await handleScheduled(
+			controllerFor(EMAIL_SYNC_CRON),
+			{
+				EMAIL_SYNC_QUEUE: { send: syncSend },
+				NIGHTLY_QUEUE: { send: nightlySend },
+			} as unknown as Env,
+			{ waitUntil: vi.fn() } as unknown as ExecutionContext,
+		);
+
+		expect(syncSend.mock.calls.map(([payload]) => payload.job_type)).toEqual([
+			'EMAIL_SYNC_DISPATCH',
+		]);
+		expect(nightlySend.mock.calls.map(([payload]) => payload.job_type)).toEqual([
+			'MERCHANT_MAPPING',
+		]);
+	});
+
+	// Drift guard: a new nightly job added to SCHEDULED_JOB_NAMES must also
+	// be registered in NIGHTLY_JOB_TYPES, or the consumer logs it as
+	// misrouted on the very queue it was sent to.
+	it('routes every schedulable job to the nightly queue as a registered nightly type', async () => {
+		claimDueScheduledJobs.mockResolvedValue(
+			SCHEDULED_JOB_NAMES.map((job) => ({
+				job,
+				previous_enqueued_on: null,
+				previous_enqueued_at: null,
+			})),
+		);
+		const nightlySend = vi.fn().mockResolvedValue(undefined);
+
+		await handleScheduled(
+			controllerFor(EMAIL_SYNC_CRON),
+			{
+				EMAIL_SYNC_QUEUE: { send: vi.fn().mockResolvedValue(undefined) },
+				NIGHTLY_QUEUE: { send: nightlySend },
+			} as unknown as Env,
+			{ waitUntil: vi.fn() } as unknown as ExecutionContext,
+		);
+
+		const sent = nightlySend.mock.calls.map(([payload]) => payload.job_type);
+		expect(sent).toHaveLength(SCHEDULED_JOB_NAMES.length);
+		for (const jobType of sent) {
+			expect(isNightlyJobType(jobType)).toBe(true);
+		}
+	});
+
+	// Deployable in one step: the binding does not exist until the deploy
+	// that introduces it lands.
+	it('falls back to the sync queue when the nightly binding is absent', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+		const syncSend = vi.fn().mockResolvedValue(undefined);
+
+		await handleScheduled(
+			controllerFor(EMAIL_SYNC_CRON),
+			{ EMAIL_SYNC_QUEUE: { send: syncSend } } as unknown as Env,
+			{ waitUntil: vi.fn() } as unknown as ExecutionContext,
+		);
+
+		expect(syncSend.mock.calls.map(([payload]) => payload.job_type).sort()).toEqual([
+			'EMAIL_SYNC_DISPATCH',
+			'MERCHANT_MAPPING',
+		]);
+		vi.restoreAllMocks();
+	});
+});
+
+describe('scheduled.worker Google test-user capacity (Task 8)', () => {
+	async function runTickAt(scheduledTime: number, env: Record<string, unknown> = {}) {
+		const pending: Promise<unknown>[] = [];
+		await handleScheduled(
+			controllerFor(EMAIL_SYNC_CRON, scheduledTime),
+			{
+				EMAIL_SYNC_QUEUE: { send: vi.fn().mockResolvedValue(undefined) },
+				...env,
+			} as unknown as Env,
+			{
+				waitUntil: (promise: Promise<unknown>) => {
+					pending.push(promise);
+				},
+			} as unknown as ExecutionContext,
+		);
+		await Promise.all(pending);
+	}
+
+	beforeEach(() => {
+		claimDueScheduledJobs.mockReset().mockResolvedValue([]);
+		releaseScheduledJobClaim.mockReset().mockResolvedValue(undefined);
+		stalePendingQuery.mockReset().mockResolvedValue([
+			{
+				user_count: 0,
+				stale_count: 0,
+				oldest_created_at: null,
+				snapshot_at: null,
+				snapshot_age_seconds: null,
+			},
+		]);
+		capacityQuery.mockReset().mockResolvedValue([{ connected_user_count: 3 }]);
+		resetErrorReportingState();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it('asks once a day, on the first tick of the chosen hour', async () => {
+		await runTickAt(AT_0200_UTC);
+		expect(capacityQuery).toHaveBeenCalledTimes(1);
+
+		// Same hour, later tick: the daily question was already asked.
+		await runTickAt(AT_0220_UTC);
+		await runTickAt(AT_0900_UTC);
+		expect(capacityQuery).toHaveBeenCalledTimes(1);
+	});
+
+	it('records the count quietly while there is room', async () => {
+		const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+		await runTickAt(AT_0200_UTC);
+
+		expect(info.mock.calls.find((call) => call[0] === 'GOOGLE_TEST_USER_CAPACITY')?.[1]).toMatchObject({
+			connectedUserCount: 3,
+			cap: 100,
+		});
+		expect(error.mock.calls.find((call) => call[0] === 'GOOGLE_TEST_USER_CAP_WARNING')).toBeUndefined();
+	});
+
+	it('warns and reports as the list approaches Google 100-user ceiling', async () => {
+		capacityQuery.mockResolvedValue([{ connected_user_count: 85 }]);
+		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await runTickAt(AT_0200_UTC, {
+			ERROR_REPORTING_WEBHOOK_URL: 'https://alerts.example.com/hook',
+		});
+
+		expect(error.mock.calls.find((call) => call[0] === 'GOOGLE_TEST_USER_CAP_WARNING')?.[1]).toMatchObject({
+			connectedUserCount: 85,
+			cap: 100,
+			countIsLowerBound: true,
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+		expect(body.event).toBe('GOOGLE_TEST_USER_CAP_WARNING');
+		expect(body.severity).toBe('warning');
+	});
+
+	it('never lets a failed capacity read cost a tick', async () => {
+		capacityQuery.mockRejectedValue(new Error('database unreachable'));
+		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+		await expect(runTickAt(AT_0200_UTC)).resolves.toBeUndefined();
+		expect(
+			error.mock.calls.find((call) => call[0] === 'GOOGLE_TEST_USER_CAPACITY_CHECK_FAILED'),
+		).toBeDefined();
+	});
+});
+
+describe('scheduled.worker alert notification throttle (Task 8)', () => {
+	async function runTickAt(scheduledTime: number) {
+		const pending: Promise<unknown>[] = [];
+		await handleScheduled(
+			controllerFor(EMAIL_SYNC_CRON, scheduledTime),
+			{
+				EMAIL_SYNC_QUEUE: { send: vi.fn().mockResolvedValue(undefined) },
+				ERROR_REPORTING_WEBHOOK_URL: 'https://alerts.example.com/hook',
+			} as unknown as Env,
+			{
+				waitUntil: (promise: Promise<unknown>) => {
+					pending.push(promise);
+				},
+			} as unknown as ExecutionContext,
+		);
+		await Promise.all(pending);
+	}
+
+	beforeEach(() => {
+		claimDueScheduledJobs.mockReset().mockResolvedValue([]);
+		releaseScheduledJobClaim.mockReset().mockResolvedValue(undefined);
+		capacityQuery.mockReset().mockResolvedValue([{ connected_user_count: 1 }]);
+		stalePendingQuery.mockReset().mockResolvedValue([
+			{
+				user_count: 2,
+				stale_count: '17',
+				oldest_created_at: '2026-09-19T01:00:00.000Z',
+				snapshot_at: '2026-09-19T01:30:00.000Z',
+				snapshot_age_seconds: '120',
+			},
+		]);
+		resetErrorReportingState();
+		vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		vi.spyOn(console, 'info').mockImplementation(() => undefined);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	// A stuck backlog stays stuck for hours; an alert channel that repeats
+	// every ten minutes stops being read.
+	it('pushes the stale-extraction alert at most hourly, while logging every tick', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await runTickAt(Date.UTC(2026, 8, 19, 9, 5, 0));
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+
+		await runTickAt(Date.UTC(2026, 8, 19, 9, 15, 0));
+		await runTickAt(Date.UTC(2026, 8, 19, 9, 45, 0));
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+
+		// Every one of those ticks still wrote the console line.
+		const lines = (console.error as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+			(call) => call[0] === 'STALE_PENDING_EXTRACTION',
+		);
+		expect(lines).toHaveLength(3);
 	});
 });

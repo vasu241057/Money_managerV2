@@ -84,4 +84,64 @@ describe('config', () => {
 
 		expect(() => getAppConfig(env)).toThrow('SUPABASE_POOLER_URL must target PgBouncer on port 6543');
 	});
+
+	describe('Hyperdrive (Task 8)', () => {
+		const poolerUrl = 'postgres://user:pass@host:6543/db';
+		const hyperdriveUrl = 'postgres://user:pass@localhost:34917/db';
+
+		it('reports the pooler as the source when nothing else is bound', () => {
+			const config = getAppConfig({ SUPABASE_POOLER_URL: poolerUrl } as unknown as Env);
+
+			expect(config.supabasePoolerUrl).toBe(poolerUrl);
+			expect(config.dbConnectionSource).toBe('pooler');
+		});
+
+		it('prefers the binding over the pooler URL when both are present', () => {
+			const config = getAppConfig({
+				SUPABASE_POOLER_URL: poolerUrl,
+				HYPERDRIVE: { connectionString: hyperdriveUrl },
+			} as unknown as Env);
+
+			expect(config.supabasePoolerUrl).toBe(hyperdriveUrl);
+			expect(config.dbConnectionSource).toBe('hyperdrive');
+		});
+
+		// Hyperdrive listens on a local port of its own choosing, so the
+		// PgBouncer port check cannot apply to it.
+		it('accepts the arbitrary local port Hyperdrive hands out', () => {
+			expect(() =>
+				getAppConfig({ HYPERDRIVE: { connectionString: hyperdriveUrl } } as unknown as Env),
+			).not.toThrow();
+		});
+
+		it('still insists the binding gave it a postgres URL', () => {
+			expect(() =>
+				getAppConfig({
+					HYPERDRIVE: { connectionString: 'https://localhost:34917/db' },
+				} as unknown as Env),
+			).toThrow('HYPERDRIVE connection string must use postgres');
+			expect(() =>
+				getAppConfig({ HYPERDRIVE: { connectionString: 'nonsense' } } as unknown as Env),
+			).toThrow('HYPERDRIVE binding did not provide a valid postgres connection URL');
+		});
+
+		// Unbinding the block is the rollback path: no code change, straight
+		// back to the pooler.
+		it('falls back to the pooler when the binding carries no connection string', () => {
+			const config = getAppConfig({
+				SUPABASE_POOLER_URL: poolerUrl,
+				HYPERDRIVE: { connectionString: '' },
+			} as unknown as Env);
+
+			expect(config.supabasePoolerUrl).toBe(poolerUrl);
+			expect(config.dbConnectionSource).toBe('pooler');
+		});
+
+		it('reports no source at all when the database is unconfigured', () => {
+			const config = getAppConfig({ SUPABASE_POOLER_URL: '' } as unknown as Env);
+
+			expect(config.supabasePoolerUrl).toBeNull();
+			expect(config.dbConnectionSource).toBeNull();
+		});
+	});
 });

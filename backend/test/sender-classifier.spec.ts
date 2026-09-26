@@ -336,4 +336,41 @@ describe('sender-classifier worker', () => {
 		expect(result.candidate_count).toBe(1);
 		expect(insertedRules).toEqual(['alerts@newbank.com']);
 	});
+
+	// Task 8: the fan-out from a nightly run is nightly work, so it must not
+	// land on the queue the 10-minute sync tick shares.
+	it('enqueues the backfill fan-out onto the nightly queue when it is bound', async () => {
+		const sql = createHarnessSql({
+			gatedSenders: ['alerts@newbank.com'],
+			subjects: [{ from_address: 'alerts@newbank.com', subject: 'A/c 9876 debited' }],
+			backfillRows: [
+				{
+					id: '00000000-0000-4000-8000-00000000000a',
+					user_id: '00000000-0000-4000-8000-000000000001',
+				},
+			],
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				modelResponse([{ address: 'alerts@newbank.com', financial: true, type: 'BANK' }]),
+			),
+		);
+
+		const syncSend = vi.fn().mockResolvedValue(undefined);
+		const nightlySend = vi.fn().mockResolvedValue(undefined);
+		const result = await runSenderClassificationJob(
+			JOB,
+			createEnv({
+				EMAIL_SYNC_QUEUE: { send: syncSend },
+				NIGHTLY_QUEUE: { send: nightlySend },
+			}),
+		);
+
+		expect(result.backfill_job_count).toBe(1);
+		expect(syncSend).not.toHaveBeenCalled();
+		expect(nightlySend).toHaveBeenCalledTimes(1);
+		expect(nightlySend.mock.calls[0]?.[0]).toMatchObject({ job_type: 'SENDER_BACKFILL' });
+	});
 });

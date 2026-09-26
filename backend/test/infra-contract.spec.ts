@@ -8,11 +8,16 @@ import {
 	RATE_LIMIT_WINDOW_SECONDS,
 	USER_RATE_LIMIT_PER_WINDOW,
 } from '../src/lib/http/rate-limit';
-import { EMAIL_SYNC_CRON, QUEUE_NAMES } from '../src/lib/infra';
+import { EMAIL_SYNC_CRON, QUEUE_MAX_CONCURRENCY, QUEUE_NAMES } from '../src/lib/infra';
 
 interface WranglerQueueConfig {
 	producers: Array<{ binding: string; queue: string }>;
-	consumers: Array<{ queue: string; dead_letter_queue?: string; max_retries?: number }>;
+	consumers: Array<{
+		queue: string;
+		dead_letter_queue?: string;
+		max_retries?: number;
+		max_concurrency?: number;
+	}>;
 }
 
 interface WranglerRateLimit {
@@ -135,6 +140,42 @@ describe('infra contract', () => {
 		// Distinct namespaces, or the two limits share one counter.
 		expect(byName.get('USER_RATE_LIMITER')?.namespace_id).not.toBe(
 			byName.get('IP_RATE_LIMITER')?.namespace_id,
+		);
+	});
+
+	it('binds a producer and a consumer for the nightly queue', () => {
+		const config = loadWranglerConfig();
+		const producers = config.queues?.producers ?? [];
+		const consumers = config.queues?.consumers ?? [];
+
+		// The code resolves this binding by name; a rename here silently
+		// sends every nightly job back to the sync queue.
+		const nightlyProducer = producers.find(
+			(producer) => producer.queue === QUEUE_NAMES.NIGHTLY,
+		);
+		expect(nightlyProducer?.binding).toBe('NIGHTLY_QUEUE');
+
+		const nightlyConsumer = consumers.find((consumer) => consumer.queue === QUEUE_NAMES.NIGHTLY);
+		expect(nightlyConsumer?.dead_letter_queue).toBe(QUEUE_NAMES.NIGHTLY_DLQ);
+
+		const nightlyDlqConsumer = consumers.find(
+			(consumer) => consumer.queue === QUEUE_NAMES.NIGHTLY_DLQ,
+		);
+		expect(nightlyDlqConsumer).toBeDefined();
+		expect(nightlyDlqConsumer?.max_retries).toBe(0);
+	});
+
+	it('caps consumer concurrency at the numbers the code documents', () => {
+		const consumers = loadWranglerConfig().queues?.consumers ?? [];
+		const byQueue = new Map(consumers.map((consumer) => [consumer.queue, consumer]));
+
+		// Unset means auto-scale, which is what these numbers exist to stop:
+		// concurrency x DB_MAX_CONNECTIONS is the pooler-slot ceiling.
+		expect(byQueue.get(QUEUE_NAMES.EMAIL_SYNC)?.max_concurrency).toBe(
+			QUEUE_MAX_CONCURRENCY.EMAIL_SYNC,
+		);
+		expect(byQueue.get(QUEUE_NAMES.NIGHTLY)?.max_concurrency).toBe(
+			QUEUE_MAX_CONCURRENCY.NIGHTLY,
 		);
 	});
 
