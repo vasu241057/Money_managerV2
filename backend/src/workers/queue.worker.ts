@@ -317,70 +317,69 @@ function isWorkQueue(queueName: string): boolean {
 	return queueName === QUEUE_NAMES.EMAIL_SYNC || queueName === QUEUE_NAMES.NIGHTLY;
 }
 
+// Both work queues run the same dispatch table (Task 8). The main queue still
+// accepts nightly types so messages enqueued before the split — and anything
+// the producer fallback routed there — drain normally; the nightly queue
+// accepts the rest for the same reason.
 async function processMessage(queueName: string, body: unknown, env: Env): Promise<void> {
-	switch (true) {
-		// Both work queues run the same dispatch table (Task 8). The main
-		// queue still accepts nightly types so messages enqueued before the
-		// split — and anything the producer fallback routed there — drain
-		// normally; the nightly queue accepts the rest for the same reason.
-		case isWorkQueue(queueName): {
-			const jobType = (body as { job_type?: unknown } | null | undefined)?.job_type;
-
-			if (queueName === QUEUE_NAMES.NIGHTLY && !isNightlyJobType(jobType)) {
-				// Handled anyway — routing is not correctness — but a
-				// standing stream of these means a producer is misrouting.
-				console.warn('QUEUE_ROUTING_UNEXPECTED', {
-					queue: queueName,
-					jobType: typeof jobType === 'string' ? jobType : null,
-				});
-			}
-
-			if (jobType === 'EMAIL_SYNC_DISPATCH') {
-				await handleEmailSyncDispatch(body, env);
-				return;
-			}
-
-			if (jobType === 'EMAIL_SYNC_USER') {
-				await handleEmailSyncUser(body, env);
-				return;
-			}
-
-			if (jobType === 'NORMALIZE_RAW_EMAILS') {
-				await handleNormalizeRawEmails(body, env);
-				return;
-			}
-
-			if (jobType === 'SENDER_CLASSIFICATION') {
-				await handleSenderClassification(body, env);
-				return;
-			}
-
-			if (jobType === 'SENDER_BACKFILL') {
-				await handleSenderBackfill(body, env);
-				return;
-			}
-
-			if (jobType === 'RAW_EMAIL_BODY_PURGE') {
-				await handleRawEmailBodyPurge(body, env);
-				return;
-			}
-
-			if (jobType === 'MERCHANT_MAPPING') {
-				if (isMerchantMappingKillSwitched(env)) {
-					console.warn('Skipping MERCHANT_MAPPING queue job: the env kill switch is set');
-					return;
-				}
-
-				await handleMerchantMapping(body, env);
-				return;
-			}
-
-			throw new PoisonMessageError(`Invalid ${queueName} payload`);
-		}
-		default:
-			throw new TransientMessageError(`Unsupported queue name: ${queueName}`);
+	if (!isWorkQueue(queueName)) {
+		throw new TransientMessageError(`Unsupported queue name: ${queueName}`);
 	}
+
+	const jobType = (body as { job_type?: unknown } | null | undefined)?.job_type;
+
+	if (queueName === QUEUE_NAMES.NIGHTLY && !isNightlyJobType(jobType)) {
+		// Handled anyway — routing is not correctness — but a
+		// standing stream of these means a producer is misrouting.
+		console.warn('QUEUE_ROUTING_UNEXPECTED', {
+			queue: queueName,
+			jobType: typeof jobType === 'string' ? jobType : null,
+		});
+	}
+
+	if (jobType === 'EMAIL_SYNC_DISPATCH') {
+		await handleEmailSyncDispatch(body, env);
+		return;
+	}
+
+	if (jobType === 'EMAIL_SYNC_USER') {
+		await handleEmailSyncUser(body, env);
+		return;
+	}
+
+	if (jobType === 'NORMALIZE_RAW_EMAILS') {
+		await handleNormalizeRawEmails(body, env);
+		return;
+	}
+
+	if (jobType === 'SENDER_CLASSIFICATION') {
+		await handleSenderClassification(body, env);
+		return;
+	}
+
+	if (jobType === 'SENDER_BACKFILL') {
+		await handleSenderBackfill(body, env);
+		return;
+	}
+
+	if (jobType === 'RAW_EMAIL_BODY_PURGE') {
+		await handleRawEmailBodyPurge(body, env);
+		return;
+	}
+
+	if (jobType === 'MERCHANT_MAPPING') {
+		if (isMerchantMappingKillSwitched(env)) {
+			console.warn('Skipping MERCHANT_MAPPING queue job: the env kill switch is set');
+			return;
+		}
+
+		await handleMerchantMapping(body, env);
+		return;
+	}
+
+	throw new PoisonMessageError(`Invalid ${queueName} payload`);
 }
+
 
 function isDeadLetterQueue(queueName: string): boolean {
 	return queueName === QUEUE_NAMES.EMAIL_SYNC_DLQ || queueName === QUEUE_NAMES.NIGHTLY_DLQ;
