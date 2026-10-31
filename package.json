@@ -13,6 +13,7 @@
     "build:frontend": "npm run build --workspace=frontend",
     "build:backend": "npm run build --workspace=backend",
     "deploy:cloudflare": "npm run build:frontend && npm run deploy --workspace=backend",
+    "android:apk": "npm run android:apk --workspace=frontend",
     "logos:validate": "node scripts/sync-current-merchant-logos.mjs --validate-only",
     "logos:expand-next-100": "node scripts/expand-merchant-logo-catalog.mjs",
     "logos:validate-next-100": "node scripts/expand-merchant-logo-catalog.mjs --validate-only",
