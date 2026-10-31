@@ -14,6 +14,7 @@ import type {
   CreateCategoryRequest,
   CreateUserCreditCardRequest,
   CreateManualTransactionRequest,
+  DeleteAccountRequest,
   GoogleOAuthCallbackRequest,
   GoogleOAuthConnectionResponse,
   GoogleOAuthConnectionStatusResponse,
@@ -37,6 +38,9 @@ import type {
   SetCategoryBudgetRuleRequest,
   TransactionFeedItem,
   UpdateAccountRequest,
+  UserLimitsUpdateRequest,
+  UserQuotaRollupRow,
+  UserQuotasResponse,
   UpdateCategoryRequest,
   UpdateTransactionRequest,
   UpdateRecurringSeriesRequest,
@@ -172,6 +176,24 @@ export const apiClient = {
       { method: 'PUT', body: JSON.stringify(payload) },
     );
     return response.data.schedule;
+  },
+
+  async getUserQuotas(day?: string): Promise<UserQuotasResponse> {
+    const response = await request<ApiEnvelope<UserQuotasResponse>>(
+      `/ai-usage/users${buildQueryString({ day })}`,
+    );
+    return response.data;
+  },
+
+  async updateUserLimits(
+    userId: string,
+    payload: UserLimitsUpdateRequest,
+  ): Promise<UserQuotaRollupRow> {
+    const response = await request<ApiEnvelope<{ user: UserQuotaRollupRow }>>(
+      `/ai-usage/users/${userId}/limits`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+    );
+    return response.data.user;
   },
 
   async getAnalyticsSummary(): Promise<AnalyticsSummaryResponse> {
@@ -524,6 +546,15 @@ export const apiClient = {
   async disconnectGoogleOAuth(): Promise<void> {
     await request<void>('/oauth/google/connection', {
       method: 'DELETE',
+    });
+  },
+
+  /** Deletes the signed-in user's whole account (not a bank account: see deleteAccount). */
+  async deleteCurrentUserAccount(): Promise<void> {
+    const payload: DeleteAccountRequest = { confirm: 'DELETE' };
+    await request<void>('/account', {
+      method: 'DELETE',
+      body: JSON.stringify(payload),
     });
   },
 };

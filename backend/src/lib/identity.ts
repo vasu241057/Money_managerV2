@@ -199,6 +199,7 @@ interface UserMerchantRuleLookupRowRaw {
 
 interface GlobalAliasLookupRowRaw {
 	search_key: unknown;
+	owner_user_id?: unknown;
 	merchant_id: unknown;
 	category_type: unknown;
 	default_category_id: unknown;
@@ -376,9 +377,16 @@ export async function loadUserMerchantRulesForLookup(
 	return lookup;
 }
 
+/**
+ * Aliases visible to one user: every shared alias plus the aliases of the
+ * merchants this user owns (private payees). When the same key has both, the
+ * owned alias wins, so a person the user pays is never displaced by a brand
+ * that happens to share the key.
+ */
 export async function loadGlobalAliasesForLookup(
 	sql: SqlClient,
 	searchKeys: string[],
+	userId: UUID,
 ): Promise<Map<string, GlobalAliasResolution>> {
 	if (searchKeys.length === 0) {
 		return new Map<string, GlobalAliasResolution>();
@@ -387,6 +395,7 @@ export async function loadGlobalAliasesForLookup(
 	const rows = await sql<GlobalAliasLookupRowRaw[]>`
 		select
 			gma.search_key,
+			gma.owner_user_id,
 			gm.id as merchant_id,
 			gmcd.transaction_type as category_type,
 			gmcd.category_id as default_category_id,
@@ -398,14 +407,22 @@ export async function loadGlobalAliasesForLookup(
 		left join public.global_merchant_category_defaults as gmcd
 			on gmcd.merchant_id = gm.id
 		where gma.search_key = any(${searchKeys}::text[])
-		order by gma.search_key, gmcd.transaction_type
+			and (gma.owner_user_id is null or gma.owner_user_id = ${userId})
+		order by gma.search_key, (gma.owner_user_id is not null) desc, gmcd.transaction_type
 	`;
 
 	const lookup = new Map<string, GlobalAliasResolution>();
 	for (const row of rows) {
 		const searchKey = toRequiredString(row.search_key, 'global_merchant_aliases.search_key');
-		const resolution = lookup.get(searchKey) ?? {
-			merchant_id: toRequiredString(row.merchant_id, 'global_merchants.id'),
+		const merchantId = toRequiredString(row.merchant_id, 'global_merchants.id');
+		const existing = lookup.get(searchKey);
+		// Rows are owned-first per key; a second merchant for the same key
+		// (a shared brand behind an owned payee) must not merge its categories.
+		if (existing && existing.merchant_id !== merchantId) {
+			continue;
+		}
+		const resolution = existing ?? {
+			merchant_id: merchantId,
 			category_ids: { income: null, expense: null, transfer: null },
 			merchant_type: toRequiredString(row.merchant_type, 'global_merchants.type') as MerchantType,
 			// Missing column (spec harnesses) reads as confirmed so legacy

@@ -27,6 +27,13 @@ const MAX_WEB_SNIPPET_LENGTH = 240;
 const WEB_SEARCH_MAX_RESULTS = 5;
 // Unsure keys rest this long before the mapper asks the model again.
 const MAPPING_RETRY_COOLDOWN_DAYS = 10;
+// A person transfer is the one candidate class a web search can never help
+// with: nobody publishes a page about a private individual, so every credit
+// spent on one is wasted. Triage sorts the backlog before Tavily sees it.
+// The bar is deliberately high and the error costs are asymmetric — a person
+// mistaken for a business costs one credit, a business mistaken for a person
+// is never identified at all — so anything short of near-certainty is searched.
+const PERSON_TRIAGE_MIN_CONFIDENCE = 0.9;
 
 const VALID_MERCHANT_TYPES = new Set<MerchantType>([
 	'MERCHANT',
@@ -38,6 +45,25 @@ const VALID_MERCHANT_TYPES = new Set<MerchantType>([
 interface UnmappedCounterpartyRowRaw {
 	search_key: unknown;
 	counterparty_raw: unknown;
+	user_ids: unknown;
+	/** count(*) over (): the backlog behind the limit; absent on older fixtures. */
+	backlog_count?: unknown;
+}
+
+/** A key the mapper should look at, and the users who still lack a visible alias for it. */
+export interface MappingCandidate {
+	key: string;
+	name: string;
+	user_ids: string[];
+	web_context?: string;
+}
+
+export type MappingResolution = 'MERCHANT' | 'P2P' | 'UNSURE';
+
+interface MappingAttemptRecord {
+	search_key: string;
+	resolution: MappingResolution;
+	person_display_name: string | null;
 }
 
 interface MerchantUpsertRowRaw {
@@ -60,10 +86,24 @@ interface MerchantMapping {
 
 export interface MerchantMappingResult {
 	candidate_count: number;
+	/** Unmapped keys in the window before the per-run cap was applied. */
+	candidate_backlog_count: number;
+	candidate_cap: number;
 	mapped_count: number;
 	unsure_skipped_count: number;
+	/** Candidates triage kept away from Tavily as private individuals. */
+	person_skipped_count: number;
+	person_triage_call_count: number;
 	web_search_count: number;
+	/** Aliases written from this run's model answers: shared brand aliases plus owned payee aliases. */
 	alias_created_count: number;
+	/** The owned (private payee) subset of alias_created_count. */
+	owned_alias_created_count: number;
+	/**
+	 * Owned payee aliases created for users who pay a key some other user had
+	 * already resolved as a person: no model call, no cooldown (A.4 §4).
+	 */
+	person_fanout_count: number;
 	category_backfill_candidate_count: number;
 	category_backfilled_count: number;
 	relinked_transaction_count: number;
@@ -73,10 +113,16 @@ export interface MerchantMappingResult {
 function createEmptyResult(): MerchantMappingResult {
 	return {
 		candidate_count: 0,
+		candidate_backlog_count: 0,
+		candidate_cap: MAX_MERCHANTS_PER_RUN,
 		mapped_count: 0,
 		unsure_skipped_count: 0,
+		person_skipped_count: 0,
+		person_triage_call_count: 0,
 		web_search_count: 0,
 		alias_created_count: 0,
+		owned_alias_created_count: 0,
+		person_fanout_count: 0,
 		category_backfill_candidate_count: 0,
 		category_backfilled_count: 0,
 		relinked_transaction_count: 0,
@@ -93,6 +139,7 @@ export async function searchMerchantWebContext(
 	env: Env,
 	candidates: Array<{ key: string; name: string }>,
 	fetcher: typeof fetch = fetch,
+	maxSearches: number = MAX_WEB_SEARCHES_PER_RUN,
 ): Promise<TavilySearchOutcome> {
 	const context = new Map<string, string>();
 	// Comma-separated keys rotate on quota exhaustion (free-tier stacking).
@@ -109,7 +156,7 @@ export async function searchMerchantWebContext(
 	}
 
 	let keyIndex = 0;
-	for (const candidate of candidates.slice(0, MAX_WEB_SEARCHES_PER_RUN)) {
+	for (const candidate of candidates.slice(0, maxSearches)) {
 		let answered = false;
 		while (!answered && keyIndex < apiKeys.length) {
 			const controller = new AbortController();
@@ -180,7 +227,7 @@ export async function searchMerchantWebContext(
 	}
 
 	console.info('MERCHANT_MAPPER_WEB_CONTEXT', {
-		requested: Math.min(candidates.length, MAX_WEB_SEARCHES_PER_RUN),
+		requested: Math.min(candidates.length, maxSearches),
 		resolved: context.size,
 		searchesPerformed,
 		creditsByKey,
@@ -208,6 +255,78 @@ function creditCounters(creditsByKey: number[]): Record<string, number> {
 	});
 	if (total > 0) counters.tavily_credits = total;
 	return counters;
+}
+
+/**
+ * Trading and legal markers that make a payee a business however much the words
+ * around them read as somebody's name: "Ajay Singham Private Limited" and
+ * "Verma Traders" are firms, not people. The model is told this too, but a
+ * private individual is the one call we refuse to leave to model confidence
+ * alone — this list can only ever push a candidate back towards being searched.
+ */
+const BUSINESS_NAME_MARKERS = new Set([
+	'PVT', 'PRIVATE', 'LTD', 'LIMITED', 'LLP', 'LLC', 'INC', 'CORP', 'CORPORATION',
+	'COMPANY', 'CO', 'FIRM', 'GROUP', 'HOLDINGS', 'VENTURES', 'ENTERPRISE',
+	'ENTERPRISES', 'INDUSTRIES', 'TRADERS', 'TRADING', 'AGENCY', 'AGENCIES',
+	'ASSOCIATES', 'SONS', 'BROTHERS', 'BROS', 'TECHNOLOGIES', 'TECHNOLOGY',
+	'SYSTEMS', 'SOLUTIONS', 'SERVICES', 'RETAIL', 'MART', 'SUPERMARKET', 'STORE',
+	'STORES', 'SHOP', 'SHOPPE', 'BAZAAR', 'COLLECTION', 'COLLECTIONS', 'GARMENTS',
+	'JEWELLERS', 'JEWELLERY', 'ELECTRONICS', 'AUTOMOBILES', 'MOTORS', 'FURNITURE',
+	'FOODS', 'RESTAURANT', 'HOTEL', 'CAFE', 'BAKERY', 'SWEETS', 'DHABA', 'CATERERS',
+	'MEDICAL', 'MEDICALS', 'PHARMACY', 'CHEMIST', 'CLINIC', 'HOSPITAL', 'DIAGNOSTICS',
+	'SALON', 'STUDIO', 'FITNESS', 'ACADEMY', 'INSTITUTE', 'SCHOOL', 'COLLEGE',
+	'CENTRE', 'CENTER', 'LOGISTICS', 'TRANSPORT', 'TRAVELS', 'BUILDERS',
+	'DEVELOPERS', 'CONSTRUCTION', 'HARDWARE', 'TEXTILES', 'TRADERSHOP',
+]);
+
+/**
+ * True when a raw payee string carries a business marker as a whole word.
+ * Deliberately token-based: a substring test would read "Cooperative" as "CO".
+ */
+export function hasBusinessNameMarker(rawName: string): boolean {
+	return rawName
+		.toUpperCase()
+		.split(/[^A-Z0-9]+/)
+		.some(token => token.length > 0 && BUSINESS_NAME_MARKERS.has(token));
+}
+
+function buildPersonTriagePrompt(
+	candidates: Array<{ key: string; name: string }>,
+): Array<{ role: string; content: string }> {
+	return [
+		{
+			role: 'system',
+			content: [
+				'You sort raw payee strings from Indian bank and UPI alerts into two kinds.',
+				'Each input has a stable "key" and the raw payee "name" as it appeared in the alert.',
+				'',
+				'"PERSON" — a private individual. A UPI transfer between two human beings.',
+				'  Signals: the string is a personal name ("Ajay Kumar", "PRIYA S", "Rohit Verma"),',
+				'  a UPI handle built from a personal name, or a name beside a UPI/VPA marker.',
+				'"MERCHANT" — any business at all: brand, company, shop, firm, institution,',
+				'  however small or local, and any payment gateway, bank or aggregator.',
+				'',
+				'CRITICAL: a trading or legal marker makes it a MERCHANT even when the words',
+				'before it are somebody\'s name. "Ajay Singham Private Limited", "R K Sharma & Sons",',
+				'"Verma Traders", "Patel Enterprises" and "Singh Medical Store" are all MERCHANT.',
+				'A bare personal name with no such marker is PERSON.',
+				'The word "UPI" alone means only that UPI moved the money — it says nothing',
+				'about whether the counterparty is a person or a shop. Never decide on it alone.',
+				'',
+				'"confidence" is your honest probability from 0 to 1 that the payee is a private',
+				`individual. Anything below ${PERSON_TRIAGE_MIN_CONFIDENCE} is treated as a business and researched anyway,`,
+				'so there is no cost to admitting doubt — only say you are certain when you are.',
+				'',
+				'Return strict JSON only, no markdown, exactly:',
+				'{ "assessments": [ { "key": "<input key>", "kind": "PERSON"|"MERCHANT", "confidence": 0.0 } ] }',
+				'Include every input key exactly once, unchanged.',
+			].join('\n'),
+		},
+		{
+			role: 'user',
+			content: JSON.stringify({ payees: candidates }),
+		},
+	];
 }
 
 function buildMappingPrompt(
@@ -265,6 +384,146 @@ function resolveCategoryName(
 	const trimmed = raw.trim();
 	if (trimmed.length === 0) return null;
 	return categoriesByName.get(trimmed) ?? categoriesByLowerName.get(trimmed.toLowerCase()) ?? null;
+}
+
+export interface PersonTriageOutcome {
+	/** Keys confidently identified as private individuals — never searched. */
+	person_keys: Set<string>;
+	call_count: number;
+	/** Keys the model called a person that a business marker sent back. */
+	guard_override_count: number;
+	failed: boolean;
+}
+
+/**
+ * Sorts candidates into people and businesses before a single Tavily credit is
+ * spent. Every failure path — no answer, malformed JSON, HTTP error, timeout —
+ * returns an empty person set, which searches everything exactly as before.
+ * Triage is an optimisation, so it must never be able to cost the run a
+ * merchant, and never throws the way the mapping call deliberately does.
+ */
+export async function triagePersonTransfers(
+	sql: SqlClient,
+	env: Env,
+	apiKey: string,
+	candidates: Array<{ key: string; name: string }>,
+): Promise<PersonTriageOutcome> {
+	const outcome: PersonTriageOutcome = {
+		person_keys: new Set<string>(),
+		call_count: 0,
+		guard_override_count: 0,
+		failed: false,
+	};
+	if (candidates.length === 0) return outcome;
+
+	const providerConfig = resolveAiProviderConfig(env);
+	const candidatesByKey = new Map(candidates.map(candidate => [candidate.key, candidate.name]));
+
+	for (let i = 0; i < candidates.length; i += MAPPING_AI_CHUNK_SIZE) {
+		const chunk = candidates.slice(i, i + MAPPING_AI_CHUNK_SIZE);
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), AI_CHAT_TIMEOUT_MS);
+		const startedAtMs = Date.now();
+		outcome.call_count += 1;
+
+		try {
+			const response = await fetch(providerConfig.chatUrl, {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: providerConfig.dailyModel,
+					temperature: 0,
+					messages: buildPersonTriagePrompt(chunk),
+					response_format: { type: 'json_object' },
+				}),
+				signal: controller.signal,
+			});
+			const generationId = response.headers.get('X-Generation-Id');
+			// Triage rides under MERCHANT_MAPPING: it is part of that job's cost,
+			// and ai_usage_events constrains the operation column to known names.
+			const capture = (
+				status: 'SUCCESS' | 'ERROR',
+				payload?: unknown,
+				errorCode?: string,
+			) =>
+				captureAiUsageAttempt({
+					sql,
+					provider: providerConfig.provider,
+					model: providerConfig.dailyModel,
+					operation: 'MERCHANT_MAPPING',
+					itemCount: chunk.length,
+					startedAtMs,
+					status,
+					httpStatus: response.status,
+					payload,
+					errorCode,
+					generationId,
+				});
+
+			if (!response.ok) {
+				await capture('ERROR', undefined, `HTTP_${response.status}`);
+				outcome.failed = true;
+				console.warn('MERCHANT_TRIAGE_HTTP_ERROR', { status: response.status });
+				continue;
+			}
+
+			const payload = (await response.json()) as MerchantModelPayload;
+			const content = payload.choices?.[0]?.message?.content;
+			if (!content) {
+				await capture('ERROR', payload, 'EMPTY_RESPONSE');
+				outcome.failed = true;
+				continue;
+			}
+			const cleaned = content
+				.replace(/^```(?:json)?\s*/i, '')
+				.replace(/\s*```\s*$/, '')
+				.trim();
+			const parsed = JSON.parse(cleaned) as { assessments?: unknown };
+			if (!Array.isArray(parsed.assessments)) {
+				await capture('ERROR', payload, 'MISSING_ASSESSMENTS');
+				outcome.failed = true;
+				continue;
+			}
+			await capture('SUCCESS', payload);
+
+			for (const entry of parsed.assessments) {
+				if (typeof entry !== 'object' || entry === null) continue;
+				const record = entry as Record<string, unknown>;
+				const key = typeof record.key === 'string' ? record.key.trim() : '';
+				// The model cannot invent a key into the skip list: only strings
+				// from this run's own candidate set are allowed to dodge a search.
+				const rawName = candidatesByKey.get(key);
+				if (rawName === undefined) continue;
+				if (typeof record.kind !== 'string' || record.kind.toUpperCase() !== 'PERSON') continue;
+				const confidence = typeof record.confidence === 'number' ? record.confidence : 0;
+				if (!Number.isFinite(confidence) || confidence < PERSON_TRIAGE_MIN_CONFIDENCE) continue;
+				if (hasBusinessNameMarker(rawName)) {
+					outcome.guard_override_count += 1;
+					continue;
+				}
+				outcome.person_keys.add(key);
+			}
+		} catch (error) {
+			outcome.failed = true;
+			console.warn('MERCHANT_TRIAGE_FAILED', {
+				message: error instanceof Error ? error.message : 'unknown',
+			});
+		} finally {
+			clearTimeout(timeoutId);
+		}
+	}
+
+	console.info('MERCHANT_TRIAGE', {
+		candidates: candidates.length,
+		persons: outcome.person_keys.size,
+		guardOverrides: outcome.guard_override_count,
+		calls: outcome.call_count,
+		failed: outcome.failed,
+	});
+	return outcome;
 }
 
 interface MappingCallOutcome {
@@ -488,17 +747,23 @@ async function incrementUsageCounters(
 	}
 }
 
-// Marks every key that faced the model this run; unsure keys then rest for
-// the cooldown window (mapped keys gain an alias and drop out anyway).
-async function recordMappingAttempts(sql: SqlClient, keys: string[]): Promise<void> {
-	if (keys.length === 0) return;
+// Marks every key that faced the model this run with what it resolved to;
+// unsure keys rest for the cooldown window, and a key resolved as a person
+// keeps the display name so later users paying it never cost a model call.
+async function recordMappingAttempts(sql: SqlClient, records: MappingAttemptRecord[]): Promise<void> {
+	if (records.length === 0) return;
+	const keys = records.map(record => record.search_key);
+	const resolutions = records.map(record => record.resolution);
+	const names = records.map(record => record.person_display_name);
 	try {
 		await sql`
-			insert into public.merchant_mapping_attempts (search_key)
-			select unnest(${keys}::text[])
+			insert into public.merchant_mapping_attempts (search_key, last_resolution, person_display_name)
+			select * from unnest(${keys}::text[], ${resolutions}::text[], ${names}::text[])
 			on conflict (search_key) do update
 			set attempt_count = public.merchant_mapping_attempts.attempt_count + 1,
-				last_attempt_at = now()
+				last_attempt_at = now(),
+				last_resolution = excluded.last_resolution,
+				person_display_name = coalesce(excluded.person_display_name, public.merchant_mapping_attempts.person_display_name)
 		`;
 	} catch (error) {
 		console.warn('MERCHANT_MAPPER_ATTEMPTS_FAILED', {
@@ -522,16 +787,21 @@ interface LoadCandidatesOptions {
 async function loadUnmappedCounterparties(
 	sql: SqlClient,
 	options: LoadCandidatesOptions = {},
-): Promise<Array<{ key: string; name: string }>> {
+): Promise<{ candidates: MappingCandidate[]; backlog_count: number }> {
 	const applyLookback = options.ignoreLookback !== true;
 	const applyCooldown = options.ignoreCooldown !== true;
 	const explicitKeys = options.searchKeys ?? [];
 	const hasExplicitKeys = explicitKeys.length > 0;
 	const limit = options.limit ?? MAX_MERCHANTS_PER_RUN;
+	// user_ids: everyone with events on the key who still lacks a visible
+	// alias (no shared alias, no alias of their own). A person answer is
+	// written once per such user; a brand answer once, shared.
 	const rows = await sql<UnmappedCounterpartyRowRaw[]>`
 		select
 			fe.search_key,
-			max(fe.counterparty_raw) as counterparty_raw
+			max(fe.counterparty_raw) as counterparty_raw,
+			array_agg(distinct fe.user_id) as user_ids,
+			count(*) over () as backlog_count
 		from public.financial_events as fe
 		where fe.search_key is not null
 			and fe.counterparty_raw is not null
@@ -544,6 +814,7 @@ async function loadUnmappedCounterparties(
 				select 1
 				from public.global_merchant_aliases as gma
 				where gma.search_key = fe.search_key
+					and (gma.owner_user_id is null or gma.owner_user_id = fe.user_id)
 			)
 			and (
 				not ${applyCooldown}
@@ -558,33 +829,173 @@ async function loadUnmappedCounterparties(
 		limit ${limit}
 	`;
 
-	const candidates: Array<{ key: string; name: string }> = [];
+	const candidates: MappingCandidate[] = [];
+	let backlogCount = rows.length;
 	for (const row of rows) {
+		const reported = Number(row.backlog_count);
+		if (Number.isSafeInteger(reported) && reported > backlogCount) backlogCount = reported;
 		if (typeof row.search_key !== 'string' || typeof row.counterparty_raw !== 'string') {
 			continue;
 		}
 		const key = row.search_key.trim();
 		const name = row.counterparty_raw.trim();
 		if (key.length === 0 || name.length === 0) continue;
-		candidates.push({ key, name });
+		candidates.push({ key, name, user_ids: parseUserIds(row.user_ids) });
 	}
-	return candidates;
+	return { candidates, backlog_count: backlogCount };
 }
 
-async function persistMappings(
+function parseUserIds(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+}
+
+/** Users with events on each key who have no visible alias for it (the apply path's fan-out targets). */
+async function loadUsersLackingVisibleAlias(
+	sql: SqlClient,
+	keys: string[],
+): Promise<Map<string, string[]>> {
+	const byKey = new Map<string, string[]>();
+	if (keys.length === 0) return byKey;
+	const rows = await sql<Array<{ search_key: unknown; user_ids: unknown }>>`
+		select fe.search_key, array_agg(distinct fe.user_id) as user_ids
+		from public.financial_events as fe
+		where fe.search_key = any(${keys}::text[])
+			and not exists (
+				select 1
+				from public.global_merchant_aliases as gma
+				where gma.search_key = fe.search_key
+					and (gma.owner_user_id is null or gma.owner_user_id = fe.user_id)
+			)
+		group by fe.search_key
+	`;
+	for (const row of rows) {
+		if (typeof row.search_key !== 'string') continue;
+		byKey.set(row.search_key, parseUserIds(row.user_ids));
+	}
+	return byKey;
+}
+
+/**
+ * Writes one private payee (owned merchant + owned alias) for `userId`.
+ * Resolves to true when the alias was new for that user. The same person
+ * paid through two keys collapses onto one owned merchant, which then holds
+ * both aliases.
+ */
+async function persistOwnedPayee(
+	sql: SqlClient,
+	userId: string,
+	searchKey: string,
+	displayName: string,
+): Promise<boolean> {
+	const merchantRows = await sql<MerchantUpsertRowRaw[]>`
+		insert into public.global_merchants (canonical_name, default_category_id, type, source, confirmed, owner_user_id)
+		values (${displayName}, null, 'P2P', 'AI', false, ${userId})
+		on conflict (owner_user_id, canonical_name) where owner_user_id is not null do update
+		set updated_at = now()
+		returning id
+	`;
+	const merchantId = toRequiredString(merchantRows[0]?.id, 'global_merchants.id');
+	const aliasRows = await sql<Array<{ search_key: unknown }>>`
+		insert into public.global_merchant_aliases (search_key, merchant_id, owner_user_id)
+		values (${searchKey}, ${merchantId}, ${userId})
+		on conflict (search_key, owner_user_id) where owner_user_id is not null do nothing
+		returning search_key
+	`;
+	return aliasRows.length > 0;
+}
+
+interface KnownPersonRowRaw {
+	search_key: unknown;
+	person_display_name: unknown;
+	user_ids: unknown;
+}
+
+/**
+ * Keys some user already resolved as a person, now seen on another user's
+ * events: that user gets the payee without a model call or a cooldown wait.
+ * Exported for the PGlite tenancy suite; the daily job calls it first.
+ */
+export async function fanOutKnownPersons(
+	sql: SqlClient,
+	limit: number = MAX_MERCHANTS_PER_RUN,
+): Promise<{ keyCount: number; aliasCount: number; mappedKeys: string[] }> {
+	const rows = await sql<KnownPersonRowRaw[]>`
+		select
+			mma.search_key,
+			mma.person_display_name,
+			array_agg(distinct fe.user_id) as user_ids
+		from public.merchant_mapping_attempts as mma
+		join public.financial_events as fe
+			on fe.search_key = mma.search_key
+		where mma.last_resolution = 'P2P'
+			and mma.person_display_name is not null
+			and not exists (
+				select 1
+				from public.global_merchant_aliases as gma
+				where gma.search_key = mma.search_key
+					and (gma.owner_user_id is null or gma.owner_user_id = fe.user_id)
+			)
+		group by mma.search_key, mma.person_display_name
+		order by mma.search_key
+		limit ${limit}
+	`;
+
+	let aliasCount = 0;
+	const mappedKeys: string[] = [];
+	for (const row of rows) {
+		if (typeof row.search_key !== 'string' || typeof row.person_display_name !== 'string') continue;
+		const name = row.person_display_name.trim();
+		if (name.length === 0) continue;
+		let createdForKey = false;
+		for (const userId of parseUserIds(row.user_ids)) {
+			if (await persistOwnedPayee(sql, userId, row.search_key, name)) {
+				aliasCount += 1;
+				createdForKey = true;
+			}
+		}
+		if (createdForKey) mappedKeys.push(row.search_key);
+	}
+	if (rows.length > 0) {
+		console.info('MERCHANT_MAPPER_PERSON_FANOUT', { keys: rows.length, aliases: aliasCount });
+	}
+	return { keyCount: rows.length, aliasCount, mappedKeys };
+}
+
+// Brands are shared rows (owner null), written once. A person is written as
+// a private payee for every user in usersByKey who pays that key: one owned
+// merchant and one owned alias each, never a shared name-bearing row.
+// Exported for the PGlite tenancy suite.
+export async function persistMappings(
 	sql: SqlClient,
 	mappings: MerchantMapping[],
-): Promise<{ aliasCount: number; mappedKeys: string[] }> {
+	usersByKey: ReadonlyMap<string, readonly string[]>,
+): Promise<{ aliasCount: number; ownedAliasCount: number; mappedKeys: string[] }> {
 	let aliasCount = 0;
+	let ownedAliasCount = 0;
 	const mappedKeys: string[] = [];
 
 	for (const mapping of mappings) {
+		if (mapping.merchant_type === 'P2P') {
+			let createdForKey = false;
+			for (const userId of usersByKey.get(mapping.search_key) ?? []) {
+				if (await persistOwnedPayee(sql, userId, mapping.search_key, mapping.canonical_name)) {
+					aliasCount += 1;
+					ownedAliasCount += 1;
+					createdForKey = true;
+				}
+			}
+			if (createdForKey) mappedKeys.push(mapping.search_key);
+			continue;
+		}
+
 		// Seed/manual categories are never overwritten (coalesce keeps the
-		// existing value); the AI only fills empty ones.
+		// existing value); the AI only fills empty ones. The partial unique
+		// index on shared names is what `on conflict` infers here.
 		const merchantRows = await sql<MerchantUpsertRowRaw[]>`
-			insert into public.global_merchants (canonical_name, default_category_id, type, source, confirmed)
-			values (${mapping.canonical_name}, ${mapping.default_category_id}, ${mapping.merchant_type}, 'AI', false)
-			on conflict (canonical_name) do update
+			insert into public.global_merchants (canonical_name, default_category_id, type, source, confirmed, owner_user_id)
+			values (${mapping.canonical_name}, ${mapping.default_category_id}, ${mapping.merchant_type}, 'AI', false, null)
+			on conflict (canonical_name) where owner_user_id is null do update
 			set default_category_id = coalesce(global_merchants.default_category_id, excluded.default_category_id),
 				updated_at = now()
 			returning id
@@ -603,9 +1014,9 @@ async function persistMappings(
 		}
 
 		const aliasRows = await sql<Array<{ search_key: unknown }>>`
-			insert into public.global_merchant_aliases (search_key, merchant_id)
-			values (${mapping.search_key}, ${merchantId})
-			on conflict (search_key) do nothing
+			insert into public.global_merchant_aliases (search_key, merchant_id, owner_user_id)
+			values (${mapping.search_key}, ${merchantId}, null)
+			on conflict (search_key) where owner_user_id is null do nothing
 			returning search_key
 		`;
 		if (aliasRows.length > 0) {
@@ -614,7 +1025,21 @@ async function persistMappings(
 		}
 	}
 
-	return { aliasCount, mappedKeys };
+	return { aliasCount, ownedAliasCount, mappedKeys };
+}
+
+/** One attempt record per answered key: what it resolved to, and the person's name when it was one. */
+function buildAttemptRecords(attemptedKeys: string[], mappings: MerchantMapping[]): MappingAttemptRecord[] {
+	const byKey = new Map<string, MerchantMapping>();
+	for (const mapping of mappings) byKey.set(mapping.search_key, mapping);
+	return attemptedKeys.map(key => {
+		const mapping = byKey.get(key);
+		if (!mapping) return { search_key: key, resolution: 'UNSURE', person_display_name: null };
+		if (mapping.merchant_type === 'P2P') {
+			return { search_key: key, resolution: 'P2P', person_display_name: mapping.canonical_name };
+		}
+		return { search_key: key, resolution: 'MERCHANT', person_display_name: null };
+	});
 }
 
 // Links recent merchant-less transactions to the freshly mapped merchants so
@@ -623,17 +1048,25 @@ async function persistMappings(
 // merchant_id is still null — a merchant the user chose stays untouched.
 // classification_source is deliberately NOT a filter: rows classified via a
 // user merchant rule carry source USER yet still deserve the name.
-async function relinkTransactions(sql: SqlClient, mappedKeys: string[]): Promise<number> {
+export async function relinkTransactions(sql: SqlClient, mappedKeys: string[]): Promise<number> {
 	if (mappedKeys.length === 0) {
 		return 0;
 	}
 
+	// Only aliases the transaction's user can see; an owned alias outranks a
+	// shared one on the same key (A.3 §5), so the join picks deterministically.
 	const rows = await sql<Array<{ id: unknown }>>`
 		update public.transactions as t
-		set merchant_id = gma.merchant_id
+		set merchant_id = picked.merchant_id
 		from public.financial_events as fe
-		join public.global_merchant_aliases as gma
-			on gma.search_key = fe.search_key
+		join lateral (
+			select gma.merchant_id
+			from public.global_merchant_aliases as gma
+			where gma.search_key = fe.search_key
+				and (gma.owner_user_id is null or gma.owner_user_id = fe.user_id)
+			order by (gma.owner_user_id is not null) desc
+			limit 1
+		) as picked on true
 		where t.financial_event_id = fe.id
 			and t.user_id = fe.user_id
 			and t.merchant_id is null
@@ -661,6 +1094,7 @@ async function backfillMerchantCategories(
 		select gm.id, gm.canonical_name
 		from public.global_merchants as gm
 		where gm.type = 'MERCHANT'
+			and gm.owner_user_id is null
 			and gm.default_category_id is null
 		order by gm.created_at asc
 		limit ${MAX_CATEGORY_BACKFILL_PER_RUN}
@@ -733,6 +1167,11 @@ export interface MerchantMappingPreviewResult {
 	ai_call_count: number;
 	proposal_count: number;
 	unsure_skipped_count: number;
+	/** Candidates triage kept away from Tavily as private individuals. */
+	person_skipped_count: number;
+	person_triage_call_count: number;
+	/** The raw names triage judged to be people, for eyeballing the calls. */
+	person_skipped_names: string[];
 	/** Candidates the model answered on but returned no usable mapping for. */
 	unanswered_keys: string[];
 	/**
@@ -833,10 +1272,14 @@ export async function applyMerchantMappings(
 	if (mappings.length === 0) return result;
 	result.accepted_count = mappings.length;
 
-	const persisted = await persistMappings(sql, mappings);
+	// A person proposal is written for every user who pays the key and has
+	// no visible alias for it yet; the preview cannot know those users.
+	const personKeys = mappings.filter(mapping => mapping.merchant_type === 'P2P').map(mapping => mapping.search_key);
+	const usersByKey = await loadUsersLackingVisibleAlias(sql, personKeys);
+	const persisted = await persistMappings(sql, mappings, usersByKey);
 	result.alias_created_count = persisted.aliasCount;
 	result.relinked_transaction_count = await relinkTransactions(sql, persisted.mappedKeys);
-	await recordMappingAttempts(sql, mappings.map(mapping => mapping.search_key));
+	await recordMappingAttempts(sql, buildAttemptRecords(mappings.map(mapping => mapping.search_key), mappings));
 
 	console.info('MERCHANT_MAPPER_APPLIED', {
 		requested: result.requested_count,
@@ -876,6 +1319,9 @@ export async function previewMerchantMappings(
 		ai_call_count: 0,
 		proposal_count: 0,
 		unsure_skipped_count: 0,
+		person_skipped_count: 0,
+		person_triage_call_count: 0,
+		person_skipped_names: [],
 		unanswered_keys: [],
 		searched: [],
 		proposals: [],
@@ -895,7 +1341,7 @@ export async function previewMerchantMappings(
 	const categoryNamesById = new Map<string, string>();
 	for (const [name, id] of categoriesByName) categoryNamesById.set(id, name);
 
-	const candidates = await loadUnmappedCounterparties(sql, {
+	const { candidates } = await loadUnmappedCounterparties(sql, {
 		ignoreLookback: options.ignoreLookback ?? true,
 		ignoreCooldown: options.ignoreCooldown ?? true,
 		...(options.searchKeys === undefined ? {} : { searchKeys: options.searchKeys }),
@@ -912,9 +1358,17 @@ export async function previewMerchantMappings(
 		return result;
 	}
 
-	const webSearch = await searchMerchantWebContext(env, candidates);
+	const triage = await triagePersonTransfers(sql, env, apiKey, candidates);
+	result.person_skipped_count = triage.person_keys.size;
+	result.person_triage_call_count = triage.call_count;
+	result.person_skipped_names = candidates
+		.filter(candidate => triage.person_keys.has(candidate.key))
+		.map(candidate => candidate.name);
+	const searchTargets = candidates.filter(candidate => !triage.person_keys.has(candidate.key));
+
+	const webSearch = await searchMerchantWebContext(env, searchTargets);
 	result.web_search_count = webSearch.searches_performed;
-	result.searched = candidates.map(candidate => ({
+	result.searched = searchTargets.map(candidate => ({
 		search_key: candidate.key,
 		raw_name: candidate.name,
 		web_context: webSearch.context.get(candidate.key) ?? null,
@@ -962,7 +1416,9 @@ export async function previewMerchantMappings(
 
 	await incrementUsageCounters(sql, {
 		tavily_searches: result.web_search_count,
-		merchant_ai_calls: result.ai_call_count,
+		merchant_ai_calls: result.ai_call_count + result.person_triage_call_count,
+		person_searches_skipped: result.person_skipped_count,
+		person_triage_calls: result.person_triage_call_count,
 		...creditCounters(webSearch.credits_by_key),
 	});
 
@@ -984,11 +1440,29 @@ export async function runMerchantMappingJob(
 
 	const config = getAppConfig(env);
 	const sql = getSqlClient(config);
+	// Per-run cap from the env (Task 6), backlog-scaled: a run takes
+	// min(cap, backlog) keys in the usual 40-key chunks.
+	const cap =
+		Number.isSafeInteger(config.maxMerchantsPerRun) && config.maxMerchantsPerRun > 0
+			? config.maxMerchantsPerRun
+			: MAX_MERCHANTS_PER_RUN;
+	result.candidate_cap = cap;
+
+	// Free work first: people other users already resolved, for users who
+	// just started paying them.
+	const fanout = await fanOutKnownPersons(sql, cap);
+	result.person_fanout_count = fanout.aliasCount;
+	result.relinked_transaction_count += await relinkTransactions(sql, fanout.mappedKeys);
 
 	const categoriesByName = await loadSystemExpenseCategories(sql);
 
-	const candidates = await loadUnmappedCounterparties(sql);
+	const loaded = await loadUnmappedCounterparties(sql, { limit: cap });
+	const candidates = loaded.candidates;
 	result.candidate_count = candidates.length;
+	result.candidate_backlog_count = loaded.backlog_count;
+	if (loaded.backlog_count > cap) {
+		console.info('MERCHANT_MAPPER_CAPPED', { backlog: loaded.backlog_count, cap });
+	}
 
 	let creditsByKey: number[] = [];
 	if (candidates.length > 0) {
@@ -1001,7 +1475,14 @@ export async function runMerchantMappingJob(
 			return result;
 		}
 
-		const webSearch = await searchMerchantWebContext(env, candidates);
+		// Sort people out of the backlog first — they are mapped like everyone
+		// else, they just never reach Tavily.
+		const triage = await triagePersonTransfers(sql, env, apiKey, candidates);
+		result.person_skipped_count = triage.person_keys.size;
+		result.person_triage_call_count = triage.call_count;
+		const searchTargets = candidates.filter(candidate => !triage.person_keys.has(candidate.key));
+
+		const webSearch = await searchMerchantWebContext(env, searchTargets, fetch, cap);
 		result.web_search_count = webSearch.searches_performed;
 		creditsByKey = webSearch.credits_by_key;
 		const enriched = candidates.map(candidate => {
@@ -1028,13 +1509,17 @@ export async function runMerchantMappingJob(
 		if (anyChunkSucceeded) {
 			result.mapped_count = allMappings.length;
 
-			const persisted = await persistMappings(sql, allMappings);
+			const usersByKey = new Map<string, readonly string[]>();
+			for (const candidate of candidates) usersByKey.set(candidate.key, candidate.user_ids);
+			const persisted = await persistMappings(sql, allMappings, usersByKey);
 			result.alias_created_count = persisted.aliasCount;
+			result.owned_alias_created_count = persisted.ownedAliasCount;
 
-			result.relinked_transaction_count = await relinkTransactions(sql, persisted.mappedKeys);
+			result.relinked_transaction_count += await relinkTransactions(sql, persisted.mappedKeys);
 
-			// Cooldown bookkeeping only for keys whose chunk actually answered.
-			await recordMappingAttempts(sql, attemptedKeys);
+			// Cooldown bookkeeping only for keys whose chunk actually answered,
+			// remembering what each resolved to.
+			await recordMappingAttempts(sql, buildAttemptRecords(attemptedKeys, allMappings));
 		} else if (result.skipped_reason === null) {
 			result.skipped_reason = 'invalid model response';
 		}
@@ -1050,9 +1535,13 @@ export async function runMerchantMappingJob(
 		tavily_searches: result.web_search_count,
 		merchant_ai_calls:
 			Math.ceil(result.candidate_count / MAPPING_AI_CHUNK_SIZE) +
+			result.person_triage_call_count +
 			(backfill.candidateCount > 0 ? 1 : 0),
 		merchants_mapped: result.alias_created_count,
 		merchants_skipped_unsure: result.unsure_skipped_count,
+		person_searches_skipped: result.person_skipped_count,
+		person_triage_calls: result.person_triage_call_count,
+		person_fanouts: result.person_fanout_count,
 		...creditCounters(creditsByKey),
 	});
 

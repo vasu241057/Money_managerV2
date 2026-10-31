@@ -48,9 +48,71 @@ function normalizeGmailGetUrl(url: string): string {
 	return url;
 }
 
-function createSqlMock(handler: QueryHandler): SqlMock {
+/**
+ * Task 6 bookkeeping every user job now does. Absent an override the user is
+ * far under both caps, nothing is parked on the connection, the usage upsert
+ * is a no-op and the hourly self-heal slot is already taken — so the existing
+ * cases see exactly the Gmail and raw_emails traffic they always did.
+ */
+interface QuotaMockOptions {
+	bodiesFetched?: number;
+	messagesListed?: number;
+	aiCalls?: number;
+	emailFetchCapOverride?: number | null;
+	aiCallCapOverride?: number | null;
+	storedContinuation?: { token: string; afterSeconds: number; maxSeen: number } | null;
+	/** Whether the hourly self-heal claim succeeds (default: no). */
+	requeueClaimed?: boolean;
+	stalePendingIds?: string[];
+	onUsage?: (values: unknown[]) => void;
+	onClaim?: () => void;
+	onRelease?: () => void;
+}
+
+function quotaIntercept(query: string, values: unknown[], options: QuotaMockOptions): unknown | undefined {
+	if (query.includes('with today as') && query.includes('as ai_calls')) {
+		return [{
+			day: '2026-09-19',
+			messages_listed: options.messagesListed ?? 0,
+			bodies_fetched: options.bodiesFetched ?? 0,
+			ai_calls: String(options.aiCalls ?? 0),
+			email_fetch_cap_override: options.emailFetchCapOverride ?? null,
+			ai_call_cap_override: options.aiCallCapOverride ?? null,
+		}];
+	}
+	if (query.includes('insert into public.user_usage_daily (user_id, day, messages_listed, bodies_fetched)')) {
+		options.onUsage?.(values);
+		return [];
+	}
+	if (query.includes('insert into public.user_usage_daily (user_id, day, pending_requeue_at)')) {
+		options.onClaim?.();
+		return options.requeueClaimed ? [{ user_id: 'claimed' }] : [];
+	}
+	if (query.includes('set pending_requeue_at = null')) {
+		options.onRelease?.();
+		return [];
+	}
+	if (query.includes("re.status = 'PENDING_EXTRACTION'") && query.includes('order by re.created_at asc') && query.includes('re.user_id =')) {
+		return (options.stalePendingIds ?? []).map(id => ({ id }));
+	}
+	if (query.includes('select oc.email_sync_continuation_token')) {
+		const stored = options.storedContinuation ?? null;
+		return stored
+			? [{
+				email_sync_continuation_token: stored.token,
+				email_sync_continuation_after_seconds: stored.afterSeconds,
+				email_sync_continuation_max_seen: stored.maxSeen,
+			}]
+			: [{ email_sync_continuation_token: null, email_sync_continuation_after_seconds: null, email_sync_continuation_max_seen: null }];
+	}
+	return undefined;
+}
+
+function createSqlMock(handler: QueryHandler, quota: QuotaMockOptions = {}): SqlMock {
 	const tag = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
 		const query = normalizeQuery(strings);
+		const intercepted = quotaIntercept(query, values, quota);
+		if (intercepted !== undefined) return intercepted;
 		return handler(query, values);
 	};
 
@@ -99,14 +161,16 @@ function toBase64Url(value: string): string {
 }
 
 describe('email-sync-fetcher', () => {
-	const appConfig: AppConfig = {
+	const appConfig = {
 		appName: 'money-manager-backend',
 		appVersion: '0.1.0',
 		nodeEnv: 'test',
 		supabasePoolerUrl: 'postgres://postgres:postgres@localhost:6543/postgres',
 		dbMaxConnections: 5,
 		dbConnectTimeoutSeconds: 5,
-	};
+		userDailyEmailFetchCap: 500,
+		userDailyAiCallCap: 200,
+	} as AppConfig;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -1722,14 +1786,16 @@ describe('email-sync-fetcher', () => {
 	});
 
 describe('internal ops: sender-metadata backfill + sync probe', () => {
-	const appConfig: AppConfig = {
+	const appConfig = {
 		appName: 'money-manager-backend',
 		appVersion: '0.1.0',
 		nodeEnv: 'test',
 		supabasePoolerUrl: 'postgres://postgres:postgres@localhost:6543/postgres',
 		dbMaxConnections: 5,
 		dbConnectTimeoutSeconds: 5,
-	};
+		userDailyEmailFetchCap: 500,
+		userDailyAiCallCap: 200,
+	} as AppConfig;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -1967,14 +2033,16 @@ describe('internal ops: sender-metadata backfill + sync probe', () => {
 });
 
 describe('retroactive sender gate', () => {
-	const appConfig: AppConfig = {
+	const appConfig = {
 		appName: 'money-manager-backend',
 		appVersion: '0.1.0',
 		nodeEnv: 'test',
 		supabasePoolerUrl: 'postgres://postgres:postgres@localhost:6543/postgres',
 		dbMaxConnections: 5,
 		dbConnectTimeoutSeconds: 5,
-	};
+		userDailyEmailFetchCap: 500,
+		userDailyAiCallCap: 200,
+	} as AppConfig;
 
 	const pendingRows = [
 		{ id: '00000000-0000-4000-8000-0000000000e1', from_address: 'alerts@icicibank.com' },
@@ -2111,5 +2179,356 @@ describe('runStatementHarvest', () => {
 			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [ROW_A.id, ROW_B.id] },
 			{ contentType: 'json' },
 		);
+	});
+});
+
+describe('email-sync-fetcher: fair-use caps (Task 6)', () => {
+	const USER_ID = '00000000-0000-4000-8000-000000000001';
+	const CONNECTION_ID = '00000000-0000-4000-8000-0000000000aa';
+	const SYNC_RUN_ID = '00000000-0000-4000-8000-0000000000f6';
+	const PENDING_A = '00000000-0000-4000-8000-00000000000a';
+	const PENDING_B = '00000000-0000-4000-8000-00000000000b';
+	const appConfig = {
+		appName: 'money-manager-backend',
+		appVersion: '0.1.0',
+		nodeEnv: 'test',
+		supabasePoolerUrl: 'postgres://postgres:postgres@localhost:6543/postgres',
+		dbMaxConnections: 5,
+		dbConnectTimeoutSeconds: 5,
+		userDailyEmailFetchCap: 500,
+		userDailyAiCallCap: 200,
+	} as AppConfig;
+
+	const neverGoogle = vi.fn(async (input: RequestInfo | URL) => {
+		throw new Error(`Google must not be called: ${typeof input === 'string' ? input : input.toString()}`);
+	});
+
+	function queueSendOf(env: Env) {
+		return (env.EMAIL_SYNC_QUEUE as unknown as { send: ReturnType<typeof vi.fn> }).send;
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		getAppConfigMock.mockReturnValue(appConfig);
+	});
+
+	it('defers a continuation page at the fetch cap: parks the token, keeps the cursor, releases the lease, never calls Google', async () => {
+		const stored: unknown[][] = [];
+		let leaseReleases = 0;
+		const onClaim = vi.fn();
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.oauth_connections as oc') && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+				return [buildConnectionRow({ last_sync_timestamp: 0 })];
+			}
+			if (query.includes('set email_sync_lease_id =') && query.includes('returning oc.id')) {
+				return [{ id: CONNECTION_ID }];
+			}
+			if (query.includes('set email_sync_lease_id = null')) {
+				leaseReleases += 1;
+				return [];
+			}
+			if (query.includes('set email_sync_continuation_token =')) {
+				stored.push(values);
+				return [];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		}, { bodiesFetched: 500, onClaim });
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv();
+
+		const result = await runEmailSyncUserJob(
+			{
+				job_type: 'EMAIL_SYNC_USER',
+				user_id: USER_ID,
+				last_sync_timestamp: 0,
+				sync_run_id: SYNC_RUN_ID,
+				continuation_connection_id: CONNECTION_ID,
+				continuation_page_token: 'p7',
+				continuation_after_seconds: 1_690_000_000,
+				continuation_max_internal_timestamp_seen: 1_700_000_400_000,
+			},
+			env,
+			neverGoogle,
+		);
+
+		expect(neverGoogle).not.toHaveBeenCalled();
+		expect(result.quota_deferred_connection_count).toBe(1);
+		expect(result.processed_connection_count).toBe(1);
+		expect(result.fetched_message_count).toBe(0);
+		// The token, its query window and the watermark are parked on the connection.
+		expect(stored).toEqual([['p7', 1_690_000_000, 1_700_000_400_000, CONNECTION_ID, USER_ID]]);
+		// No continuation job, lease handed back, and a continuation page never self-heals.
+		expect(queueSendOf(env)).not.toHaveBeenCalled();
+		expect(leaseReleases).toBe(1);
+		expect(onClaim).not.toHaveBeenCalled();
+	});
+
+	it.each([{ emailFetchCapOverride: 10, bodiesFetched: 10 }, { messagesListed: 500 }])('defers a fresh job at either fetch cap without touching the connection (%j)', async (quota) => {
+		const sql = createSqlMock((query) => {
+			if (query.includes('from public.oauth_connections as oc') && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+				return [buildConnectionRow()];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		}, quota);
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runEmailSyncUserJob(
+			{ job_type: 'EMAIL_SYNC_USER', user_id: USER_ID, last_sync_timestamp: 1_700_000_000_000 },
+			createEnv(),
+			neverGoogle,
+		);
+
+		expect(neverGoogle).not.toHaveBeenCalled();
+		expect(result.quota_deferred_connection_count).toBe(1);
+	});
+
+	it('defers sender backfill to the next IST day when fetching is capped', async () => {
+		const sql = createSqlMock(query => {
+			if (query.includes('re.source_id, re.oauth_connection_id')) {
+				return [{ id: PENDING_A, source_id: 'g1', oauth_connection_id: CONNECTION_ID }];
+			}
+			if (query.includes('from public.oauth_connections as oc')) return [buildConnectionRow()];
+			throw new Error(`Unexpected query: ${query}`);
+		}, { bodiesFetched: 500 });
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv();
+		const job = { job_type: 'SENDER_BACKFILL' as const, user_id: USER_ID, raw_email_ids: [PENDING_A] };
+		const result = await runSenderBackfillJob(job, env, neverGoogle);
+		expect(neverGoogle).not.toHaveBeenCalled();
+		expect(result.refetched_count).toBe(0);
+		expect(result.skipped_count).toBe(1);
+		expect(queueSendOf(env)).toHaveBeenCalledWith(job, { contentType: 'json', delaySeconds: expect.any(Number) });
+		const delay = queueSendOf(env).mock.calls[0]?.[1].delaySeconds;
+		expect(delay).toBeGreaterThanOrEqual(1);
+		expect(delay).toBeLessThanOrEqual(86400);
+	});
+
+	it('resumes a parked listing on the next fresh job and forgets the token once the page commits', async () => {
+		let cursorUpdateValue: number | null = null;
+		let listUrl: string | null = null;
+		let cleared = 0;
+		const usage: unknown[][] = [];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.oauth_connections as oc') && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+				return [buildConnectionRow({ last_sync_timestamp: 0 })];
+			}
+			if (query.includes('set email_sync_lease_id =') && query.includes('returning oc.id')) {
+				return [{ id: CONNECTION_ID }];
+			}
+			if (query.includes('set email_sync_lease_id = null')) {
+				return [];
+			}
+			if (query.includes('and oc.access_token is not distinct from') && query.includes('set access_token =')) {
+				return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z', last_sync_timestamp: 0 })];
+			}
+			if (query.includes('from public.raw_emails as re')) {
+				return [];
+			}
+			if (query.includes('insert into public.raw_emails')) {
+				return [];
+			}
+			if (query.includes('last_sync_timestamp = greatest')) {
+				cursorUpdateValue = values[0] as number;
+				return [];
+			}
+			if (query.includes('email_sync_continuation_token = null')) {
+				cleared += 1;
+				return [];
+			}
+			if (query.includes('from public.sender_rules')) {
+				return [{ pattern: 'hdfc' }];
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		}, {
+			storedContinuation: { token: 'parked-token', afterSeconds: 1_690_000_000, maxSeen: 1_700_000_300_000 },
+			onUsage: values => usage.push(values),
+		});
+		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+			const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
+			if (url.includes('oauth2.googleapis.com/token')) {
+				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.includes('/gmail/v1/users/me/messages?')) {
+				listUrl = url;
+				return new Response(JSON.stringify({ messages: [{ id: 'resumed-message' }] }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.endsWith('/resumed-message?format=full')) {
+				return new Response(
+					JSON.stringify({ id: 'resumed-message', internalDate: '1700000100000', snippet: 'later page' }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+
+		const result = await runEmailSyncUserJob(
+			{ job_type: 'EMAIL_SYNC_USER', user_id: USER_ID, last_sync_timestamp: 0, sync_run_id: SYNC_RUN_ID },
+			createEnv(),
+			withGmailBatchSupport(fetcher),
+		);
+
+		expect(result.processed_connection_count).toBe(1);
+		expect(result.quota_deferred_connection_count).toBe(0);
+		// The parked token and its exact query window, not a fresh listing from the cursor.
+		expect(listUrl).toContain('pageToken=parked-token');
+		expect(listUrl).toContain('after%3A1690000000');
+		// The chain finished: the cursor lands on the parked watermark and the token is gone.
+		expect(cursorUpdateValue).toBe(1_700_000_300_000);
+		expect(cleared).toBe(1);
+		// One id listed, no body fetched (no sender header, so the gate held it).
+		expect(usage).toEqual([[USER_ID, 'Asia/Kolkata', 1, 0]]);
+	});
+
+	it.each([false, true])('counts page usage and parks the next token immediately at the cap (boundary=%s)', async (atBoundary) => {
+		const usage: unknown[][] = [];
+		const parked: unknown[][] = [];
+		let cursorAdvanced = false;
+		let pageSize = '';
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.oauth_connections as oc') && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+				return [buildConnectionRow()];
+			}
+			if (query.includes('and oc.access_token is not distinct from') && query.includes('set access_token =')) {
+				return [buildConnectionRow({ updated_at: '2026-03-10T00:01:00.000Z' })];
+			}
+			if (query.includes('from public.raw_emails as re')) return [];
+			if (query.includes('insert into public.raw_emails')) return [];
+			if (query.includes('last_sync_timestamp = greatest')) { cursorAdvanced = true; return []; }
+			if (query.includes('set email_sync_continuation_token =')) { parked.push(values); return []; }
+			if (query.includes('from public.sender_rules')) return [{ pattern: 'icici' }];
+			throw new Error(`Unexpected query: ${query}`);
+		}, { bodiesFetched: atBoundary ? 499 : 0, onUsage: values => usage.push(values) });
+		const message = (id: string, from: string, internalDate: string) =>
+			new Response(
+				JSON.stringify({
+					id,
+					internalDate,
+					snippet: 'body',
+					payload: { headers: [{ name: 'From', value: from }, { name: 'Subject', value: 'Subject' }] },
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			);
+		const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+			const url = normalizeGmailGetUrl(typeof input === 'string' ? input : input.toString());
+			if (url.includes('oauth2.googleapis.com/token')) {
+				return new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.includes('/gmail/v1/users/me/messages?')) {
+				pageSize = new URL(url).searchParams.get('maxResults') ?? '';
+				return new Response(JSON.stringify({
+					messages: atBoundary ? [{ id: 'bank1' }] : [{ id: 'bank1' }, { id: 'personal1' }],
+					...(atBoundary ? { nextPageToken: 'tomorrow-page' } : {}),
+				}), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (url.endsWith('/bank1?format=full')) return message('bank1', 'ICICI Bank <alerts@icicibank.com>', '1700000100000');
+			if (url.endsWith('/personal1?format=full')) return message('personal1', 'A Friend <friend@example.com>', '1700000200000');
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv();
+
+		const result = await runEmailSyncUserJob(
+			{ job_type: 'EMAIL_SYNC_USER', user_id: USER_ID, last_sync_timestamp: 1_700_000_000_000 },
+			env,
+			withGmailBatchSupport(fetcher),
+		);
+
+		expect(result.sender_gated_raw_email_count).toBe(atBoundary ? 0 : 1);
+		expect(usage).toEqual([[USER_ID, 'Asia/Kolkata', atBoundary ? 1 : 2, 1]]);
+		expect(pageSize).toBe(atBoundary ? '1' : '25');
+		expect(cursorAdvanced).toBe(!atBoundary);
+		expect(result.quota_deferred_connection_count).toBe(atBoundary ? 1 : 0);
+		expect(parked).toHaveLength(atBoundary ? 1 : 0);
+		if (atBoundary) {
+			expect(parked[0]?.[0]).toBe('tomorrow-page');
+			expect(queueSendOf(env).mock.calls.every(call => call[0].job_type !== 'EMAIL_SYNC_USER')).toBe(true);
+		}
+	});
+
+	it('re-enqueues this user’s stale PENDING rows once the hourly slot is claimed', async () => {
+		const sql = createSqlMock((query) => {
+			if (query.includes('from public.oauth_connections as oc') && query.includes("sync_status in ('ACTIVE', 'ERROR_PAUSED')")) {
+				return []; // nothing to sync; the self-heal still runs
+			}
+			throw new Error(`Unexpected query: ${query}`);
+		}, { requeueClaimed: true, stalePendingIds: [PENDING_A, PENDING_B] });
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv();
+
+		const result = await runEmailSyncUserJob(
+			{ job_type: 'EMAIL_SYNC_USER', user_id: USER_ID, last_sync_timestamp: 0 },
+			env,
+			neverGoogle,
+		);
+
+		expect(result.pending_requeued_count).toBe(2);
+		expect(queueSendOf(env)).toHaveBeenCalledTimes(1);
+		expect(queueSendOf(env)).toHaveBeenCalledWith(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [PENDING_A, PENDING_B] },
+			{ contentType: 'json' },
+		);
+	});
+
+	it('stands down when the hour is already taken', async () => {
+		const sql = createSqlMock(() => [], { requeueClaimed: false, stalePendingIds: [PENDING_A] });
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv();
+
+		const result = await runEmailSyncUserJob(
+			{ job_type: 'EMAIL_SYNC_USER', user_id: USER_ID, last_sync_timestamp: 0 },
+			env,
+			neverGoogle,
+		);
+
+		expect(result.pending_requeued_count).toBe(0);
+		expect(queueSendOf(env)).not.toHaveBeenCalled();
+	});
+
+	it('never claims the slot while the user is over the AI cap', async () => {
+		const onClaim = vi.fn();
+		const sql = createSqlMock(() => [], { aiCalls: 200, requeueClaimed: true, stalePendingIds: [PENDING_A], onClaim });
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv();
+
+		const result = await runEmailSyncUserJob(
+			{ job_type: 'EMAIL_SYNC_USER', user_id: USER_ID, last_sync_timestamp: 0 },
+			env,
+			neverGoogle,
+		);
+
+		expect(result.pending_requeued_count).toBe(0);
+		expect(onClaim).not.toHaveBeenCalled();
+		expect(queueSendOf(env)).not.toHaveBeenCalled();
+	});
+
+	it('hands the hour back when the enqueue fails', async () => {
+		const onRelease = vi.fn();
+		const sql = createSqlMock(() => [], { requeueClaimed: true, stalePendingIds: [PENDING_A], onRelease });
+		getSqlClientMock.mockReturnValue(sql);
+		const env = createEnv({
+			EMAIL_SYNC_QUEUE: { send: vi.fn().mockRejectedValue(new Error('queue down')) },
+		} as unknown as Partial<Env>);
+
+		const result = await runEmailSyncUserJob(
+			{ job_type: 'EMAIL_SYNC_USER', user_id: USER_ID, last_sync_timestamp: 0 },
+			env,
+			neverGoogle,
+		);
+
+		expect(result.pending_requeued_count).toBe(0);
+		expect(onRelease).toHaveBeenCalledTimes(1);
 	});
 });

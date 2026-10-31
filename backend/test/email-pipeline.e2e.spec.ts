@@ -39,6 +39,8 @@ const TEST_APP_CONFIG: AppConfig = {
 	supabasePoolerUrl: 'postgres://postgres:postgres@localhost:6543/postgres',
 	dbMaxConnections: 5,
 	dbConnectTimeoutSeconds: 5,
+	merchantConfirmationThreshold: 1,
+	rawEmailBodyRetentionDays: 90,
 };
 
 interface SqlMock extends SqlClient {
@@ -133,6 +135,8 @@ interface EmailTemplateState {
 	status: 'ACTIVE' | 'DISABLED';
 	hit_count: number;
 	failure_count: number;
+	scope: 'PRIVATE' | 'SHARED';
+	learned_from_user_id: UUID | null;
 }
 
 interface PipelineState {
@@ -271,6 +275,23 @@ function createSqlHarness(state: PipelineState): SqlMock {
 		const query = normalizeQuery(strings);
 		if (query.includes('insert into public.ai_usage_events')) return [];
 		if (query.includes('public.ai_call_runs')) return [];
+
+		// Task 6 quota bookkeeping: this pipeline stays far under both caps,
+		// parks nothing on the connection and never claims the self-heal slot.
+		if (query.includes('with today as') && query.includes('as ai_calls')) {
+			return [{
+				day: '2026-09-19',
+				messages_listed: 0,
+				bodies_fetched: 0,
+				ai_calls: '0',
+				email_fetch_cap_override: null,
+				ai_call_cap_override: null,
+			}];
+		}
+		if (query.includes('insert into public.user_usage_daily')) return [];
+		if (query.includes('select oc.email_sync_continuation_token')) {
+			return [{ email_sync_continuation_token: null, email_sync_continuation_after_seconds: null, email_sync_continuation_max_seen: null }];
+		}
 
 		if (query.includes('select oc.user_id as max_user_id')) {
 			const snapshotTimeMs = Number(values[0]);
@@ -603,9 +624,13 @@ function createSqlHarness(state: PipelineState): SqlMock {
 		}
 
 		if (query.includes('insert into public.email_templates')) {
+			// PRIVATE insert binds (from, hash, skeleton, slot_map, raw_email, user);
+			// the SHARED promotion insert binds (from, hash, skeleton, slot_map, hit_sum).
 			const fromAddress = values[0] as string;
 			const skeletonHash = values[1] as string;
-			const key = `${fromAddress}:${skeletonHash}`;
+			const isShared = query.includes("'SHARED'");
+			const owner = isShared ? null : (values[5] as UUID);
+			const key = `${fromAddress}:${skeletonHash}:${owner ?? 'shared'}`;
 			if (state.email_templates_by_key.has(key)) {
 				return [];
 			}
@@ -617,14 +642,36 @@ function createSqlHarness(state: PipelineState): SqlMock {
 				skeleton: values[2] as string,
 				slot_map_json: values[3] as string,
 				status: 'ACTIVE',
-				hit_count: 0,
+				hit_count: isShared ? (values[4] as number) : 0,
 				failure_count: 0,
+				scope: isShared ? 'SHARED' : 'PRIVATE',
+				learned_from_user_id: owner,
 			});
 			return [{ id }];
 		}
 
 		if (query.includes('delete from public.email_templates')) {
 			return [];
+		}
+
+		// Promotion scan: every ACTIVE row for this (sender, skeleton).
+		if (query.includes('from public.email_templates') && query.includes('for update')) {
+			const fromAddress = values[0] as string;
+			const skeletonHash = values[1] as string;
+			return Array.from(state.email_templates_by_key.values())
+				.filter(
+					(template) =>
+						template.status === 'ACTIVE' &&
+						template.from_address === fromAddress &&
+						template.skeleton_hash === skeletonHash,
+				)
+				.map((template) => ({
+					id: template.id,
+					slot_map: JSON.parse(template.slot_map_json) as unknown,
+					hit_count: template.hit_count,
+					scope: template.scope,
+					learned_from_user_id: template.learned_from_user_id,
+				}));
 		}
 
 		if (query.includes('set hit_count = et.hit_count + 1')) {
@@ -653,8 +700,15 @@ function createSqlHarness(state: PipelineState): SqlMock {
 
 		if (query.includes('from public.email_templates')) {
 			const senders = new Set<string>((values[0] as string[]) ?? []);
+			const userIds = new Set<string>((values[1] as string[]) ?? []);
 			return Array.from(state.email_templates_by_key.values())
-				.filter((template) => template.status === 'ACTIVE' && senders.has(template.from_address))
+				.filter(
+					(template) =>
+						template.status === 'ACTIVE' &&
+						senders.has(template.from_address) &&
+						(template.scope === 'SHARED' ||
+							(template.learned_from_user_id !== null && userIds.has(template.learned_from_user_id))),
+				)
 				.map((template) => ({
 					id: template.id,
 					from_address: template.from_address,
@@ -662,6 +716,8 @@ function createSqlHarness(state: PipelineState): SqlMock {
 					slot_map: JSON.parse(template.slot_map_json) as unknown,
 					hit_count: template.hit_count,
 					failure_count: template.failure_count,
+					scope: template.scope,
+					learned_from_user_id: template.learned_from_user_id,
 				}));
 		}
 

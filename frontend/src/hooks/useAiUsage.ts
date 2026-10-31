@@ -7,6 +7,8 @@ import type {
   JobSchedule,
   JobScheduleUpdateRequest,
   ScheduledJobName,
+  UserLimitsUpdateRequest,
+  UserQuotasResponse,
 } from '../../../shared/types';
 import { ApiError, apiClient, toErrorMessage } from '../lib/api-client';
 
@@ -117,6 +119,49 @@ export function useUpdateJobSchedule() {
         queryClient.invalidateQueries({ queryKey: JOB_SCHEDULES_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['ai-usage-dashboard'] }),
       ]);
+    },
+  });
+}
+
+export const USER_QUOTAS_QUERY_KEY = ['ai-usage-user-quotas'] as const;
+
+interface UseUserQuotasResult {
+  quotas: UserQuotasResponse | null;
+  isLoading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+/** Today's per-user counters against the fair-use caps; admin-only like the rest. */
+export function useUserQuotas(enabled: boolean): UseUserQuotasResult {
+  const { userId } = useAuth();
+  const query = useQuery({
+    queryKey: [...USER_QUOTAS_QUERY_KEY, userId],
+    queryFn: async () => apiClient.getUserQuotas(),
+    enabled: Boolean(userId) && enabled,
+    staleTime: 30_000,
+  });
+
+  return {
+    quotas: query.data ?? null,
+    isLoading: query.isLoading,
+    error: query.error ? toErrorMessage(query.error) : null,
+    refetch: async () => { await query.refetch(); },
+  };
+}
+
+interface UpdateUserLimitsVariables {
+  userId: string;
+  update: UserLimitsUpdateRequest;
+}
+
+export function useUpdateUserLimits() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, update }: UpdateUserLimitsVariables) =>
+      apiClient.updateUserLimits(userId, update),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: USER_QUOTAS_QUERY_KEY });
     },
   });
 }

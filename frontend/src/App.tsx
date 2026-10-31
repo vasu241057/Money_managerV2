@@ -15,6 +15,7 @@ import { AiUsageDashboard } from './components/screens/AiUsageDashboard';
 import { CategorySettings } from './components/screens/CategorySettings';
 import { MerchantSettings } from './components/screens/MerchantSettings';
 import { GmailConnectionSettings } from './components/screens/GmailConnectionSettings';
+import { DeleteAccountSettings } from './components/screens/DeleteAccountSettings';
 import { parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
 import { ensureLegacyLocalDataMigrated } from './lib/legacy-local-migration';
 import { queryClient } from './lib/query-client';
@@ -26,7 +27,14 @@ import type { Transaction } from './hooks/useTransactions';
 import './styles/app.css';
 
 type Overlay = 'editor' | 'review' | null;
-type SettingsSubscreen = 'main' | 'accounts' | 'categories' | 'merchants' | 'connection' | 'ai-usage';
+type SettingsSubscreen =
+	| 'main'
+	| 'accounts'
+	| 'categories'
+	| 'merchants'
+	| 'connection'
+	| 'ai-usage'
+	| 'delete-account';
 // 'single' is the ledger's swipe-to-review: it answers exactly the row that was
 // swiped and closes, instead of walking the rest of the inbox.
 type ReviewScope = 'recent' | 'all' | 'single';
@@ -68,6 +76,9 @@ function parseRoute(pathname: string): RouteState {
 	if (pathname === '/settings/ai-usage') {
 		return { ...base, screen: 'settings', settingsSubscreen: 'ai-usage' };
 	}
+	if (pathname === '/settings/delete-account') {
+		return { ...base, screen: 'settings', settingsSubscreen: 'delete-account' };
+	}
 	if (pathname === '/review/recent') {
 		return { ...base, overlay: 'review', reviewScope: 'recent' };
 	}
@@ -88,6 +99,7 @@ function pathForScreen(screen: ScreenId, settingsSubscreen: SettingsSubscreen): 
 		if (settingsSubscreen === 'merchants') return '/settings/merchants';
 		if (settingsSubscreen === 'connection') return '/settings/connection';
 		if (settingsSubscreen === 'ai-usage') return '/settings/ai-usage';
+		if (settingsSubscreen === 'delete-account') return '/settings/delete-account';
 		return '/settings';
 	}
 	return '/';
@@ -278,6 +290,7 @@ function LedgerApp() {
 					onOpenMerchants={() => navigateToScreen('settings', 'merchants')}
 					onOpenConnection={() => navigateToScreen('settings', 'connection')}
 					onOpenAiUsage={() => navigateToScreen('settings', 'ai-usage')}
+					onOpenDeleteAccount={() => navigateToScreen('settings', 'delete-account')}
 					onSignOut={() => navigateToScreen('home')}
 				/>
 			)}
@@ -295,6 +308,12 @@ function LedgerApp() {
 			)}
 			{activeScreen === 'settings' && settingsSubscreen === 'ai-usage' && (
 				<AiUsageDashboard onBack={() => navigateToScreen('settings', 'main')} />
+			)}
+			{activeScreen === 'settings' && settingsSubscreen === 'delete-account' && (
+				<DeleteAccountSettings
+					onBack={() => navigateToScreen('settings', 'main')}
+					onDeleted={() => navigateToScreen('home')}
+				/>
 			)}
 
 			<BottomNav

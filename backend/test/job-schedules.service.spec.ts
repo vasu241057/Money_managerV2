@@ -30,7 +30,7 @@ const SCHEDULE_ROW = {
 };
 
 describe('scheduled job names', () => {
-	it.each(['merchant_mapping', 'sender_classification'])('accepts %s', (job) => {
+	it.each(['merchant_mapping', 'sender_classification', 'raw_email_body_purge'])('accepts %s', (job) => {
 		expect(isScheduledJobName(job)).toBe(true);
 	});
 

@@ -23,6 +23,10 @@ export async function getHealthResponse(config: {
 	appName: string;
 	appVersion: string;
 	supabasePoolerUrl: string | null;
+	// Passed through to the client so DB_CONNECTION_SOURCE names the right
+	// binding when the health check is what builds the isolate's client.
+	// Not in the response: /health is unauthenticated.
+	dbConnectionSource?: 'hyperdrive' | 'pooler' | null;
 	dbMaxConnections: number;
 	dbConnectTimeoutSeconds: number;
 }): Promise<HealthResponse> {

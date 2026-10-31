@@ -1,7 +1,8 @@
 import { getAppConfig } from '../lib/config';
 import { runWithSqlClientLifecycle } from '../lib/db/client';
+import { reportErrorInBackground } from '../lib/error-reporting';
 import { isMerchantMappingKillSwitched } from '../lib/feature-flags';
-import { QUEUE_NAMES } from '../lib/infra';
+import { isNightlyJobType, QUEUE_NAMES } from '../lib/infra';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
 import { runEmailSyncDispatchJob } from './email-sync-dispatcher';
 import {
@@ -11,6 +12,7 @@ import {
 } from './email-sync-fetcher';
 import { runNormalizeRawEmailsJob } from './email-ai-normalizer';
 import { runMerchantMappingJob } from './merchant-mapper';
+import { runRawEmailBodyPurgeJob } from './raw-email-body-purge';
 import { runSenderClassificationJob } from './sender-classifier';
 import {
 	isEmailSyncUserJob,
@@ -18,6 +20,7 @@ import {
 	parseEmailSyncUserJob,
 	parseMerchantMappingJob,
 	parseNormalizeRawEmailsJob,
+	parseRawEmailBodyPurgeJob,
 	parseSenderBackfillJob,
 	parseSenderClassificationJob,
 } from './queue.messages';
@@ -40,6 +43,8 @@ interface QueueBatchMetrics {
 	poison_acked_messages: number;
 	retried_messages: number;
 	final_retry_messages: number;
+	/** Dead letters logged and acked; a subset of acked_messages. */
+	dead_letter_messages: number;
 	max_attempts_seen: number;
 }
 
@@ -109,6 +114,7 @@ function createQueueBatchMetrics(messageCount: number): QueueBatchMetrics {
 		poison_acked_messages: 0,
 		retried_messages: 0,
 		final_retry_messages: 0,
+		dead_letter_messages: 0,
 		max_attempts_seen: 0,
 	};
 }
@@ -150,6 +156,7 @@ async function handleEmailSyncDispatch(body: unknown, env: Env): Promise<void> {
 		queueBatches: result.queue_batch_count,
 		markedDormantUsers: result.marked_dormant_user_count,
 		reactivatedUsers: result.reactivated_user_count,
+		quotaSkippedUsers: result.quota_skipped_user_count,
 		continuationOffset: result.continuation_offset,
 		scanUpperUserId: result.scan_upper_user_id,
 	});
@@ -171,6 +178,8 @@ async function handleEmailSyncUser(body: unknown, env: Env): Promise<void> {
 		fetchedMessageCount: result.fetched_message_count,
 		insertedOrRetriedRawEmailCount: result.inserted_or_retried_raw_email_count,
 		skippedExistingRawEmailCount: result.skipped_existing_raw_email_count,
+		quotaDeferredConnectionCount: result.quota_deferred_connection_count,
+		pendingRequeuedCount: result.pending_requeued_count,
 	});
 
 	const hasEmailActivity =
@@ -201,6 +210,8 @@ async function handleNormalizeRawEmails(body: unknown, env: Env): Promise<void> 
 		needsReviewTransactionCount: result.needs_review_transaction_count,
 		templateMatchedCount: result.template_matched_count,
 		templateLearnedCount: result.template_learned_count,
+		templatePromotedCount: result.template_promoted_count,
+		quotaDeferredRawEmailCount: result.quota_deferred_raw_email_count,
 	});
 }
 
@@ -211,6 +222,8 @@ async function handleSenderClassification(body: unknown, env: Env): Promise<void
 	console.info('Processing SENDER_CLASSIFICATION queue job', {
 		triggeredAt: job.triggered_at,
 		candidateCount: result.candidate_count,
+		candidateBacklogCount: result.candidate_backlog_count,
+		candidateCap: result.candidate_cap,
 		classifiedCount: result.classified_count,
 		allowRuleCount: result.allow_rule_count,
 		denyRuleCount: result.deny_rule_count,
@@ -240,63 +253,142 @@ async function handleMerchantMapping(body: unknown, env: Env): Promise<void> {
 	console.info('Processing MERCHANT_MAPPING queue job', {
 		triggeredAt: job.triggered_at,
 		candidateCount: result.candidate_count,
+		candidateBacklogCount: result.candidate_backlog_count,
+		candidateCap: result.candidate_cap,
 		mappedCount: result.mapped_count,
 		aliasCreatedCount: result.alias_created_count,
+		ownedAliasCreatedCount: result.owned_alias_created_count,
+		personFanoutCount: result.person_fanout_count,
 		relinkedTransactionCount: result.relinked_transaction_count,
 		skippedReason: result.skipped_reason,
 	});
 }
 
+async function handleRawEmailBodyPurge(body: unknown, env: Env): Promise<void> {
+	const job = parseRawEmailBodyPurgeJob(body);
+	const result = await runRawEmailBodyPurgeJob(job, env);
+
+	console.info('Processing RAW_EMAIL_BODY_PURGE queue job', {
+		triggeredAt: job.triggered_at,
+		retentionDays: result.retention_days,
+		purgedCount: result.purge.purged_count,
+		batchCount: result.purge.batch_count,
+		backlogRemaining: result.purge.exhausted,
+		clerkRetryPending: result.clerk_retry.pending_count,
+		clerkRetryDeleted: result.clerk_retry.deleted_count,
+		clerkRetryUserReturned: result.clerk_retry.user_returned_count,
+		clerkRetryFailed: result.clerk_retry.failed_count,
+		clerkRetrySkippedReason: result.clerk_retry.skipped_reason,
+		idempotencyPurgedCount: result.idempotency.deleted_count,
+	});
+}
+
+/**
+ * Dead-letter consumer (Task 7). Cloudflare keeps the message; this exists so
+ * a dead job is visible in the logs instead of only in a queue depth metric.
+ * Identifiers only — never payload content — and it never throws: a DLQ has
+ * no dead-letter queue of its own, so a failure here would lose the message.
+ */
+function handleDeadLetterMessage(
+	queueName: string,
+	body: unknown,
+	messageId: string,
+	attempts: number,
+): void {
+	const payload = (body ?? {}) as Record<string, unknown>;
+	const idOf = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+
+	console.error('DLQ_MESSAGE', {
+		queue: queueName,
+		messageId,
+		// Deliveries of this message on the DLQ, which starts its own count.
+		// The job already spent all six attempts on the main queue to get
+		// here, so a 1 here does not mean it was only tried once.
+		dlqDeliveryAttempts: attempts,
+		jobType: idOf(payload.job_type),
+		userId: idOf(payload.user_id),
+		syncRunId: idOf(payload.sync_run_id),
+		connectionId: idOf(payload.continuation_connection_id),
+		rawEmailCount: Array.isArray(payload.raw_email_ids) ? payload.raw_email_ids.length : null,
+	});
+}
+
+function isWorkQueue(queueName: string): boolean {
+	return queueName === QUEUE_NAMES.EMAIL_SYNC || queueName === QUEUE_NAMES.NIGHTLY;
+}
+
+// Both work queues run the same dispatch table (Task 8). The main queue still
+// accepts nightly types so messages enqueued before the split — and anything
+// the producer fallback routed there — drain normally; the nightly queue
+// accepts the rest for the same reason.
 async function processMessage(queueName: string, body: unknown, env: Env): Promise<void> {
-	switch (queueName) {
-		case QUEUE_NAMES.EMAIL_SYNC: {
-			const jobType = (body as { job_type?: unknown } | null | undefined)?.job_type;
-			if (jobType === 'EMAIL_SYNC_DISPATCH') {
-				await handleEmailSyncDispatch(body, env);
-				return;
-			}
-
-			if (jobType === 'EMAIL_SYNC_USER') {
-				await handleEmailSyncUser(body, env);
-				return;
-			}
-
-			if (jobType === 'NORMALIZE_RAW_EMAILS') {
-				await handleNormalizeRawEmails(body, env);
-				return;
-			}
-
-			if (jobType === 'SENDER_CLASSIFICATION') {
-				await handleSenderClassification(body, env);
-				return;
-			}
-
-			if (jobType === 'SENDER_BACKFILL') {
-				await handleSenderBackfill(body, env);
-				return;
-			}
-
-			if (jobType === 'MERCHANT_MAPPING') {
-				if (isMerchantMappingKillSwitched(env)) {
-					console.warn('Skipping MERCHANT_MAPPING queue job: the env kill switch is set');
-					return;
-				}
-
-				await handleMerchantMapping(body, env);
-				return;
-			}
-
-			throw new PoisonMessageError('Invalid EMAIL_SYNC payload');
-		}
-		default:
-			throw new TransientMessageError(`Unsupported queue name: ${queueName}`);
+	if (!isWorkQueue(queueName)) {
+		throw new TransientMessageError(`Unsupported queue name: ${queueName}`);
 	}
+
+	const jobType = (body as { job_type?: unknown } | null | undefined)?.job_type;
+
+	if (queueName === QUEUE_NAMES.NIGHTLY && !isNightlyJobType(jobType)) {
+		// Handled anyway — routing is not correctness — but a
+		// standing stream of these means a producer is misrouting.
+		console.warn('QUEUE_ROUTING_UNEXPECTED', {
+			queue: queueName,
+			jobType: typeof jobType === 'string' ? jobType : null,
+		});
+	}
+
+	if (jobType === 'EMAIL_SYNC_DISPATCH') {
+		await handleEmailSyncDispatch(body, env);
+		return;
+	}
+
+	if (jobType === 'EMAIL_SYNC_USER') {
+		await handleEmailSyncUser(body, env);
+		return;
+	}
+
+	if (jobType === 'NORMALIZE_RAW_EMAILS') {
+		await handleNormalizeRawEmails(body, env);
+		return;
+	}
+
+	if (jobType === 'SENDER_CLASSIFICATION') {
+		await handleSenderClassification(body, env);
+		return;
+	}
+
+	if (jobType === 'SENDER_BACKFILL') {
+		await handleSenderBackfill(body, env);
+		return;
+	}
+
+	if (jobType === 'RAW_EMAIL_BODY_PURGE') {
+		await handleRawEmailBodyPurge(body, env);
+		return;
+	}
+
+	if (jobType === 'MERCHANT_MAPPING') {
+		if (isMerchantMappingKillSwitched(env)) {
+			console.warn('Skipping MERCHANT_MAPPING queue job: the env kill switch is set');
+			return;
+		}
+
+		await handleMerchantMapping(body, env);
+		return;
+	}
+
+	throw new PoisonMessageError(`Invalid ${queueName} payload`);
+}
+
+
+function isDeadLetterQueue(queueName: string): boolean {
+	return queueName === QUEUE_NAMES.EMAIL_SYNC_DLQ || queueName === QUEUE_NAMES.NIGHTLY_DLQ;
 }
 
 export async function handleQueue(
 	batch: MessageBatch<unknown>,
 	env: Env,
-	_ctx: ExecutionContext,
+	ctx: ExecutionContext,
 ): Promise<void> {
 	const config = getAppConfig(env);
 	await runWithSqlClientLifecycle(config, async () => {
@@ -304,6 +396,17 @@ export async function handleQueue(
 
 		for (const message of batch.messages) {
 			metrics.max_attempts_seen = Math.max(metrics.max_attempts_seen, message.attempts);
+
+			// Dead letters are logged and acked; there is nothing left to run
+			// and no queue behind this one to catch a failure.
+			if (isDeadLetterQueue(batch.queue)) {
+				handleDeadLetterMessage(batch.queue, message.body, message.id, message.attempts);
+				message.ack();
+				metrics.acked_messages += 1;
+				metrics.dead_letter_messages += 1;
+				continue;
+			}
+
 			try {
 				await processMessage(batch.queue, message.body, env);
 				message.ack();
@@ -327,10 +430,9 @@ export async function handleQueue(
 
 				const exhaustedRetries = message.attempts >= MAX_PROCESSING_ATTEMPTS;
 				if (exhaustedRetries) {
-					if (
-						batch.queue === QUEUE_NAMES.EMAIL_SYNC &&
-						isEmailSyncUserJob(message.body)
-					) {
+					// Whatever queue carried it: a sync job about to dead-letter
+					// still holds connection leases nothing else will release.
+					if (isEmailSyncUserJob(message.body)) {
 						try {
 							await releaseEmailSyncJobLeases(message.body, env);
 						} catch (releaseError) {
@@ -378,6 +480,23 @@ export async function handleQueue(
 			retry_rate_percent: retryRatePercent,
 		});
 
+		// One report per batch, not per message: a DLQ batch of ten is one
+		// incident, and the reporting budget is small on purpose.
+		if (metrics.dead_letter_messages > 0) {
+			reportErrorInBackground(
+				env,
+				{
+					event: 'DLQ_MESSAGE',
+					message: `${metrics.dead_letter_messages} dead-lettered message(s) on ${batch.queue}`,
+					context: {
+						queue: batch.queue,
+						deadLetterCount: metrics.dead_letter_messages,
+					},
+				},
+				ctx,
+			);
+		}
+
 		const alertThresholds = resolveQueueAlertThresholds(env);
 		if (isQueueAlertThresholdBreached(metrics, alertThresholds, retryRatePercent)) {
 			console.error('QUEUE_ALERT_THRESHOLD_BREACH', {
@@ -387,6 +506,23 @@ export async function handleQueue(
 				alert_thresholds: alertThresholds,
 				evaluation_scope: 'batch',
 			});
+
+			reportErrorInBackground(
+				env,
+				{
+					event: 'QUEUE_ALERT_THRESHOLD_BREACH',
+					message: `Queue ${batch.queue} breached an alert threshold`,
+					context: {
+						queue: batch.queue,
+						totalMessages: metrics.total_messages,
+						retriedMessages: metrics.retried_messages,
+						finalRetryMessages: metrics.final_retry_messages,
+						poisonAckedMessages: metrics.poison_acked_messages,
+						retryRatePercent,
+					},
+				},
+				ctx,
+			);
 		}
 	});
 }

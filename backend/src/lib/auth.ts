@@ -6,10 +6,19 @@ import { getAppConfig } from './config';
 import { getSqlClient } from './db/client';
 import { asyncHandler } from './http/async';
 import { serviceUnavailable, unauthorized } from './http/errors';
+import {
+	enforceIpRateLimit,
+	enforceUserRateLimit,
+	wasIpRateLimitConsidered,
+} from './http/rate-limit';
 import { parseEmail } from './http/validation';
 
 const AUTHORIZATION_HEADER = 'authorization';
+// FROZEN. users.id is derived from this namespace and the Clerk subject
+// (deriveUserUuidFromClerkSubject); every user-owned row keys on that id, so
+// changing the namespace or the derivation would orphan all existing data.
 const CLERK_SUBJECT_NAMESPACE = '2d0ec934-68a4-4184-adf1-46d5f9d5cc0f';
+const AUTH_PROVIDER_CLERK = 'clerk';
 const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 const DEFAULT_JWKS_CACHE_SECONDS = 300;
 
@@ -26,6 +35,8 @@ interface ClerkJwtPayload {
 	iat?: number;
 	iss?: string;
 	aud?: string | string[];
+	/** Authorized party: the frontend origin Clerk issued the token to. */
+	azp?: string;
 	email?: string;
 	email_address?: string;
 	[key: string]: unknown;
@@ -35,6 +46,13 @@ interface ClerkVerificationConfig {
 	jwksUrl: string;
 	issuer?: string;
 	audience?: string[];
+	/**
+	 * Origins allowed to mint tokens for this backend (CLERK_AUTHORIZED_PARTIES).
+	 * Clerk's default session tokens carry `azp`, not `aud`, so this — not the
+	 * audience list — is what stops a token from another Clerk app in the same
+	 * instance being replayed here (A.3 §1). Unset = not enforced.
+	 */
+	authorizedParties?: string[];
 	nowSeconds?: number;
 	clockSkewSeconds?: number;
 	fetcher?: typeof fetch;
@@ -301,6 +319,18 @@ function validateTokenClaims(payload: ClerkJwtPayload, config: ClerkVerification
 		}
 	}
 
+	if (config.authorizedParties && config.authorizedParties.length > 0) {
+		// Enforced only when the secret is set, so setting it is a deliberate
+		// operator step and an unset deployment behaves exactly as before.
+		if (typeof payload.azp !== 'string' || payload.azp.trim().length === 0) {
+			throw unauthorized('UNAUTHORIZED', 'Clerk JWT missing authorized party claim');
+		}
+
+		if (!config.authorizedParties.includes(payload.azp.trim())) {
+			throw unauthorized('UNAUTHORIZED', 'Clerk JWT authorized party is not allowed');
+		}
+	}
+
 	if (typeof payload.sub !== 'string' || payload.sub.trim().length === 0) {
 		throw unauthorized('UNAUTHORIZED', 'Clerk JWT missing subject claim');
 	}
@@ -413,17 +443,35 @@ export const requireAuthenticatedUser: RequestHandler = asyncHandler(async (req,
 
 	const authorizationHeader = getHeaderValue(req.header(AUTHORIZATION_HEADER) ?? undefined);
 	const bearerToken = parseBearerToken(authorizationHeader);
-	const payload = await verifyClerkJwt(bearerToken, {
-		jwksUrl: clerkJwksUrl,
-		issuer: clerkIssuer,
-		audience: parseCsvEnv(runtimeEnv.CLERK_JWT_AUDIENCE),
-		clockSkewSeconds: parsePositiveIntegerEnv(
-			runtimeEnv.CLERK_JWT_CLOCK_SKEW_SECONDS,
-			DEFAULT_CLOCK_SKEW_SECONDS,
-		),
-	});
+	let payload: ClerkJwtPayload;
+	try {
+		payload = await verifyClerkJwt(bearerToken, {
+			jwksUrl: clerkJwksUrl,
+			issuer: clerkIssuer,
+			audience: parseCsvEnv(runtimeEnv.CLERK_JWT_AUDIENCE),
+			authorizedParties: parseCsvEnv(runtimeEnv.CLERK_AUTHORIZED_PARTIES),
+			clockSkewSeconds: parsePositiveIntegerEnv(
+				runtimeEnv.CLERK_JWT_CLOCK_SKEW_SECONDS,
+				DEFAULT_CLOCK_SKEW_SECONDS,
+			),
+		});
+	} catch (error) {
+		// A rejected token has no user to charge, so it falls to the IP
+		// limiter — otherwise an attacker could spend unlimited JWT
+		// verifications on an authenticated route. Requests the app-level
+		// middleware already handled are not charged twice; the request
+		// carries that fact, because by here express has rewritten its path.
+		if (!wasIpRateLimitConsidered(req)) {
+			await enforceIpRateLimit(runtimeEnv, req);
+		}
+		throw error;
+	}
 
-	const userId = await deriveUserUuidFromClerkSubject(payload.sub as string);
+	const clerkSubject = (payload.sub as string).trim();
+	const userId = await deriveUserUuidFromClerkSubject(clerkSubject);
+	// Before the provisioning upsert below: a flood then costs one JWT
+	// verification each, not a database round trip each.
+	await enforceUserRateLimit(runtimeEnv, userId);
 	// The email comes ONLY from the verified Clerk token. A client-supplied
 	// header (the old x-user-email path) would let any authenticated caller
 	// write an arbitrary — including someone else's — address into their
@@ -438,24 +486,32 @@ export const requireAuthenticatedUser: RequestHandler = asyncHandler(async (req,
 
 	const sql = getSqlClient(config);
 
+	// auth_provider/auth_subject record which provider identity owns this row
+	// (the raw Clerk `sub`, which the id derivation otherwise hashes away).
+	// Account deletion needs it to remove the Clerk user; writing it on every
+	// request fills it in for existing rows on their next visit.
 	let userRows: UserRow[];
 	if (userEmail) {
 		userRows = await sql<UserRow[]>`
-			insert into public.users as u (id, email, last_app_open_date)
-			values (${userId}, ${userEmail}, now())
+			insert into public.users as u (id, email, auth_provider, auth_subject, last_app_open_date)
+			values (${userId}, ${userEmail}, ${AUTH_PROVIDER_CLERK}, ${clerkSubject}, now())
 			on conflict (id) do update
 			set email = excluded.email,
+					auth_provider = excluded.auth_provider,
+					auth_subject = excluded.auth_subject,
 					last_app_open_date = now()
-				returning u.id, u.email, u.last_app_open_date, u.created_at
+				returning u.id, u.email, u.auth_provider, u.auth_subject, u.last_app_open_date, u.created_at
 		`;
 	} else {
 		userRows = await sql<UserRow[]>`
-			insert into public.users as u (id, email, last_app_open_date)
-			values (${userId}, ${buildFallbackUserEmail(userId)}, now())
+			insert into public.users as u (id, email, auth_provider, auth_subject, last_app_open_date)
+			values (${userId}, ${buildFallbackUserEmail(userId)}, ${AUTH_PROVIDER_CLERK}, ${clerkSubject}, now())
 			on conflict (id) do update
-			set last_app_open_date = now()
+			set auth_provider = excluded.auth_provider,
+					auth_subject = excluded.auth_subject,
+					last_app_open_date = now()
 			where u.id = ${userId}
-			returning u.id, u.email, u.last_app_open_date, u.created_at
+			returning u.id, u.email, u.auth_provider, u.auth_subject, u.last_app_open_date, u.created_at
 		`;
 	}
 

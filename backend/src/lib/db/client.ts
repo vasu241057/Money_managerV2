@@ -11,6 +11,12 @@ export interface DatabaseHealth {
 
 interface DbClientConfig {
 	supabasePoolerUrl: string | null;
+	/**
+	 * Which binding produced the URL above (Task 8). Logged once per isolate
+	 * so a Hyperdrive rollout is confirmable from the logs; the client itself
+	 * behaves identically either way.
+	 */
+	dbConnectionSource?: 'hyperdrive' | 'pooler' | null;
 	dbMaxConnections: number;
 	dbConnectTimeoutSeconds: number;
 }
@@ -29,9 +35,28 @@ interface RequestSqlStore {
 }
 
 let cachedClient: CachedClient | null = null;
+let loggedConnectionSource: string | null = null;
 const requestSqlStorage = new AsyncLocalStorage<RequestSqlStore>();
 
+/**
+ * One line per isolate, not per request: the HTTP path builds a client for
+ * every request, so logging each one would bury the signal it exists for.
+ */
+function logConnectionSourceOnce(source: string | null | undefined): void {
+	const resolved = source ?? 'unknown';
+	if (loggedConnectionSource === resolved) {
+		return;
+	}
+
+	loggedConnectionSource = resolved;
+	console.info('DB_CONNECTION_SOURCE', { source: resolved });
+}
+
 function createClient(config: DbClientConfig): SqlClient {
+	logConnectionSourceOnce(config.dbConnectionSource);
+
+	// prepare:false is required by both PgBouncer transaction pooling and
+	// Hyperdrive; neither keeps a session for a prepared statement to live in.
 	return postgres(config.supabasePoolerUrl as string, {
 		max: config.dbMaxConnections,
 		connect_timeout: config.dbConnectTimeoutSeconds,

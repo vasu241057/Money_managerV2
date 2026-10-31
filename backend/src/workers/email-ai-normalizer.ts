@@ -37,9 +37,11 @@ import {
 	applyTemplate,
 	induceExtractTemplate,
 	induceIgnoreTemplate,
+	isTemplateVisibleToUser,
 	loadTemplatesForSenders,
 	recordTemplateFailure,
 	recordTemplateHit,
+	resolveTemplateCaps,
 	saveTemplate,
 	selfVerifyTemplate,
 } from '../lib/email-templates';
@@ -63,6 +65,7 @@ import {
 	startAiCallRun,
 } from '../services/ai-usage.service';
 import { completeStatementFromPdf } from '../services/statement-pdf.service';
+import { loadUserQuotaStatus, resolveDefaultQuotaCaps } from '../services/user-quotas.service';
 import {
 	findLikelyDuplicateTransfer,
 	hasLikelyDuplicateEvent,
@@ -78,6 +81,7 @@ import { getAppConfig } from '../lib/config';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
 import { toIsoDateTime, toNullableString, toRequiredString } from '../lib/db/serialization';
+import { isMissingUserReferenceError } from '../lib/db/errors';
 import { PoisonMessageError, TransientMessageError } from './queue.errors';
 
 const VALID_PAYMENT_METHODS: readonly PaymentMethod[] = [
@@ -370,7 +374,11 @@ export interface NormalizeRawEmailsResult {
 	needs_review_transaction_count: number;
 	template_matched_count: number;
 	template_learned_count: number;
+	/** PRIVATE templates that became SHARED because a second user induced the same format. */
+	template_promoted_count: number;
 	statement_captured_count: number;
+	/** Emails left PENDING because their user spent today's AI-call cap (Task 6). */
+	quota_deferred_raw_email_count: number;
 	failed_raw_email_ids: UUID[];
 	unrecognized_raw_email_ids: UUID[];
 }
@@ -423,7 +431,10 @@ interface AiUsageCallContext {
 	operation: AiUsageOperation;
 	itemCount: number;
 	attemptNumber?: number;
+	beforeAttempt?: () => Promise<void>;
 }
+
+class AiQuotaDeferredError extends Error {}
 
 type EmailProcessingRoute = 'TEMPLATE' | 'AI';
 
@@ -811,7 +822,9 @@ function createEmptyResult(requestedCount: number): NormalizeRawEmailsResult {
 		needs_review_transaction_count: 0,
 		template_matched_count: 0,
 		template_learned_count: 0,
+		template_promoted_count: 0,
 		statement_captured_count: 0,
+		quota_deferred_raw_email_count: 0,
 		failed_raw_email_ids: [],
 		unrecognized_raw_email_ids: [],
 	};
@@ -1079,12 +1092,12 @@ async function callModel(
 			hasMessage: Boolean(message),
 			messageKeys: message ? Object.keys(message) : [],
 			contentLength: message?.content?.length ?? 0,
+			// Length only. The tail used to be logged here, but reasoning
+			// text is the model thinking about the user's bank mail — the
+			// one content-bearing field that was not behind the dev trace
+			// flag (Task 7 log audit).
 			reasoningLength:
 				typeof message?.reasoning_content === 'string' ? message.reasoning_content.length : 0,
-			reasoningTail:
-				typeof message?.reasoning_content === 'string'
-					? message.reasoning_content.slice(-300)
-					: null,
 		});
 		await captureModelAttempt(
 			usageContext,
@@ -1182,6 +1195,8 @@ export async function callWithTieredFallback(
 
 	try {
 		while (totalAttempts < config.maxRetries) {
+			// Every provider attempt consumes budget, including retries and fallback tiers.
+			await usageContext?.beforeAttempt?.();
 			let tierIdx = state.activeIndex;
 			while (tierIdx < config.models.length) {
 				const cooldown = state.cooldownUntil.get(tierIdx) ?? 0;
@@ -1760,6 +1775,7 @@ export async function runNormalizeRawEmailsJob(
 	const config = getAppConfig(env);
 	const sql = getSqlClient(config);
 	const normConfig = resolveNormalizerTierConfig(env);
+	const quotaDefaults = resolveDefaultQuotaCaps(config);
 
 	const rawEmailRows = await loadRawEmailsByIds(sql, requestedIds);
 	result.loaded_raw_email_count = rawEmailRows.length;
@@ -1967,7 +1983,7 @@ export async function runNormalizeRawEmailsJob(
 		const [systemCategories, userRules, globalAliases, userMerchantRules] = await Promise.all([
 			loadSystemCategoryMap(sql),
 			loadUserRulesForLookup(sql, [rawEmail.user_id], allSearchKeys),
-			loadGlobalAliasesForLookup(sql, allSearchKeys),
+			loadGlobalAliasesForLookup(sql, allSearchKeys, rawEmail.user_id),
 			loadUserMerchantRulesForLookup(sql, [rawEmail.user_id]),
 		]);
 		const identityLookup: IdentityGraphLookup = {
@@ -2041,6 +2057,7 @@ export async function runNormalizeRawEmailsJob(
 	};
 
 	const templatesEnabled = resolveEmailTemplatesEnabled(env);
+	const templateCaps = resolveTemplateCaps(env as unknown as Record<string, string | undefined>);
 
 	// Turns one masked AI answer into a stored template. Only single-
 	// transaction answers are learnable (multi-transaction emails stay
@@ -2127,16 +2144,27 @@ export async function runNormalizeRawEmailsJob(
 				return;
 			}
 
+			// The template starts PRIVATE to this user; it is shared only once
+			// another user's mail independently induces the same format.
 			const saved = await saveTemplate(sql, {
 				from_address: rawEmail.from_address,
 				skeleton: induced.skeleton,
 				slot_map: induced.slot_map,
 				learned_from_raw_email_id: rawEmail.id,
+				learned_from_user_id: rawEmail.user_id,
+				caps: templateCaps,
 			});
-			if (saved) {
+			if (saved.inserted) {
 				result.template_learned_count++;
 				console.info('AI_NORMALIZER_TEMPLATE_LEARNED', {
 					rawEmailId: rawEmail.id,
+					fromAddress: rawEmail.from_address,
+					kind: induced.slot_map.kind,
+				});
+			}
+			if (saved.promoted) {
+				result.template_promoted_count++;
+				console.info('AI_NORMALIZER_TEMPLATE_PROMOTED', {
 					fromAddress: rawEmail.from_address,
 					kind: induced.slot_map.kind,
 				});
@@ -2154,6 +2182,8 @@ export async function runNormalizeRawEmailsJob(
 	// template skeletons (body-only) keep their usual numbering.
 	const buildPromptWithSubject = (subjectText: string | null, bodyText: string): string =>
 		subjectText ? `Subject: ${subjectText}\n\n${bodyText}` : bodyText;
+
+	let beforeAiAttempt: (() => Promise<void>) | undefined;
 
 	const processSingleEmail = async (rawEmail: RawEmailRecord): Promise<void> => {
 		if (!apiKey) return;
@@ -2202,6 +2232,7 @@ export async function runNormalizeRawEmailsJob(
 					provider: providerConfig.provider,
 					operation: 'EMAIL_NORMALIZATION',
 					itemCount: 1,
+					beforeAttempt: beforeAiAttempt,
 				},
 			);
 
@@ -2242,7 +2273,7 @@ export async function runNormalizeRawEmailsJob(
 				await maybeLearnTemplate(rawEmail, aiResponse, validated, masked.masked, allTokens);
 			}
 		} catch (error) {
-			if (error instanceof TransientMessageError) {
+			if (error instanceof TransientMessageError || error instanceof AiQuotaDeferredError) {
 				throw error;
 			}
 			await failEmail(rawEmail, error, callId);
@@ -2306,11 +2337,12 @@ export async function runNormalizeRawEmailsJob(
 					provider: providerConfig.provider,
 					operation: 'EMAIL_NORMALIZATION',
 					itemCount: batch.length,
+					beforeAttempt: beforeAiAttempt,
 				},
 			);
 			perEmailResponses = splitBatchResponse(aiResponse, batch.length);
 		} catch (error) {
-			if (error instanceof TransientMessageError) {
+			if (error instanceof TransientMessageError || error instanceof AiQuotaDeferredError) {
 				throw error;
 			}
 			// Permanent model failure: every email in the batch is marked
@@ -2406,7 +2438,7 @@ export async function runNormalizeRawEmailsJob(
 			),
 		);
 		try {
-			templatesBySender = await loadTemplatesForSenders(sql, senders);
+			templatesBySender = await loadTemplatesForSenders(sql, senders, Array.from(eligibleByUser.keys()));
 		} catch (error) {
 			console.warn('AI_NORMALIZER_TEMPLATE_LOAD_FAILED', {
 				message: error instanceof Error ? error.message : 'unknown',
@@ -2418,9 +2450,11 @@ export async function runNormalizeRawEmailsJob(
 	// email was fully handled locally. Structural misses cost nothing; a
 	// match with garbage values penalizes that template and falls through.
 	const applyTemplatesToEmail = async (rawEmail: RawEmailRecord): Promise<boolean> => {
-		const templates = rawEmail.from_address
-			? templatesBySender.get(rawEmail.from_address)
-			: undefined;
+		// SHARED templates plus this user's own PRIVATE ones; another user's
+		// PRIVATE template never touches this email.
+		const templates = (
+			rawEmail.from_address ? templatesBySender.get(rawEmail.from_address) : undefined
+		)?.filter(template => isTemplateVisibleToUser(template, rawEmail.user_id));
 		if (!templates || templates.length === 0) return false;
 
 		const emailStartMs = Date.now();
@@ -2498,27 +2532,77 @@ export async function runNormalizeRawEmailsJob(
 	};
 
 	const batchSize = normConfig.maskNumbers ? normConfig.batchSize : 1;
-	for (const emails of eligibleByUser.values()) {
-		const aiPending: RawEmailRecord[] = [];
-		for (const rawEmail of emails) {
-			const handledByTemplate = await applyTemplatesToEmail(rawEmail);
-			if (!handledByTemplate) {
-				aiPending.push(rawEmail);
+	for (const [userId, emails] of eligibleByUser) {
+		// Emails of this user that have reached a terminal outcome so far;
+		// only used to account for the rest when the user disappears.
+		let settledCount = 0;
+		try {
+			const aiPending: RawEmailRecord[] = [];
+			for (const rawEmail of emails) {
+				const handledByTemplate = await applyTemplatesToEmail(rawEmail);
+				if (!handledByTemplate) {
+					aiPending.push(rawEmail);
+				} else {
+					settledCount += 1;
+				}
 			}
-		}
 
-		if (!apiKey) {
-			result.skipped_raw_email_count += aiPending.length;
-			continue;
-		}
-
-		for (let start = 0; start < aiPending.length; start += batchSize) {
-			const batch = aiPending.slice(start, start + batchSize);
-			if (batch.length === 1) {
-				await processSingleEmail(batch[0] as RawEmailRecord);
-			} else {
-				await processMaskedBatch(batch);
+			if (!apiKey) {
+				result.skipped_raw_email_count += aiPending.length;
+				continue;
 			}
+			if (aiPending.length === 0) continue;
+
+			// Keep a local attempt budget even if usage logging fails, and re-read
+			// the ledger before each attempt to see other jobs' completed calls.
+			const quota = await loadUserQuotaStatus(sql, userId, quotaDefaults);
+			let callBudget = quota.ai_call_remaining;
+			beforeAiAttempt = async () => {
+				const latest = await loadUserQuotaStatus(sql, userId, quotaDefaults);
+				callBudget = Math.min(callBudget, latest.ai_call_remaining);
+				if (callBudget <= 0) throw new AiQuotaDeferredError('Daily AI cap reached');
+				callBudget -= 1;
+			};
+
+			for (let start = 0; start < aiPending.length; start += batchSize) {
+				if (callBudget <= 0) {
+					const deferred = aiPending.length - start;
+					result.quota_deferred_raw_email_count += deferred;
+					console.warn('AI_NORMALIZER_QUOTA_DEFERRED', {
+						userId,
+						day: quota.day,
+						aiCalls: quota.ai_calls,
+						cap: quota.daily_ai_call_cap,
+						deferredRawEmailCount: deferred,
+					});
+					break;
+				}
+				const batch = aiPending.slice(start, start + batchSize);
+				if (batch.length === 1) {
+					await processSingleEmail(batch[0] as RawEmailRecord);
+				} else {
+					await processMaskedBatch(batch);
+				}
+				settledCount += batch.length;
+			}
+		} catch (error) {
+			if (error instanceof AiQuotaDeferredError) {
+				const deferred = Math.max(0, emails.length - settledCount);
+				result.quota_deferred_raw_email_count += deferred;
+				console.warn('AI_NORMALIZER_QUOTA_DEFERRED', { userId, deferredRawEmailCount: deferred });
+				continue;
+			}
+			// The user deleted their account while this batch ran (Task 5):
+			// their rows are gone with the cascade and nothing about them may
+			// be written. Skip the rest of their emails; other users' emails
+			// in the same job continue and the message acks normally.
+			if (isMissingUserReferenceError(error)) {
+				const remaining = Math.max(0, emails.length - settledCount);
+				console.warn('AI_NORMALIZER_USER_GONE', { userId, skippedRawEmailCount: remaining });
+				result.skipped_raw_email_count += remaining;
+				continue;
+			}
+			throw error;
 		}
 	}
 

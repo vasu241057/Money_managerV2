@@ -63,7 +63,7 @@ export function createOAuthRouter(): Router {
 			const config = getAppConfig(runtimeEnv);
 			const sql = getSqlClient(config);
 
-			await disconnectGoogleOAuthConnection(sql, userId);
+			await disconnectGoogleOAuthConnection(sql, userId, runtimeEnv);
 			res.status(204).send();
 		}),
 	);

@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
 	resolveAiProvider,
 	resolveAiProviderConfig,
+	resolveEmailPipelineTraceEnabled,
 	resolveNormalizerTierConfig,
 } from '../src/lib/ai';
 
@@ -100,5 +101,37 @@ describe('resolveAiProviderConfig', () => {
 			AI_NORMALIZER_TIERS: 'custom/model',
 		} as unknown as Env);
 		expect(overridden.models).toEqual(['custom/model']);
+	});
+});
+
+describe('resolveEmailPipelineTraceEnabled', () => {
+	it('is off unless the flag is set', () => {
+		expect(resolveEmailPipelineTraceEnabled({} as Env)).toBe(false);
+		expect(resolveEmailPipelineTraceEnabled({ EMAIL_PIPELINE_TRACE: 'off' } as unknown as Env)).toBe(false);
+	});
+
+	it('turns on in development when the flag is set', () => {
+		for (const value of ['true', '1', 'on']) {
+			expect(
+				resolveEmailPipelineTraceEnabled({
+					EMAIL_PIPELINE_TRACE: value,
+					NODE_ENV: 'development',
+				} as unknown as Env),
+			).toBe(true);
+		}
+	});
+
+	it('refuses to trace in production even with the flag set', () => {
+		// The trace prints counterparty names and amounts (Task 7 log audit).
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		expect(
+			resolveEmailPipelineTraceEnabled({
+				EMAIL_PIPELINE_TRACE: 'true',
+				NODE_ENV: 'production',
+			} as unknown as Env),
+		).toBe(false);
+		expect(warn).toHaveBeenCalledWith('EMAIL_PIPELINE_TRACE_REFUSED', { nodeEnv: 'production' });
+		warn.mockRestore();
 	});
 });

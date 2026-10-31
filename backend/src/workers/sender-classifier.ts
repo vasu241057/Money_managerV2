@@ -8,6 +8,7 @@ import { toRequiredString } from '../lib/db/serialization';
 import { isAllowedSender, resolveSenderGateConfig } from '../lib/sender-gate';
 import { captureAiUsageAttempt } from '../services/ai-usage.service';
 import { TransientMessageError } from './queue.errors';
+import { resolveNightlyQueue } from './queue.producers';
 
 // The provider routinely takes 25-45s on large prompts; queue consumers
 // can afford a generous window.
@@ -60,6 +61,9 @@ interface SenderModelPayload {
 
 export interface SenderClassificationResult {
 	candidate_count: number;
+	/** Never-classified senders seen in the window, before the per-run cap. */
+	candidate_backlog_count: number;
+	candidate_cap: number;
 	reask_candidate_count: number;
 	classified_count: number;
 	allow_rule_count: number;
@@ -72,6 +76,8 @@ export interface SenderClassificationResult {
 function createEmptyResult(): SenderClassificationResult {
 	return {
 		candidate_count: 0,
+		candidate_backlog_count: 0,
+		candidate_cap: MAX_SENDERS_PER_RUN,
 		reask_candidate_count: 0,
 		classified_count: 0,
 		allow_rule_count: 0,
@@ -277,12 +283,20 @@ async function callSenderClassificationModel(
 	return classified;
 }
 
-async function loadUnruledGatedSenders(sql: SqlClient, env: Env): Promise<string[]> {
+// Returns min(cap, backlog) addresses plus the backlog size, so a run that
+// was capped is visible in the log rather than silently leaving senders
+// unclassified until tomorrow.
+async function loadUnruledGatedSenders(
+	sql: SqlClient,
+	env: Env,
+	cap: number,
+): Promise<{ addresses: string[]; backlog_count: number }> {
 	const gatedRows = await sql<GatedSenderRowRaw[]>`
 		select distinct re.from_address
 		from public.raw_emails as re
 		where re.status = 'IGNORED'
 			and re.clean_text = ''
+			and re.body_purged_at is null
 			and re.from_address is not null
 			and re.created_at > now() - (${GATED_SENDER_LOOKBACK_DAYS} || ' days')::interval
 	`;
@@ -315,9 +329,8 @@ async function loadUnruledGatedSenders(sql: SqlClient, env: Env): Promise<string
 		if (ruledPatterns.has(address)) continue;
 		if (isAllowedSender(address, address, entries)) continue;
 		candidates.push(address);
-		if (candidates.length >= MAX_SENDERS_PER_RUN) break;
 	}
-	return candidates;
+	return { addresses: candidates.slice(0, cap), backlog_count: candidates.length };
 }
 
 // AI-created DENY rules older than the re-ask window get reconsidered with
@@ -430,6 +443,7 @@ async function enqueueBackfillJobs(
 		where re.from_address = any(${allowedAddresses}::text[])
 			and re.status = 'IGNORED'
 			and re.clean_text = ''
+			and re.body_purged_at is null
 	`;
 
 	const idsByUser = new Map<UUID, UUID[]>();
@@ -472,11 +486,21 @@ export async function runSenderClassificationJob(
 
 	const config = getAppConfig(env);
 	const sql = getSqlClient(config);
+	const cap =
+		Number.isSafeInteger(config.maxSendersPerRun) && config.maxSendersPerRun > 0
+			? config.maxSendersPerRun
+			: MAX_SENDERS_PER_RUN;
+	result.candidate_cap = cap;
 
-	const newAddresses = await loadUnruledGatedSenders(sql, env);
+	const unruled = await loadUnruledGatedSenders(sql, env, cap);
+	const newAddresses = unruled.addresses;
 	result.candidate_count = newAddresses.length;
+	result.candidate_backlog_count = unruled.backlog_count;
+	if (unruled.backlog_count > cap) {
+		console.info('SENDER_CLASSIFIER_CAPPED', { backlog: unruled.backlog_count, cap });
+	}
 
-	const reaskAddresses = await loadDenyReaskAddresses(sql);
+	const reaskAddresses = (await loadDenyReaskAddresses(sql)).slice(0, Math.max(0, cap - newAddresses.length));
 	result.reask_candidate_count = reaskAddresses.length;
 
 	const allAddresses = [...new Set([...newAddresses, ...reaskAddresses])];
@@ -490,10 +514,14 @@ export async function runSenderClassificationJob(
 		subjects: subjectsBySender.get(address) ?? [],
 	}));
 
-	const classified = await callSenderClassificationModel(sql, env, apiKey, candidates);
-	if (classified === null) {
-		result.skipped_reason = 'invalid model response';
-		return result;
+	const classified: ClassifiedSender[] = [];
+	for (let offset = 0; offset < candidates.length; offset += 40) {
+		const chunk = await callSenderClassificationModel(sql, env, apiKey, candidates.slice(offset, offset + 40));
+		if (chunk === null) {
+			result.skipped_reason = 'invalid model response';
+			continue;
+		}
+		classified.push(...chunk);
 	}
 	result.classified_count = classified.length;
 
@@ -501,9 +529,11 @@ export async function runSenderClassificationJob(
 	result.allow_rule_count = persisted.allowCount;
 	result.deny_rule_count = persisted.denyCount;
 
+	// Fan-out from a nightly run is nightly work: it stays off the queue the
+	// 10-minute sync tick uses (Task 8).
 	const backfill = await enqueueBackfillJobs(
 		sql,
-		env.EMAIL_SYNC_QUEUE,
+		resolveNightlyQueue(env),
 		persisted.allowedAddresses,
 	);
 	result.backfill_raw_email_count = backfill.rawEmailCount;

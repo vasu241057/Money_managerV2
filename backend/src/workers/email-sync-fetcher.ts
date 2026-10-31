@@ -25,7 +25,19 @@ import {
 	executeGmailBatch,
 	GmailBatchProtocolError,
 } from './gmail-batch';
-import { TransientMessageError } from './queue.errors';
+import { isMissingUserReferenceError } from '../lib/db/errors';
+import {
+	claimPendingRequeueSlot,
+	listStalePendingRawEmailIds,
+	loadUserQuotaStatus,
+	PENDING_REQUEUE_STALE_MINUTES,
+	recordUserUsage,
+	releasePendingRequeueSlot,
+	resolveDefaultQuotaCaps,
+	type UserQuotaCaps,
+	type UserUsageIncrement,
+} from '../services/user-quotas.service';
+import { PoisonMessageError, TransientMessageError } from './queue.errors';
 import { buildEmailSyncUserJob } from './queue.messages';
 
 const GOOGLE_OAUTH_PROVIDER = 'google';
@@ -154,6 +166,8 @@ interface EmailSyncConnectionResult {
 	revoked: boolean;
 	paused: boolean;
 	continuation_enqueued: boolean;
+	/** The daily fetch cap stopped this mailbox before any Gmail call (Task 6). */
+	quota_deferred: boolean;
 }
 
 interface EmailSyncContinuationState {
@@ -173,6 +187,10 @@ export interface EmailSyncUserResult {
 	inserted_or_retried_raw_email_count: number;
 	skipped_existing_raw_email_count: number;
 	sender_gated_raw_email_count: number;
+	/** Mailboxes deferred to tomorrow by the daily fetch cap (Task 6). */
+	quota_deferred_connection_count: number;
+	/** Stale PENDING rows this job handed back to the normalizer (Task 6 self-heal). */
+	pending_requeued_count: number;
 }
 
 interface FetchLike {
@@ -681,6 +699,145 @@ async function enqueueNormalizeRawEmailsJobs(queue: Queue, rawEmailIds: UUID[]):
 	}
 }
 
+// Gmail refused the page token itself (HTTP 400). Distinct so a token parked
+// on the connection by a quota stop can be forgotten instead of wedging the
+// mailbox on every retry.
+class GmailPageTokenInvalidError extends TransientMessageError {
+	constructor(message: string) {
+		super(message);
+		this.name = 'GmailPageTokenInvalidError';
+	}
+}
+
+interface StoredSyncContinuation {
+	page_token: string;
+	after_seconds: number;
+	max_internal_timestamp_seen: number;
+}
+
+interface StoredSyncContinuationRowRaw {
+	email_sync_continuation_token: unknown;
+	email_sync_continuation_after_seconds: unknown;
+	email_sync_continuation_max_seen: unknown;
+}
+
+// A quota stop parks the Gmail page token on the connection (Task 6, A.3 §3)
+// so the next day's job resumes mid-listing rather than re-listing from the
+// cursor. The after: window travels with it: a token is only valid for the
+// exact query that produced it.
+async function loadStoredContinuation(
+	sql: SqlClient,
+	connectionId: UUID,
+	userId: UUID,
+): Promise<StoredSyncContinuation | null> {
+	const rows = await sql<StoredSyncContinuationRowRaw[]>`
+		select
+			oc.email_sync_continuation_token,
+			oc.email_sync_continuation_after_seconds,
+			oc.email_sync_continuation_max_seen
+		from public.oauth_connections as oc
+		where oc.id = ${connectionId}
+			and oc.user_id = ${userId}
+		limit 1
+	`;
+	const row = rows[0];
+	if (!row || typeof row.email_sync_continuation_token !== 'string' || row.email_sync_continuation_token.length === 0) {
+		return null;
+	}
+	const afterSeconds = Number(row.email_sync_continuation_after_seconds);
+	if (!Number.isSafeInteger(afterSeconds) || afterSeconds < 0) {
+		return null;
+	}
+	const maxSeenRaw = Number(row.email_sync_continuation_max_seen);
+	return {
+		page_token: row.email_sync_continuation_token,
+		after_seconds: afterSeconds,
+		max_internal_timestamp_seen:
+			Number.isSafeInteger(maxSeenRaw) && maxSeenRaw > 0 ? maxSeenRaw : 0,
+	};
+}
+
+async function storeContinuation(
+	sql: SqlClient,
+	connectionId: UUID,
+	userId: UUID,
+	state: StoredSyncContinuation,
+): Promise<void> {
+	await sql`
+		update public.oauth_connections as oc
+		set
+			email_sync_continuation_token = ${state.page_token},
+			email_sync_continuation_after_seconds = ${state.after_seconds},
+			email_sync_continuation_max_seen = ${state.max_internal_timestamp_seen}
+		where oc.id = ${connectionId}
+			and oc.user_id = ${userId}
+	`;
+}
+
+async function clearStoredContinuation(
+	sql: SqlClient,
+	connectionId: UUID,
+	userId: UUID,
+): Promise<void> {
+	await sql`
+		update public.oauth_connections as oc
+		set
+			email_sync_continuation_token = null,
+			email_sync_continuation_after_seconds = null,
+			email_sync_continuation_max_seen = null
+		where oc.id = ${connectionId}
+			and oc.user_id = ${userId}
+			and oc.email_sync_continuation_token is not null
+	`;
+}
+
+/**
+ * Self-heal (Task 6, A.1 §5 / A.2 §8): re-enqueues this user's
+ * PENDING_EXTRACTION rows that nothing has touched for half an hour — the
+ * ones a lost NORMALIZE_RAW_EMAILS job or yesterday's AI cap left behind.
+ * Bounded to one NORMALIZE job per user per hour by an atomic claim, and
+ * skipped while the user is over the AI cap (the normalizer would only defer
+ * them again).
+ */
+async function requeueStalePendingEmails(
+	sql: SqlClient,
+	env: Env,
+	userId: UUID,
+	quotaDefaults: UserQuotaCaps,
+): Promise<number> {
+	const quota = await loadUserQuotaStatus(sql, userId, quotaDefaults);
+	if (quota.over_ai_call_cap) {
+		return 0;
+	}
+	const claimed = await claimPendingRequeueSlot(sql, userId);
+	if (!claimed) {
+		return 0;
+	}
+	const rawEmailIds = await listStalePendingRawEmailIds(
+		sql,
+		userId,
+		PENDING_REQUEUE_STALE_MINUTES,
+		NORMALIZE_RAW_EMAILS_MAX_IDS,
+	);
+	if (rawEmailIds.length === 0) {
+		return 0;
+	}
+	try {
+		await enqueueNormalizeRawEmailsJobs(env.EMAIL_SYNC_QUEUE, rawEmailIds);
+	} catch (error) {
+		// Hand the hour back so the next job retries instead of waiting it out.
+		await releasePendingRequeueSlot(sql, userId).catch(() => undefined);
+		console.warn('EMAIL_SYNC_PENDING_REQUEUE_FAILED', {
+			userId,
+			rawEmailCount: rawEmailIds.length,
+			error: error instanceof Error ? error.message : 'Unknown enqueue error',
+		});
+		return 0;
+	}
+	console.info('EMAIL_SYNC_PENDING_REQUEUED', { userId, rawEmailCount: rawEmailIds.length });
+	return rawEmailIds.length;
+}
+
 export async function refreshAccessTokenWithOcc(
 	sql: SqlClient,
 	connection: OauthConnectionRow,
@@ -847,6 +1004,7 @@ async function gmailListMessages(
 	pageToken: string | null,
 	useSearchFilter: boolean,
 	fetcher: FetchLike,
+	maxResults = GMAIL_LIST_MAX_RESULTS,
 ): Promise<{
 	messageIds: string[];
 	nextPageToken: string | null;
@@ -855,7 +1013,7 @@ async function gmailListMessages(
 	paused: boolean;
 }> {
 	const url = new URL(GMAIL_API_MESSAGES_LIST_ENDPOINT);
-	url.searchParams.set('maxResults', String(GMAIL_LIST_MAX_RESULTS));
+	url.searchParams.set('maxResults', String(Math.min(GMAIL_LIST_MAX_RESULTS, maxResults)));
 	url.searchParams.set('includeSpamTrash', 'true');
 	if (useSearchFilter) {
 		if (afterSeconds > 0) {
@@ -919,6 +1077,9 @@ async function gmailListMessages(
 			revoked: false,
 			paused: true,
 		};
+	}
+	if (response.status === 400 && pageToken) {
+		throw new GmailPageTokenInvalidError('Gmail list API rejected the page token (400)');
 	}
 	if (!response.ok) {
 		throw new TransientMessageError(`Gmail list API failed with status ${response.status}`);
@@ -1409,10 +1570,12 @@ async function persistRawEmailsAndCursor(
 	records: RawEmailUpsertRecord[],
 	maxInternalTimestamp: number,
 	advanceCursor: boolean,
+	usage?: UserUsageIncrement,
 ): Promise<UUID[]> {
 	const insertedIds: UUID[] = [];
 	await sql.begin(async (tx) => {
 		const txSql = tx as unknown as SqlClient;
+		if (usage) await recordUserUsage(txSql, userId, usage);
 
 		for (const record of records) {
 			const result = await txSql<{ id: UUID }[]>`
@@ -1490,40 +1653,71 @@ function parseMessageInternalTimestamp(value: unknown): number | null {
 	return timestamp;
 }
 
+function emptyConnectionResult(
+	connection: Pick<OauthConnectionRow, 'id' | 'email_address'>,
+	flags: Pick<EmailSyncConnectionResult, 'revoked' | 'paused' | 'quota_deferred'>,
+): EmailSyncConnectionResult {
+	return {
+		connection_id: connection.id,
+		email_address: connection.email_address,
+		fetched_message_count: 0,
+		inserted_or_retried_raw_email_count: 0,
+		skipped_existing_raw_email_count: 0,
+		sender_gated_raw_email_count: 0,
+		continuation_enqueued: false,
+		...flags,
+	};
+}
+
 async function processConnection(
 	sql: SqlClient,
 	job: EmailSyncUserJobPayload,
 	connection: OauthConnectionRow,
 	env: Env,
 	fetcher: FetchLike,
+	quotaDefaults: UserQuotaCaps = resolveDefaultQuotaCaps({}),
 ): Promise<EmailSyncConnectionResult> {
+	const jobContinuation = getJobContinuationStateForConnection(job, connection.id);
+
+	// Fair use (Task 6): checked before every page and before any Google
+	// call. Over the cap the cursor stays put; a page token this job carried
+	// is parked on the connection so tomorrow resumes exactly here (A.3 §3).
+	const quota = await loadUserQuotaStatus(sql, job.user_id, quotaDefaults);
+	if (quota.over_email_fetch_cap) {
+		if (jobContinuation) {
+			await storeContinuation(sql, connection.id, job.user_id, {
+				page_token: jobContinuation.page_token,
+				after_seconds: jobContinuation.after_seconds,
+				max_internal_timestamp_seen: jobContinuation.max_internal_timestamp_seen,
+			});
+		}
+		console.warn('EMAIL_SYNC_QUOTA_DEFERRED', {
+			connectionId: connection.id,
+			userId: job.user_id,
+			day: quota.day,
+			bodiesFetched: quota.bodies_fetched,
+			dailyEmailFetchCap: quota.daily_email_fetch_cap,
+			pageTokenStored: Boolean(jobContinuation),
+		});
+		return emptyConnectionResult(connection, { revoked: false, paused: false, quota_deferred: true });
+	}
+	// A fresh job resumes a listing an earlier quota stop parked, if any.
+	const storedContinuation = jobContinuation
+		? null
+		: await loadStoredContinuation(sql, connection.id, job.user_id);
+	const resume = jobContinuation ?? storedContinuation;
+
 	const config = getGoogleRefreshConfig(env);
 	const refreshOutcome = await refreshAccessTokenWithOcc(sql, connection, config, fetcher);
 	if (refreshOutcome.revoked) {
-		return {
-			connection_id: connection.id,
-			email_address: connection.email_address,
-			fetched_message_count: 0,
-			inserted_or_retried_raw_email_count: 0,
-			skipped_existing_raw_email_count: 0,
-			sender_gated_raw_email_count: 0,
-			revoked: true,
-			paused: false,
-			continuation_enqueued: false,
-		};
+		return emptyConnectionResult(connection, { revoked: true, paused: false, quota_deferred: false });
 	}
 	if (refreshOutcome.inactive) {
-		return {
-			connection_id: refreshOutcome.connection.id,
-			email_address: refreshOutcome.connection.email_address,
-			fetched_message_count: 0,
-			inserted_or_retried_raw_email_count: 0,
-			skipped_existing_raw_email_count: 0,
-			sender_gated_raw_email_count: 0,
+		return emptyConnectionResult(refreshOutcome.connection, {
 			revoked: false,
 			paused: false,
-			continuation_enqueued: false,
-		};
+			quota_deferred: false,
+		});
 	}
 
 	const accessToken = refreshOutcome.accessToken;
@@ -1545,7 +1739,6 @@ async function processConnection(
 		}
 	}
 	let senderGatedCount = 0;
-	const jobContinuation = getJobContinuationStateForConnection(job, connection.id);
 	const baseCursor = Math.min(
 		Math.max(0, job.last_sync_timestamp),
 		Math.max(0, refreshOutcome.connection.last_sync_timestamp),
@@ -1557,16 +1750,17 @@ async function processConnection(
 			? baseCursor
 			: Date.now() - resolveInitialLookbackDays(env) * DAY_MS;
 	const afterSeconds =
-		jobContinuation?.after_seconds ??
+		resume?.after_seconds ??
 		Math.max(0, Math.floor((effectiveCursor - GMAIL_QUERY_OVERLAP_MS) / 1000));
 
 	let fetchedMessageCount = 0;
+	let bodiesFetchedCount = 0;
 	let insertedOrRetriedCount = 0;
 	let skippedExistingCount = 0;
-	const pageToken = jobContinuation?.page_token ?? null;
+	const pageToken = resume?.page_token ?? null;
 	let maxInternalTimestampSeen = Math.max(
 		baseCursor,
-		jobContinuation?.max_internal_timestamp_seen ?? 0,
+		resume?.max_internal_timestamp_seen ?? 0,
 	);
 	const searchFilterApplied = afterSeconds > 0;
 
@@ -1583,15 +1777,31 @@ async function processConnection(
 		revoked,
 		paused,
 		continuation_enqueued: false,
+		quota_deferred: false,
 	});
 
-	const listResult = await gmailListMessages(
-		accessToken,
-		afterSeconds,
-		pageToken,
-		searchFilterApplied,
-		fetcher,
-	);
+	let listResult: Awaited<ReturnType<typeof gmailListMessages>>;
+	try {
+		listResult = await gmailListMessages(
+			accessToken,
+			afterSeconds,
+			pageToken,
+			searchFilterApplied,
+			fetcher,
+			quota.email_fetch_remaining,
+		);
+	} catch (error) {
+		if (storedContinuation && error instanceof GmailPageTokenInvalidError) {
+			// A parked token Gmail no longer accepts must not wedge the mailbox:
+			// forget it, and the retry lists from the cursor instead.
+			await clearStoredContinuation(sql, connection.id, job.user_id);
+			console.warn('EMAIL_SYNC_STORED_CONTINUATION_INVALID', {
+				connectionId: connection.id,
+				userId: job.user_id,
+			});
+		}
+		throw error;
+	}
 	console.info('EMAIL_SYNC_GMAIL_LIST_PAGE', {
 		connectionId: connection.id,
 		userId: connection.user_id,
@@ -1753,6 +1963,7 @@ async function processConnection(
 		if (!fullMessage) {
 			continue;
 		}
+		bodiesFetchedCount += 1;
 		recordsToPersist.push({
 			source_id: messageState.sourceId,
 			internal_date_iso: messageState.internalDateIso,
@@ -1763,7 +1974,7 @@ async function processConnection(
 		});
 	}
 
-	if (recordsToPersist.length > 0) {
+	{
 		const insertedIds = await persistRawEmailsAndCursor(
 			sql,
 			connection.id,
@@ -1771,6 +1982,7 @@ async function processConnection(
 			recordsToPersist,
 			maxInternalTimestampSeen,
 			false,
+			{ messages_listed: listResult.messageIds.length, bodies_fetched: bodiesFetchedCount },
 		);
 		for (const insertedId of insertedIds) {
 			normalizationIds.add(insertedId);
@@ -1785,8 +1997,16 @@ async function processConnection(
 		await enqueueNormalizeRawEmailsJobs(env.EMAIL_SYNC_QUEUE, [...normalizationIds]);
 	}
 
-	const continuationEnqueued = listResult.nextPageToken !== null;
-	if (listResult.nextPageToken) {
+	const quotaDeferred = listResult.nextPageToken !== null && Math.max(bodiesFetchedCount, listResult.messageIds.length) >= quota.email_fetch_remaining;
+	const continuationEnqueued = listResult.nextPageToken !== null && !quotaDeferred;
+	if (listResult.nextPageToken && quotaDeferred) {
+		await storeContinuation(sql, connection.id, job.user_id, {
+			page_token: listResult.nextPageToken,
+			after_seconds: afterSeconds,
+			max_internal_timestamp_seen: maxInternalTimestampSeen,
+		});
+		console.warn('EMAIL_SYNC_QUOTA_DEFERRED', { userId: job.user_id, connectionId: connection.id, day: quota.day });
+	} else if (listResult.nextPageToken) {
 		await enqueueEmailSyncContinuation(
 			env.EMAIL_SYNC_QUEUE,
 			job.user_id,
@@ -1818,6 +2038,12 @@ async function processConnection(
 		);
 	}
 
+	// The parked token has been consumed: the chain now carries its own
+	// continuation (or finished). A later quota stop parks a fresh one.
+	if (storedContinuation && !quotaDeferred) {
+		await clearStoredContinuation(sql, connection.id, job.user_id);
+	}
+
 	return {
 		connection_id: connection.id,
 		email_address: connection.email_address,
@@ -1828,6 +2054,7 @@ async function processConnection(
 		revoked: false,
 		paused: false,
 		continuation_enqueued: continuationEnqueued,
+		quota_deferred: quotaDeferred,
 	};
 }
 
@@ -1853,6 +2080,21 @@ export async function runSenderBackfillJob(
 	env: Env,
 	fetcher: FetchLike = fetch,
 ): Promise<SenderBackfillResult> {
+	try {
+		return await runSenderBackfillJobUnguarded(job, env, fetcher);
+	} catch (error) {
+		if (isMissingUserReferenceError(error)) {
+			throw new PoisonMessageError(`SENDER_BACKFILL user ${job.user_id} no longer exists`);
+		}
+		throw error;
+	}
+}
+
+async function runSenderBackfillJobUnguarded(
+	job: SenderBackfillJobPayload,
+	env: Env,
+	fetcher: FetchLike,
+): Promise<SenderBackfillResult> {
 	const config = getAppConfig(env);
 	const sql = getSqlClient(config);
 
@@ -1871,6 +2113,7 @@ export async function runSenderBackfillJob(
 			and re.user_id = ${job.user_id}
 			and re.status = 'IGNORED'
 			and re.clean_text = ''
+			and re.body_purged_at is null
 	`;
 	if (rows.length === 0) {
 		result.skipped_count = job.raw_email_ids.length;
@@ -1897,8 +2140,25 @@ export async function runSenderBackfillJob(
 	const accessTokenByConnectionId = new Map<UUID, string>();
 	const updatedRawEmailIds: UUID[] = [];
 	let unresolvableConnectionCount = 0;
+	const quotaDefaults = resolveDefaultQuotaCaps(config);
+	let remainingBudget = Number.POSITIVE_INFINITY;
 
-	for (const row of rows) {
+	for (const [index, row] of rows.entries()) {
+		const quota = await loadUserQuotaStatus(sql, job.user_id, quotaDefaults);
+		remainingBudget = Math.min(remainingBudget, quota.email_fetch_remaining);
+		if (remainingBudget <= 0) {
+			// The rows remain gated until tomorrow. A delayed job preserves this
+			// backlog even when the sender will never be classified again.
+			const deferredIds = rows.slice(index).map(pending => toRequiredString(pending.id, 'raw_emails.id'));
+			const nextDay = Date.parse(`${quota.day}T00:00:00+05:30`) + DAY_MS;
+			await env.EMAIL_SYNC_QUEUE.send(
+				{ ...job, raw_email_ids: deferredIds },
+				{ contentType: 'json', delaySeconds: Math.max(1, Math.min(86400, Math.ceil((nextDay - Date.now()) / 1000))) },
+			);
+			result.skipped_count += deferredIds.length;
+			console.warn('SENDER_BACKFILL_QUOTA_DEFERRED', { userId: job.user_id, deferredCount: deferredIds.length, day: quota.day });
+			break;
+		}
 		const rawEmailId = toRequiredString(row.id, 'raw_emails.id');
 		const sourceId = toRequiredString(row.source_id, 'raw_emails.source_id');
 		const connectionId = toNullableString(
@@ -1935,7 +2195,11 @@ export async function runSenderBackfillJob(
 		}
 
 		const cleanText = buildSanitizedEmailText(getResult.message);
-		const updated = await sql<{ id: UUID }[]>`
+		remainingBudget -= 1;
+		const updated = await sql.begin(async tx => {
+			const txSql = tx as unknown as SqlClient;
+			await recordUserUsage(txSql, job.user_id, { messages_listed: 0, bodies_fetched: 1 });
+			return txSql<{ id: UUID }[]>`
 			update public.raw_emails as re
 			set
 				clean_text = ${cleanText},
@@ -1944,8 +2208,10 @@ export async function runSenderBackfillJob(
 				and re.user_id = ${job.user_id}
 				and re.status = 'IGNORED'
 				and re.clean_text = ''
+				and re.body_purged_at is null
 			returning re.id
-		`;
+			`;
+		}) as unknown as { id: UUID }[];
 		if (updated.length > 0) {
 			result.refetched_count += 1;
 			updatedRawEmailIds.push(updated[0].id);
@@ -2179,6 +2445,7 @@ export async function runRetroactiveSenderGate(
 		select re.id, re.from_address
 		from public.raw_emails as re
 		where re.status = 'PENDING_EXTRACTION'
+			and re.body_purged_at is null
 		order by re.created_at asc
 		limit ${limit}
 	`;
@@ -2413,13 +2680,33 @@ export async function runEmailSyncProbe(
 	return result;
 }
 
+// A sync for a user who deleted their account while it ran must ack, not
+// retry into the dead-letter queue: the cascade already removed everything
+// the job would write (Task 5, A.2 §10). Once the row is gone the next run
+// finds no connections and does nothing.
 export async function runEmailSyncUserJob(
 	job: EmailSyncUserJobPayload,
 	env: Env,
 	fetcher: FetchLike = fetch,
 ): Promise<EmailSyncUserResult> {
+	try {
+		return await runEmailSyncUserJobUnguarded(job, env, fetcher);
+	} catch (error) {
+		if (isMissingUserReferenceError(error)) {
+			throw new PoisonMessageError(`EMAIL_SYNC_USER user ${job.user_id} no longer exists`);
+		}
+		throw error;
+	}
+}
+
+async function runEmailSyncUserJobUnguarded(
+	job: EmailSyncUserJobPayload,
+	env: Env,
+	fetcher: FetchLike,
+): Promise<EmailSyncUserResult> {
 	const config = getAppConfig(env);
 	const sql = getSqlClient(config);
+	const quotaDefaults = resolveDefaultQuotaCaps(config);
 	const allConnections = await listEligibleConnectionsForUser(sql, job.user_id);
 	const connections =
 		job.continuation_connection_id !== undefined
@@ -2435,6 +2722,8 @@ export async function runEmailSyncUserJob(
 		inserted_or_retried_raw_email_count: 0,
 		skipped_existing_raw_email_count: 0,
 		sender_gated_raw_email_count: 0,
+		quota_deferred_connection_count: 0,
+		pending_requeued_count: 0,
 	};
 
 	for (const connection of connections) {
@@ -2466,7 +2755,14 @@ export async function runEmailSyncUserJob(
 		// If processing throws, keep this chain's lease while Cloudflare retries
 		// the same queue message. A later cron cannot overlap it, and the expiry
 		// still provides crash/DLQ recovery if no retry completes the chain.
-		const connectionResult = await processConnection(sql, job, connection, env, fetcher);
+		const connectionResult = await processConnection(
+			sql,
+			job,
+			connection,
+			env,
+			fetcher,
+			quotaDefaults,
+		);
 
 		if (syncRunId && !connectionResult.continuation_enqueued) {
 			await releaseEmailSyncLease(sql, connection.id, job.user_id, syncRunId);
@@ -2481,9 +2777,24 @@ export async function runEmailSyncUserJob(
 		if (connectionResult.revoked) {
 			result.revoked_connection_count += 1;
 		}
+		if (connectionResult.quota_deferred) {
+			result.quota_deferred_connection_count += 1;
+			// The cap is per user: every other mailbox would defer the same way.
+			break;
+		}
 		if (connectionResult.continuation_enqueued) {
 			break;
 		}
+	}
+
+	// Self-heal once per chain start; continuation pages skip it.
+	if (job.continuation_connection_id === undefined) {
+		result.pending_requeued_count = await requeueStalePendingEmails(
+			sql,
+			env,
+			job.user_id,
+			quotaDefaults,
+		);
 	}
 
 	return result;
@@ -2548,6 +2859,7 @@ export async function runStatementHarvest(
 		select re.id, re.from_address
 		from public.raw_emails as re
 		where re.status in ('IGNORED', 'PROCESSED')
+			and re.body_purged_at is null
 			and (re.subject ~* 'statement' or re.from_address ~* 'statement')
 			and (
 				${windowDays}::int is null
@@ -2585,6 +2897,7 @@ export async function runStatementHarvest(
 		set status = 'PENDING_EXTRACTION'
 		where re.id = any(${ids}::uuid[])
 			and re.status in ('IGNORED', 'PROCESSED')
+			and re.body_purged_at is null
 		returning re.id
 	`;
 	result.flipped_count = flipped.length;

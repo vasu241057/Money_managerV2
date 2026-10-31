@@ -1,5 +1,6 @@
 import type { EmailSyncJobPayload, UUID } from '../../../shared/types';
 import { getAppConfig } from '../lib/config';
+import { DEFAULT_USER_DAILY_EMAIL_FETCH_CAP } from '../lib/quotas';
 import type { SqlClient } from '../lib/db/client';
 import { getSqlClient } from '../lib/db/client';
 import type { EmailSyncDispatchJob } from './queue.messages';
@@ -20,6 +21,10 @@ interface DispatchCandidateRowRaw {
 	last_app_open_date: unknown;
 	has_active_connections: unknown;
 	has_dormant_connections: unknown;
+	/** Task 6: today's bodies_fetched and the per-user override, absent on older fixtures. */
+	bodies_fetched_today?: unknown;
+	messages_listed_today?: unknown;
+	daily_email_fetch_cap_override?: unknown;
 }
 
 interface ScanUpperUserIdRowRaw {
@@ -32,6 +37,9 @@ interface DispatchCandidateRow {
 	last_app_open_time_ms: number;
 	has_active_connections: boolean;
 	has_dormant_connections: boolean;
+	bodies_fetched_today: number;
+	messages_listed_today: number;
+	daily_email_fetch_cap_override: number | null;
 }
 
 interface EnqueueUserJobsResult {
@@ -45,6 +53,8 @@ export interface EmailSyncDispatchOptions {
 	scan_upper_user_id?: UUID;
 	snapshot_time_ms?: number;
 	max_pages_per_invocation?: number;
+	/** Env default for the daily fetch cap; user_limits overrides it per user. */
+	daily_email_fetch_cap?: number;
 }
 
 export interface EmailSyncDispatchResult {
@@ -55,6 +65,8 @@ export interface EmailSyncDispatchResult {
 	queue_batch_count: number;
 	marked_dormant_user_count: number;
 	reactivated_user_count: number;
+	/** Users left out because they already spent today's fetch cap (Task 6). */
+	quota_skipped_user_count: number;
 	continuation_offset: number | null;
 	scan_upper_user_id: UUID | null;
 }
@@ -135,6 +147,20 @@ function parseTimestamp(value: unknown, fieldName: string): number {
 	throw new Error(`${fieldName} must be a datetime`);
 }
 
+// The quota columns are lenient on purpose: a row without them (or with a
+// null usage row) simply means "nothing fetched today, no override".
+function parseOptionalCount(value: unknown, fieldName: string): number {
+	if (value === null || value === undefined) return 0;
+	const parsed = parseSafeInteger(value, fieldName);
+	return parsed > 0 ? parsed : 0;
+}
+
+function parseOptionalCap(value: unknown, fieldName: string): number | null {
+	if (value === null || value === undefined) return null;
+	const parsed = parseSafeInteger(value, fieldName);
+	return parsed > 0 ? parsed : null;
+}
+
 function parseDispatchCandidateRow(raw: DispatchCandidateRowRaw): DispatchCandidateRow {
 	return {
 		user_id: parseUuid(raw.user_id, 'user_id'),
@@ -142,6 +168,12 @@ function parseDispatchCandidateRow(raw: DispatchCandidateRowRaw): DispatchCandid
 		last_app_open_time_ms: parseTimestamp(raw.last_app_open_date, 'last_app_open_date'),
 		has_active_connections: parseBoolean(raw.has_active_connections, 'has_active_connections'),
 		has_dormant_connections: parseBoolean(raw.has_dormant_connections, 'has_dormant_connections'),
+		bodies_fetched_today: parseOptionalCount(raw.bodies_fetched_today, 'bodies_fetched_today'),
+		messages_listed_today: parseOptionalCount(raw.messages_listed_today, 'messages_listed_today'),
+		daily_email_fetch_cap_override: parseOptionalCap(
+			raw.daily_email_fetch_cap_override,
+			'daily_email_fetch_cap_override',
+		),
 	};
 }
 
@@ -192,16 +224,25 @@ async function listDispatchCandidatePage(
 				min(oc.last_sync_timestamp) as last_sync_timestamp,
 				u.last_app_open_date,
 				bool_or(oc.sync_status = 'ACTIVE') as has_active_connections,
-				bool_or(oc.sync_status = 'DORMANT') as has_dormant_connections
+				bool_or(oc.sync_status = 'DORMANT') as has_dormant_connections,
+				-- Task 6: today's fetch counter and this user's cap override (one join each).
+				coalesce(uud.bodies_fetched, 0) as bodies_fetched_today,
+				coalesce(uud.messages_listed, 0) as messages_listed_today,
+				ul.daily_email_fetch_cap as daily_email_fetch_cap_override
 			from public.oauth_connections as oc
 			join public.users as u
 				on u.id = oc.user_id
+			left join public.user_usage_daily as uud
+				on uud.user_id = u.id
+				and uud.day = (now() at time zone 'Asia/Kolkata')::date
+			left join public.user_limits as ul
+				on ul.user_id = u.id
 			where oc.provider = 'google'
 				and oc.sync_status in ('ACTIVE', 'DORMANT')
 				and oc.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
 				and u.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
 				and u.id <= ${scanUpperUserId}
-			group by u.id, u.last_app_open_date
+			group by u.id, u.last_app_open_date, uud.bodies_fetched, uud.messages_listed, ul.daily_email_fetch_cap
 			order by u.id asc
 			limit ${DISPATCH_PAGE_LIMIT}
 			offset ${offset}
@@ -216,15 +257,24 @@ async function listDispatchCandidatePage(
 			min(oc.last_sync_timestamp) as last_sync_timestamp,
 			u.last_app_open_date,
 			bool_or(oc.sync_status = 'ACTIVE') as has_active_connections,
-			bool_or(oc.sync_status = 'DORMANT') as has_dormant_connections
+			bool_or(oc.sync_status = 'DORMANT') as has_dormant_connections,
+				-- Task 6: today's fetch counter and this user's cap override (one join each).
+				coalesce(uud.bodies_fetched, 0) as bodies_fetched_today,
+				coalesce(uud.messages_listed, 0) as messages_listed_today,
+				ul.daily_email_fetch_cap as daily_email_fetch_cap_override
 		from public.oauth_connections as oc
 		join public.users as u
 			on u.id = oc.user_id
+		left join public.user_usage_daily as uud
+			on uud.user_id = u.id
+			and uud.day = (now() at time zone 'Asia/Kolkata')::date
+		left join public.user_limits as ul
+			on ul.user_id = u.id
 		where oc.provider = 'google'
 			and oc.sync_status in ('ACTIVE', 'DORMANT')
 			and oc.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
 			and u.created_at <= to_timestamp(${snapshotTimeMs} / 1000.0)
-		group by u.id, u.last_app_open_date
+		group by u.id, u.last_app_open_date, uud.bodies_fetched, uud.messages_listed, ul.daily_email_fetch_cap
 		order by u.id asc
 		limit ${DISPATCH_PAGE_LIMIT}
 		offset ${offset}
@@ -339,6 +389,10 @@ export async function dispatchEmailSyncUsers(
 		options.snapshot_time_ms ?? nowMs,
 		'snapshot_time_ms',
 	);
+	const dailyEmailFetchCap =
+		typeof options.daily_email_fetch_cap === 'number' && options.daily_email_fetch_cap > 0
+			? options.daily_email_fetch_cap
+			: DEFAULT_USER_DAILY_EMAIL_FETCH_CAP;
 
 	const scanUpperUserId =
 		parseOptionalUuid(options.scan_upper_user_id, 'scan_upper_user_id') ??
@@ -352,6 +406,7 @@ export async function dispatchEmailSyncUsers(
 		queue_batch_count: 0,
 		marked_dormant_user_count: 0,
 		reactivated_user_count: 0,
+		quota_skipped_user_count: 0,
 		continuation_offset: null,
 		scan_upper_user_id: scanUpperUserId,
 	};
@@ -391,6 +446,7 @@ export async function dispatchEmailSyncUsers(
 
 		const dormantUserIds: UUID[] = [];
 		const activeUserIds: UUID[] = [];
+		const quotaSkippedUserIds: UUID[] = [];
 		const jobs: ReturnType<typeof buildEmailSyncUserJob>[] = [];
 
 		for (const candidate of page) {
@@ -406,6 +462,15 @@ export async function dispatchEmailSyncUsers(
 
 			if (candidate.has_dormant_connections) {
 				activeUserIds.push(candidate.user_id);
+			}
+
+			// Fair use (Task 6): a user who already spent today's fetch cap gets
+			// no job; the fetcher would only defer it again. Tomorrow's tick
+			// picks them up, resuming from any page token the fetcher parked.
+			const fetchCap = candidate.daily_email_fetch_cap_override ?? dailyEmailFetchCap;
+			if (Math.max(candidate.bodies_fetched_today, candidate.messages_listed_today) >= fetchCap) {
+				quotaSkippedUserIds.push(candidate.user_id);
+				continue;
 			}
 
 			jobs.push(
@@ -433,8 +498,16 @@ export async function dispatchEmailSyncUsers(
 		}
 		const enqueueResult = await enqueueUserJobs(queue, jobs);
 
+		if (quotaSkippedUserIds.length > 0) {
+			console.info('EMAIL_SYNC_DISPATCH_QUOTA_SKIPPED', {
+				userCount: quotaSkippedUserIds.length,
+				dailyEmailFetchCap,
+			});
+		}
+
 		result.marked_dormant_user_count += dormantUserIds.length;
 		result.reactivated_user_count += activeUserIds.length;
+		result.quota_skipped_user_count += quotaSkippedUserIds.length;
 		result.queue_batch_count += enqueueResult.batch_count;
 		result.enqueued_user_job_count += enqueueResult.enqueued_job_count;
 		result.failed_user_job_count += enqueueResult.failed_job_count;
@@ -492,6 +565,7 @@ export async function runEmailSyncDispatchJob(
 			start_offset: dispatchJob.start_offset,
 			scan_upper_user_id: dispatchJob.scan_upper_user_id,
 			snapshot_time_ms: Math.min(dispatchJob.scheduled_time, nowMs),
+			daily_email_fetch_cap: config.userDailyEmailFetchCap,
 		},
 	);
 

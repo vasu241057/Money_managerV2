@@ -29,11 +29,27 @@ interface SqlMock extends SqlClient {
 	begin: (cb: (tx: SqlClient) => Promise<unknown>) => Promise<unknown>;
 }
 
-function createSqlMock(handler: QueryHandler): SqlMock {
+interface QuotaMockOptions {
+	aiCalls?: number;
+	aiCallCapOverride?: number | null;
+}
+
+function createSqlMock(handler: QueryHandler, quota: QuotaMockOptions = {}): SqlMock {
 	const tag = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
 		const query = strings.join(' ').replace(/\s+/g, ' ').trim();
 		if (query.includes('insert into public.ai_usage_events')) return [];
 		if (query.includes('public.ai_call_runs')) return [];
+		// Task 6: the per-user AI cap check before the first model call.
+		if (query.includes('with today as') && query.includes('as ai_calls')) {
+			return [{
+				day: '2026-09-19',
+				messages_listed: 0,
+				bodies_fetched: 0,
+				ai_calls: String(quota.aiCalls ?? 0),
+				email_fetch_cap_override: null,
+				ai_call_cap_override: quota.aiCallCapOverride ?? null,
+			}];
+		}
 		return handler(query, values);
 	};
 	const begin = async (cb: (tx: SqlClient) => Promise<unknown>): Promise<unknown> =>
@@ -1384,6 +1400,101 @@ describe('email-ai-normalizer identity graph integration', () => {
 });
 
 describe('category type enforcement', () => {
+	it.each([1, 2])('stops retry/fallback attempts at the daily cap and leaves %i emails pending', async (count) => {
+		const rows = Array.from({ length: count }, (_, index) => ({
+			...pendingRawEmailRow(), id: index === 0 ? RAW_EMAIL_ID : '00000000-0000-4000-8000-0000000000e2',
+		}));
+		const updates: string[] = [];
+		const sql = createSqlMock(query => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) return rows;
+			if (query.includes('update public.raw_emails')) updates.push(query);
+			return [];
+		}, { aiCalls: 199 });
+		getSqlClientMock.mockReturnValue(sql);
+		const fetchMock = vi.fn().mockResolvedValue(new Response('busy', { status: 429 }));
+		vi.stubGlobal('fetch', fetchMock);
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: rows.map(row => row.id) },
+			{ OPENCODE_GO_API_KEY: 'test-key', EMAIL_TEMPLATES: 'off' } as unknown as Env,
+		);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(result.quota_deferred_raw_email_count).toBe(count);
+		expect(result.failed_raw_email_count).toBe(0);
+		expect(updates).toEqual([]);
+	});
+
+	it('leaves a user’s emails PENDING without calling the model once their AI cap is spent (Task 6)', async () => {
+		const statusUpdates: string[] = [];
+		const sql = createSqlMock((query) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return [pendingRawEmailRow()];
+			}
+			if (query.includes('update public.raw_emails')) {
+				statusUpdates.push(query);
+				return [];
+			}
+			return [];
+		}, { aiCalls: 200 });
+		getSqlClientMock.mockReturnValue(sql);
+
+		const fetchMock = vi.fn(async () => {
+			throw new Error('the model must not be called over the cap');
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID] },
+			{ OPENCODE_GO_API_KEY: 'test-key', EMAIL_TEMPLATES: 'off' } as unknown as Env,
+		);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(result.quota_deferred_raw_email_count).toBe(1);
+		expect(result.processed_raw_email_count).toBe(0);
+		expect(result.failed_raw_email_count).toBe(0);
+		// Nothing about the email changed: it waits for the self-heal tomorrow.
+		expect(statusUpdates).toEqual([]);
+	});
+
+	it('spends the remaining AI budget in order and defers what is left (Task 6)', async () => {
+		const RAW_EMAIL_ID_2 = '00000000-0000-4000-8000-0000000000e2';
+		const emailRows = [
+			pendingRawEmailRow(),
+			{ ...pendingRawEmailRow(), id: RAW_EMAIL_ID_2, clean_text: 'Your OTP is 123456' },
+		];
+		const sql = createSqlMock((query, values) => {
+			if (query.includes('from public.raw_emails as re') && query.includes('where re.id = any')) {
+				return emailRows;
+			}
+			if (query.includes('from public.raw_emails as re') && query.includes('for update')) {
+				return emailRows.filter(row => row.id === values[0]);
+			}
+			if (query.includes('from public.categories as c') && query.includes('c.is_system = true')) {
+				return [{ id: EXPENSE_CATEGORY_ID, type: 'expense', name: 'Miscellaneous', parent_id: 'root' }];
+			}
+			return [];
+		}, { aiCalls: 199 });
+		getSqlClientMock.mockReturnValue(sql);
+
+		// One call left today: the first email is asked (and ignored as a
+		// no-transaction answer), the second waits.
+		const fetchMock = vi.fn(async () =>
+			new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }] }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await runNormalizeRawEmailsJob(
+			{ job_type: 'NORMALIZE_RAW_EMAILS', raw_email_ids: [RAW_EMAIL_ID, RAW_EMAIL_ID_2] },
+			{ OPENCODE_GO_API_KEY: 'test-key', EMAIL_TEMPLATES: 'off', AI_NORMALIZER_BATCH_SIZE: '1' } as unknown as Env,
+		);
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(result.quota_deferred_raw_email_count).toBe(1);
+		expect(result.ignored_raw_email_count + result.processed_raw_email_count + result.failed_raw_email_count).toBe(1);
+	});
+
 	it('drops a real category id when it belongs to the opposite transaction type', () => {
 		const categoryTypes = new Map([
 			['food-id', 'expense' as const],

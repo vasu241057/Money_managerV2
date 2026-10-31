@@ -1,8 +1,38 @@
 # Money Manager — Context Transfer
 
-> Last updated: July 24, 2026
+> Last updated: September 19, 2026 (Tasks 7 and 8 completed locally; Task 8's Google verification track is operator work, not started)
 
 ---
+
+All eight multi-tenant tasks are implemented and locally verified. See
+`MULTITENANT_TASKS.md` for the exact status and production runbooks.
+
+Task 6 (quotas): 500 listed messages and 500 fetched bodies independently per
+user per IST day, and 200 AI attempts including retries; both cap settings are
+overridable per user in AI operations.
+
+Task 7 (perimeter): 300 requests/minute per user and 60/minute per IP on
+unauthenticated and OAuth paths, both fail-open; an optional
+`Idempotency-Key` on `POST /transactions`; `azp` validated against
+`CLERK_AUTHORIZED_PARTIES` when that secret is set; a dead-letter consumer
+that logs `DLQ_MESSAGE`; a `STALE_PENDING_EXTRACTION` alert on the 10-minute
+tick; and `AI_USAGE_ADMIN_USER_ID` moved out of `wrangler.jsonc` into a
+secret.
+
+Task 8 (scale runway): nightly jobs moved to their own queue
+(`money-manager-nightly` + DLQ) with consumer concurrency capped at 10 sync /
+2 nightly; Hyperdrive support in `config.ts` behind a still-commented
+binding, with `SUPABASE_POOLER_URL` as the rollback; an optional error
+reporting webhook (`ERROR_REPORTING_WEBHOOK_URL`, off by default); and a
+daily `GOOGLE_TEST_USER_CAP_WARNING` tripwire for Google's 100-test-user
+ceiling. The blocking part of Task 8 — OAuth verification and the CASA
+assessment for `gmail.readonly` — is operator work with months of lead time
+and has not been started; until it completes, signup must stay gated to the
+Google test-user list (D10).
+
+Each task needs its migration applied before its code is deployed (Task 8
+adds none). Production was not migrated or deployed during any of these
+completions.
 
 ## 1. Project Overview
 
@@ -35,11 +65,11 @@ money-manager/
 | **Supabase** | PostgreSQL database | PgBouncer at port 6543. Project: `sfucyhewgqyawrsfuyfa`, region: ap-southeast-1 |
 | **Cloudflare Workers** | Backend API + queue workers | Wrangler 4.69.0, Express 5 inside worker |
 | **Clerk** | Authentication | JWT-based. JWKS: `big-mosquito-76.clerk.accounts.dev` |
-| **Cloudflare Queues** | Async job processing | 1 queue: `money-manager-email-sync` (DLQ: `money-manager-email-sync-dlq`) |
+| **Cloudflare Queues** | Async job processing | 2 work queues, each with a DLQ: `money-manager-email-sync` (concurrency 10) and `money-manager-nightly` (concurrency 2, Task 8) |
 | **Google OAuth** | Gmail access | Client ID: `611255820334-d25utocn5qima99l4o8hhe2346c732ee.apps...` |
 | **OpenCode Go / OpenRouter** | AI model access | Provider selected by `AI_PROVIDER` (default `opencode`; `openrouter` switches URL + key + model defaults in one flip). Email extraction + daily sender/merchant classification. The OpenRouter normalizer uses paid DeepSeek first, then free Nemotron and GPT-OSS fallbacks |
 
-Cron trigger (wrangler.jsonc): `*/10 * * * *` — the only one. Each tick enqueues the email sync dispatch, then claims any nightly job whose scheduled local time has arrived. Nightly schedules (sender classification, merchant mapping) live in the `job_schedules` table and are edited from the AI operations screen, not from deploy config.
+Cron trigger (wrangler.jsonc): `*/10 * * * *` — the only one. Each tick enqueues the email sync dispatch onto the sync queue, then claims any nightly job whose scheduled local time has arrived and enqueues it onto the nightly queue. Nightly schedules (sender classification, merchant mapping) live in the `job_schedules` table and are edited from the AI operations screen, not from deploy config. The same tick also reads the stale-extraction view (hourly alerting) and, once a day, counts Google-connected users against the 100 test-user cap.
 
 ---
 
@@ -357,7 +387,7 @@ All in `backend/.dev.vars` (see `.dev.vars.example`). Secrets for deployment go 
 ### Required (always)
 | Variable | Purpose |
 |----------|---------|
-| `SUPABASE_POOLER_URL` | PostgreSQL connection (PgBouncer port 6543) |
+| `SUPABASE_POOLER_URL` | PostgreSQL connection (transaction pooler, port 6543). Production Worker: role `app_backend` (RLS blanket policies, no DDL). `backend/.dev.vars`: role `postgres`, which the migration runner needs |
 | `CLERK_JWKS_URL` | Clerk JWT verification endpoint |
 | `CLERK_JWT_ISSUER` | Clerk issuer URL |
 
@@ -501,7 +531,7 @@ cd backend && npm run typecheck
 
 1. **Phase E superseded (July 10):** templates are now learned automatically from AI answers (§7) instead of being derived offline from accumulated mail. The `{{MON}}` month wildcard shipped July 11 (month-name formats no longer month-lock). Remaining template follow-ups: template-vs-AI agreement as an additional auto-verify signal; PII scrub of skeletons before any multi-tenant launch. Do **not** seed templates from `docs/EXHAUSTIVE_INDIAN_BANKING_ALGO.md` — it is untrusted AI-generated brainstorming, kept only as inspiration.
 
-2. **Old data isn't retroactively cleaned.** Emails ingested before the sender gate still have bodies in `raw_emails.clean_text`. Conservative purge: `update public.raw_emails set clean_text = '' where status in ('IGNORED','UNRECOGNIZED') and clean_text <> '';`
+2. **Old bodies are purged by the nightly retention job, once enabled.** Emails ingested before the sender gate still have bodies in `raw_emails.clean_text` until the `raw_email_body_purge` job (Task 5, ships disabled in `job_schedules`) blanks processed/ignored/unrecognized rows older than `RAW_EMAIL_BODY_RETENTION_DAYS` (default 90) and stamps `body_purged_at`. Do not run the old manual `update … set clean_text = ''` any more: without the stamp a purged row is indistinguishable from a sender-gated one.
 
 3. **Gmail metadata responses include a ~100-char `snippet`** which we don't store or read for gated mail, but it does transit. No way to suppress server-side.
 

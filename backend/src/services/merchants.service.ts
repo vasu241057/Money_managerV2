@@ -120,8 +120,89 @@ export function parseListGlobalMerchantsQuery(
 	};
 }
 
+/**
+ * Rejects a merchant the user cannot see: unknown, or a private payee owned
+ * by someone else. Every write that accepts a merchant id calls this before
+ * touching anything, so the caller gets a clean 404 instead of the scope
+ * trigger's constraint error.
+ */
+export async function assertMerchantVisibleToUser(
+	sql: SqlClient,
+	userId: string,
+	merchantId: string,
+): Promise<void> {
+	const rows = await sql<Array<{ id: unknown }>>`
+		select gm.id
+		from public.global_merchants as gm
+		where gm.id = ${merchantId}
+			and (gm.owner_user_id is null or gm.owner_user_id = ${userId})
+		limit 1
+	`;
+	if (rows.length === 0) {
+		throw notFound('MERCHANT_NOT_FOUND', 'Merchant not found');
+	}
+}
+
+export type MerchantConfirmationVerdict = 'CONFIRM' | 'DISSENT';
+
+export interface MerchantConfirmationState {
+	confirmed: boolean;
+	confirm_count: number;
+	dissent_count: number;
+}
+
+/**
+ * Records one user's verdict on an AI merchant mapping and recomputes the
+ * merchant's confirmed / dissent_count caches from every user's verdict:
+ * confirmed when at least `threshold` distinct users confirmed and fewer than
+ * `threshold` dissented. A user changing their mind replaces their own row,
+ * so nobody can vote twice. Threshold 1 is today's single-user behaviour.
+ */
+export async function recordMerchantConfirmation(
+	sql: SqlClient,
+	userId: string,
+	merchantId: string,
+	verdict: MerchantConfirmationVerdict,
+	threshold: number,
+): Promise<MerchantConfirmationState> {
+	await sql`
+		insert into public.merchant_confirmations (merchant_id, user_id, verdict)
+		values (${merchantId}, ${userId}, ${verdict})
+		on conflict (merchant_id, user_id) do update
+		set verdict = excluded.verdict,
+			updated_at = now()
+	`;
+	const rows = await sql<Array<{ confirmed: unknown; confirms: unknown; dissents: unknown }>>`
+		with tally as (
+			select
+				count(*) filter (where mc.verdict = 'CONFIRM')::int as confirms,
+				count(*) filter (where mc.verdict = 'DISSENT')::int as dissents
+			from public.merchant_confirmations as mc
+			where mc.merchant_id = ${merchantId}
+		)
+		update public.global_merchants as gm
+		set confirmed = (tally.confirms >= ${threshold} and tally.dissents < ${threshold}),
+			dissent_count = tally.dissents,
+			updated_at = now()
+		from tally
+		where gm.id = ${merchantId}
+		returning gm.confirmed, tally.confirms, tally.dissents
+	`;
+	const row = rows[0];
+	if (!row) {
+		throw notFound('MERCHANT_NOT_FOUND', 'Merchant not found');
+	}
+	return {
+		confirmed: row.confirmed === true,
+		confirm_count: toSafeInteger(row.confirms, 'merchant_confirmations.confirms'),
+		dissent_count: toSafeInteger(row.dissents, 'merchant_confirmations.dissents'),
+	};
+}
+
+/** Shared brands plus this user's own private payees; never another user's. */
 export async function listGlobalMerchants(
 	sql: SqlClient,
+	userId: string,
 	input: ParsedListGlobalMerchantsQuery,
 ): Promise<GlobalMerchantListItem[]> {
 	const hasSearch = input.q !== null;
@@ -133,10 +214,11 @@ export async function listGlobalMerchants(
 			gm.canonical_name as merchant_canonical_name,
 			gm.type as merchant_type
 		from public.global_merchants as gm
-		where (
-			not ${hasSearch}
-			or gm.canonical_name ilike ${normalizedPattern} escape '\\'
-		)
+		where (gm.owner_user_id is null or gm.owner_user_id = ${userId})
+			and (
+				not ${hasSearch}
+				or gm.canonical_name ilike ${normalizedPattern} escape '\\'
+			)
 		order by gm.canonical_name asc, gm.id asc
 		limit ${input.limit}
 	`;
@@ -544,12 +626,7 @@ export async function setUserMerchantCategory(
 ): Promise<number> {
 	return sql.begin(async (tx) => {
 		const merchantSql = tx as unknown as SqlClient;
-		const merchantRows = await merchantSql<Array<{ id: unknown }>>`
-			select gm.id from public.global_merchants as gm where gm.id = ${merchantId} limit 1
-		`;
-		if (merchantRows.length === 0) {
-			throw notFound('MERCHANT_NOT_FOUND', 'Merchant not found');
-		}
+		await assertMerchantVisibleToUser(merchantSql, userId, merchantId);
 
 		await assertCategoryUsable(merchantSql, userId, input.category_id, input.transaction_type);
 
@@ -592,12 +669,7 @@ export async function setUserDescriptorCategory(
 ): Promise<number> {
 	return sql.begin(async (tx) => {
 		const descriptorSql = tx as unknown as SqlClient;
-		const merchantRows = await descriptorSql<Array<{ id: unknown }>>`
-			select gm.id from public.global_merchants as gm where gm.id = ${merchantId} limit 1
-		`;
-		if (merchantRows.length === 0) {
-			throw notFound('MERCHANT_NOT_FOUND', 'Merchant not found');
-		}
+		await assertMerchantVisibleToUser(descriptorSql, userId, merchantId);
 
 		// The descriptor has to be one this user actually transacted under, and
 		// it has to belong to the merchant in the path — otherwise a rule could

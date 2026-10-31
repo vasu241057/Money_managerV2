@@ -43,6 +43,7 @@ import type {
 	JobScheduleUpdateRequest,
 	MerchantType,
 	ScheduledJobName,
+	UserQuotaRollupRow,
 } from '../../../../shared/types';
 import {
 	currentMonthIST,
@@ -51,6 +52,8 @@ import {
 	useJobSchedules,
 	useTavilyKeys,
 	useUpdateJobSchedule,
+	useUpdateUserLimits,
+	useUserQuotas,
 } from '../../hooks/useAiUsage';
 import { toErrorMessage } from '../../lib/api-client';
 import { describeNextRun, formatIstDateTime, isDueNow } from '../../lib/job-schedule-display';
@@ -413,6 +416,17 @@ function ProcessingPanel({
 				error={schedulesError}
 			/>
 
+			<JobScheduleCard
+				job="raw_email_body_purge"
+				title="Nightly email body purge"
+				description="Blanks the stored text of emails that were processed or ignored more than the retention window ago (90 days by default). Failed emails keep theirs so they can be retried."
+				schedule={schedules.find((schedule) => schedule.job === 'raw_email_body_purge')}
+				isLoading={schedulesLoading}
+				error={schedulesError}
+			/>
+
+			<UserQuotasCard />
+
 			<section className="ai-usage-card rounded-[16px] overflow-hidden mb-6" style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}>
 				<div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
 					<button type="button" onClick={() => olderMonth && onSelectMonth(olderMonth)} disabled={!olderMonth} className="ai-usage-focus w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-25" aria-label="Older month">
@@ -750,6 +764,194 @@ function JobScheduleCard({
 	);
 }
 
+function formatQuotaDay(day: string): string {
+	const parsed = new Date(`${day}T00:00:00+05:30`);
+	if (Number.isNaN(parsed.getTime())) return day;
+	return parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+}
+
+/**
+ * One user's row: today's counters against the caps that apply to them, and
+ * the override editor. A blank cap means "the default"; saving a blank clears
+ * the override.
+ */
+function UserQuotaRow({
+	user,
+	defaults,
+	divider,
+}: {
+	user: UserQuotaRollupRow;
+	defaults: { daily_email_fetch_cap: number; daily_ai_call_cap: number };
+	divider: boolean;
+}) {
+	const mutation = useUpdateUserLimits();
+	const [editing, setEditing] = useState(false);
+	const [emailCap, setEmailCap] = useState('');
+	const [aiCap, setAiCap] = useState('');
+
+	const beginEdit = () => {
+		setEmailCap(user.email_fetch_cap_override === null ? '' : String(user.email_fetch_cap_override));
+		setAiCap(user.ai_call_cap_override === null ? '' : String(user.ai_call_cap_override));
+		setEditing(true);
+	};
+
+	const parseCap = (value: string): number | null | undefined => {
+		const trimmed = value.trim();
+		if (trimmed.length === 0) return null;
+		const parsed = Number(trimmed);
+		return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 1_000_000 ? parsed : undefined;
+	};
+
+	const save = () => {
+		const parsedEmail = parseCap(emailCap);
+		const parsedAi = parseCap(aiCap);
+		if (parsedEmail === undefined || parsedAi === undefined) return;
+		mutation.mutate(
+			{ userId: user.user_id, update: { daily_email_fetch_cap: parsedEmail, daily_ai_call_cap: parsedAi } },
+			{ onSuccess: () => setEditing(false) },
+		);
+	};
+
+	const emailInvalid = parseCap(emailCap) === undefined;
+	const aiInvalid = parseCap(aiCap) === undefined;
+	const overCap = user.over_email_fetch_cap || user.over_ai_call_cap;
+
+	return (
+		<div className="px-4 py-3" style={{ borderBottom: divider ? '1px solid var(--ledger-rule)' : undefined }}>
+			<div className="flex items-start justify-between gap-3">
+				<div className="min-w-0">
+					<p className="text-sm font-bold truncate" style={{ color: 'var(--ledger-fg)' }}>{user.email}</p>
+					<p className="text-[10px] tnum mt-0.5" style={{ color: overCap ? 'var(--ledger-amber)' : 'var(--ledger-muted)' }}>
+						{formatCount(user.messages_listed)} listed · {formatCount(user.bodies_fetched)} fetched / {formatCount(user.daily_email_fetch_cap)} each
+						{' · '}
+						{formatCount(user.ai_calls)} / {formatCount(user.daily_ai_call_cap)} AI calls
+						{user.pending_extraction_count > 0 && ` · ${formatCount(user.pending_extraction_count)} waiting`}
+						{user.deferred_connection_count > 0 && ' · sync resumes tomorrow'}
+					</p>
+				</div>
+				{!editing && (
+					<button
+						type="button"
+						onClick={beginEdit}
+						className="ai-usage-focus shrink-0 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-[8px]"
+						style={{ border: '1px solid var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+					>
+						{user.email_fetch_cap_override !== null || user.ai_call_cap_override !== null ? 'Custom caps' : 'Default caps'}
+					</button>
+				)}
+			</div>
+
+			{editing && (
+				<div className="mt-3 flex items-end gap-2 flex-wrap">
+					<label className="flex flex-col gap-1 text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-muted)' }}>
+						Emails / day
+						<input
+							type="number"
+							min={1}
+							inputMode="numeric"
+							value={emailCap}
+							placeholder={String(defaults.daily_email_fetch_cap)}
+							onChange={(event) => setEmailCap(event.target.value)}
+							className="ai-usage-focus tnum text-sm font-bold rounded-[10px] px-2 py-1.5 w-[104px]"
+							style={{ background: 'var(--ledger-bg)', border: `1px solid ${emailInvalid ? 'var(--ledger-negative)' : 'var(--ledger-rule)'}`, color: 'var(--ledger-fg)' }}
+						/>
+					</label>
+					<label className="flex flex-col gap-1 text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--ledger-muted)' }}>
+						AI calls / day
+						<input
+							type="number"
+							min={1}
+							inputMode="numeric"
+							value={aiCap}
+							placeholder={String(defaults.daily_ai_call_cap)}
+							onChange={(event) => setAiCap(event.target.value)}
+							className="ai-usage-focus tnum text-sm font-bold rounded-[10px] px-2 py-1.5 w-[104px]"
+							style={{ background: 'var(--ledger-bg)', border: `1px solid ${aiInvalid ? 'var(--ledger-negative)' : 'var(--ledger-rule)'}`, color: 'var(--ledger-fg)' }}
+						/>
+					</label>
+					<button
+						type="button"
+						onClick={save}
+						disabled={mutation.isPending || emailInvalid || aiInvalid}
+						className="ai-usage-focus px-3 py-2 rounded-[8px] text-xs font-bold disabled:opacity-50"
+						style={{ background: 'var(--ledger-accent)', color: 'var(--ledger-bg)' }}
+					>
+						{mutation.isPending ? 'Saving…' : 'Save'}
+					</button>
+					<button
+						type="button"
+						onClick={() => setEditing(false)}
+						disabled={mutation.isPending}
+						className="ai-usage-focus px-3 py-2 rounded-[8px] text-xs font-bold"
+						style={{ border: '1px solid var(--ledger-rule)', color: 'var(--ledger-muted)' }}
+					>
+						Cancel
+					</button>
+					{mutation.error !== null && (
+						<p className="basis-full text-[10px]" style={{ color: 'var(--ledger-negative)' }}>{toErrorMessage(mutation.error)}</p>
+					)}
+					<p className="basis-full text-[10px]" style={{ color: 'var(--ledger-muted)' }}>Blank = the default. Counters reset at midnight IST.</p>
+				</div>
+			)}
+		</div>
+	);
+}
+
+/**
+ * Fair-use caps per user (Task 6): who fetched and asked the model how much
+ * today, against the cap that applies to them. Over a cap, a user's sync
+ * resumes tomorrow from where it stopped and their emails wait as pending.
+ */
+function UserQuotasCard() {
+	const { quotas, isLoading, error, refetch } = useUserQuotas(true);
+
+	return (
+		<section
+			className="ai-usage-card rounded-[16px] overflow-hidden mb-5"
+			style={{ background: 'var(--ledger-card)', border: '1px solid var(--ledger-rule)' }}
+		>
+			<div className="px-4 py-3.5 flex items-start justify-between gap-3" style={{ borderBottom: '1px solid var(--ledger-rule)' }}>
+				<div className="flex items-start gap-2.5 min-w-0">
+					<Activity size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--ledger-accent)' }} />
+					<div className="min-w-0">
+						<p className="text-sm font-bold" style={{ color: 'var(--ledger-fg)' }}>Per-user fair use</p>
+						<p className="text-[10px] mt-0.5" style={{ color: 'var(--ledger-muted)' }}>
+							{quotas
+								? `${formatQuotaDay(quotas.day)} · defaults ${formatCount(quotas.defaults.daily_email_fetch_cap)} emails and ${formatCount(quotas.defaults.daily_ai_call_cap)} AI calls per day`
+								: 'Daily email and AI-call caps, per user'}
+						</p>
+					</div>
+				</div>
+				<button
+					type="button"
+					onClick={() => { void refetch(); }}
+					aria-label="Refresh per-user usage"
+					className="ai-usage-focus w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+					style={{ color: 'var(--ledger-muted)', border: '1px solid var(--ledger-rule)' }}
+				>
+					<RefreshCw size={13} />
+				</button>
+			</div>
+			{error ? (
+				<p className="px-4 py-4 text-[11px]" style={{ color: 'var(--ledger-negative)' }}>{error}</p>
+			) : isLoading || quotas === null ? (
+				<div className="px-4 py-4"><SkeletonBar className="h-5 w-48" /></div>
+			) : quotas.users.length === 0 ? (
+				<p className="px-4 py-4 text-[11px]" style={{ color: 'var(--ledger-muted)' }}>No users yet.</p>
+			) : (
+				quotas.users.map((user, index) => (
+					<UserQuotaRow
+						key={user.user_id}
+						user={user}
+						defaults={quotas.defaults}
+						divider={index < quotas.users.length - 1}
+					/>
+				))
+			)}
+		</section>
+	);
+}
+
 function MerchantMappingDayCard({
 	day,
 	onOpen,
@@ -831,6 +1033,11 @@ function MappingRow({ mapping, divider }: { mapping: AiMerchantMapping; divider:
 						<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: isMerchant ? 'var(--ledger-nav-active)' : 'var(--ledger-amber-bg)', color: isMerchant ? 'var(--ledger-accent)' : 'var(--ledger-amber)' }}>
 							{MERCHANT_TYPE_LABELS[mapping.merchant_type]}
 						</span>
+						{mapping.owner_user_id !== null && (
+							<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: 'var(--ledger-nav-active)', color: 'var(--ledger-muted)' }}>
+								Private
+							</span>
+						)}
 						{!mapping.confirmed && (
 							<span className="text-[8px] font-bold uppercase tracking-wider rounded-full px-1.5 py-0.5 shrink-0" style={{ background: 'var(--ledger-amber-bg)', color: 'var(--ledger-amber)' }}>
 								Unconfirmed
