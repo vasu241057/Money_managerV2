@@ -489,3 +489,34 @@ SUPABASE_POOLER_URL="postgres://USER:PASSWORD@RESTORED-HOST:6543/postgres" npm r
 Restore granularity is the whole database. Per-user "undelete" is served by
 the soft-delete design (`user_deleted_at`, REVERSED events), not by backups —
 a restore to undo one user's mistake would roll back everyone.
+
+## Android app
+
+`frontend/android` is a Capacitor shell that loads the deployed site
+(`server.url` in `frontend/capacitor.config.ts`). A deploy updates the app on
+next launch; rebuild the APK only for native changes (icon, permissions,
+plugins, the site URL):
+
+```bash
+npm run android:apk   # -> frontend/android/app/build/outputs/apk/release/app-release.apk
+```
+
+Needs JDK 21 and the Android SDK (`sdk.dir` in the untracked
+`frontend/android/local.properties`).
+
+- **Release key.** `~/.money-manager-android/release.jks`, with its passwords
+  in `keystore.properties` next to it. Never in the repo — it is public.
+  Back the folder up off this laptop: without the same key, a new APK will
+  not install over the old one (uninstalling first works; data is
+  server-side).
+- **`frontend/public/.well-known/assetlinks.json`** carries that key's
+  SHA-256. It is what lets Android hand Google's Gmail consent redirect
+  (`/oauth/google/callback`) to the app instead of Chrome. A new key means a
+  new fingerprint here, deployed **before** installing, because Android
+  verifies the link at install time. To re-check on a device:
+  `adb shell pm get-app-links com.vasu.moneymanager` (re-run with
+  `pm verify-app-links --re-verify com.vasu.moneymanager`).
+- If verification fails, the redirect opens in Chrome, which shows a
+  "Return to the app" button (custom scheme `com.vasu.moneymanager://`).
+- Google blocks its sign-in page inside the app's web view, so the app hides
+  Clerk's "Continue with Google"; sign-in there is by email code.
