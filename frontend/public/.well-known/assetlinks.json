@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.vasu.moneymanager",
+      "sha256_cert_fingerprints": [
+        "3A:D9:E8:CC:F9:3A:F4:13:7A:46:EB:3E:11:1E:15:E8:CF:CC:C4:F2:9A:4D:43:55:B2:1B:EF:8F:20:0D:F4:54"
+      ]
+    }
+  }
+]

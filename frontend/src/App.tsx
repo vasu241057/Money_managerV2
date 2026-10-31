@@ -16,8 +16,9 @@ import { CategorySettings } from './components/screens/CategorySettings';
 import { MerchantSettings } from './components/screens/MerchantSettings';
 import { GmailConnectionSettings } from './components/screens/GmailConnectionSettings';
 import { DeleteAccountSettings } from './components/screens/DeleteAccountSettings';
-import { parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
+import { buildReturnToAppUrl, parseGoogleOAuthCallbackParams } from './lib/gmail-oauth';
 import { ensureLegacyLocalDataMigrated } from './lib/legacy-local-migration';
+import { isAndroidBrowser } from './lib/native-app';
 import { queryClient } from './lib/query-client';
 import { isInLastThreeCalendarDaysIST } from './lib/review-scope';
 import { useGmailConnectionForOAuthCallback } from './hooks/useGmailConnection';
@@ -519,6 +520,25 @@ function GoogleOAuthCallbackScreen({ onDone }: { onDone: () => void }) {
 	);
 }
 
+// The Android app opens Google's consent screen in a Chrome tab, where the
+// user is signed out. If Android does not hand the redirect back to the app
+// on its own, this is the page the tab lands on.
+function ReturnToAppScreen() {
+	return (
+		<div className="oauth-callback-wrapper">
+			<div className="oauth-callback-card">
+				<h2 className="oauth-callback-title">One more step</h2>
+				<p className="oauth-callback-subtext">
+					Go back to the Money Manager app to finish linking Gmail.
+				</p>
+				<a className="oauth-callback-btn" href={buildReturnToAppUrl(window.location.search)}>
+					Return to the app
+				</a>
+			</div>
+		</div>
+	);
+}
+
 function AuthScreen() {
 	return (
 		<div
@@ -657,7 +677,7 @@ export default function App() {
 			</ClerkLoading>
 			<ClerkLoaded>
 				<Show when="signed-out">
-					<AuthScreen />
+					{isOAuthCallback && isAndroidBrowser() ? <ReturnToAppScreen /> : <AuthScreen />}
 				</Show>
 				<Show when="signed-in">
 					<ClerkTokenBridge />

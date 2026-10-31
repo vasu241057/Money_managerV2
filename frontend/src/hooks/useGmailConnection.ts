@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { GoogleOAuthProcessingStats, OauthConnectionRow } from '../../../shared/types';
 import { apiClient, toErrorMessage } from '../lib/api-client';
+import { openGoogleConsent } from '../lib/native-app';
 
 interface UseGmailConnectionResult {
   connection: OauthConnectionRow | null;
@@ -46,7 +47,7 @@ function useRemoteGmailConnection(skipStatusQuery = false): UseGmailConnectionRe
   const connectMutation = useMutation({
     mutationFn: async () => {
       const response = await apiClient.startGoogleOAuth();
-      window.location.assign(response.auth_url);
+      await openGoogleConsent(response.auth_url);
     },
   });
 
